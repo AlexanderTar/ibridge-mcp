@@ -12,16 +12,23 @@ repository = "https://github.com/AlexanderTar/icloud-mcp"
 # Dependencies arrive with the crates that use them. Versions live here so
 # every crate resolves the same one.
 [workspace.dependencies]
+aes-gcm = "0.11"
 base64 = "0.22"
+getrandom = "0.4"
+hkdf = "0.13"
 ibridge-core = { path = "crates/ibridge-core" }
 keyring-core = "1"
 proptest = "1"
 secrecy = "0.10"
 serde = "1"
+sha2 = "0.11"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 temp-env = "0.3"
 thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 trait-variant = "0.1"
 trybuild = "1"
+zeroize = "1"
 
 # Lints pasted from BeautifulRust lints/lints.toml at
 # b9718436d77ee7bcf17cdcb6aa27628feb95d97a, plus unsafe_code = "forbid"

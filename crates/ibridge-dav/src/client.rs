@@ -14,6 +14,7 @@ use hyper_util::rt::TokioExecutor;
 use ibridge_auth::Credentials;
 use tracing::Instrument;
 
+use crate::discovery::{self, CollectionHome};
 use crate::error::DavError;
 use crate::redirect::{host_is_allowed, is_redirect, location_target, resolve_location};
 
@@ -54,7 +55,18 @@ pub(crate) trait Transport: Send + Sync {
 /// [`Credentials`].
 pub struct DavClient {
     credentials: Arc<Credentials>,
-    http: Client<Connector, Full<Bytes>>,
+    wire: Wire,
+    cache: discovery::ShardCache,
+    caldav_base: Uri,
+    caldav_path: String,
+    carddav_base: Uri,
+    carddav_path: String,
+}
+
+enum Wire {
+    Http(Box<Client<Connector, Full<Bytes>>>),
+    #[cfg(test)]
+    Script(crate::test_support::Script),
 }
 
 impl std::fmt::Debug for DavClient {
@@ -77,10 +89,68 @@ impl DavClient {
     }
 
     pub(crate) fn from_shared(credentials: Arc<Credentials>) -> Result<Self, DavError> {
+        let (caldav_base, caldav_path) = discovery::caldav_root();
+        let (carddav_base, carddav_path) = discovery::carddav_root();
         Ok(Self {
             credentials,
-            http: http_client()?,
+            wire: Wire::Http(Box::new(http_client()?)),
+            cache: discovery::ShardCache::new(),
+            caldav_base,
+            caldav_path: caldav_path.to_owned(),
+            carddav_base,
+            carddav_path: carddav_path.to_owned(),
         })
+    }
+
+    /// Scripted transport for unit tests. Discovery still starts at the iCloud roots.
+    #[cfg(test)]
+    pub(crate) fn from_script(
+        script: crate::test_support::Script,
+        credentials: Credentials,
+    ) -> Self {
+        let (caldav_base, caldav_path) = discovery::caldav_root();
+        let (carddav_base, carddav_path) = discovery::carddav_root();
+        Self {
+            credentials: Arc::new(credentials),
+            wire: Wire::Script(script),
+            cache: discovery::ShardCache::new(),
+            caldav_base,
+            caldav_path: caldav_path.to_owned(),
+            carddav_base,
+            carddav_path: carddav_path.to_owned(),
+        }
+    }
+
+    /// The account's calendar home.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError`] when the principal or the calendar home cannot be read.
+    pub async fn calendar_home(&self) -> Result<CollectionHome, DavError> {
+        discovery::discover_caldav_from(
+            self,
+            &self.credentials,
+            &self.cache,
+            &self.caldav_base,
+            &self.caldav_path,
+        )
+        .await
+    }
+
+    /// The account's address-book home.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError`] when the principal or the address-book home cannot be read.
+    pub async fn contacts_home(&self) -> Result<CollectionHome, DavError> {
+        discovery::discover_carddav_from(
+            self,
+            &self.credentials,
+            &self.cache,
+            &self.carddav_base,
+            &self.carddav_path,
+        )
+        .await
     }
 
     /// Sends one DAV request with preemptive Basic auth, retries and redirects.
@@ -149,20 +219,22 @@ impl DavClient {
 
 impl Transport for DavClient {
     async fn dispatch(&self, request: Request<String>) -> Result<Response<Full<Bytes>>, DavError> {
-        let (parts, body) = request.into_parts();
-        let request = Request::from_parts(parts, Full::new(Bytes::from(body)));
-        let response = self
-            .http
-            .request(request)
-            .await
-            .map_err(|_| DavError::Network)?;
-        let (parts, incoming) = response.into_parts();
-        let bytes = incoming
-            .collect()
-            .await
-            .map_err(|_| DavError::Network)?
-            .to_bytes();
-        Ok(Response::from_parts(parts, Full::new(bytes)))
+        match &self.wire {
+            Wire::Http(http) => {
+                let (parts, body) = request.into_parts();
+                let request = Request::from_parts(parts, Full::new(Bytes::from(body)));
+                let response = http.request(request).await.map_err(|_| DavError::Network)?;
+                let (parts, incoming) = response.into_parts();
+                let bytes = incoming
+                    .collect()
+                    .await
+                    .map_err(|_| DavError::Network)?
+                    .to_bytes();
+                Ok(Response::from_parts(parts, Full::new(bytes)))
+            }
+            #[cfg(test)]
+            Wire::Script(script) => script.dispatch(request).await,
+        }
     }
 }
 

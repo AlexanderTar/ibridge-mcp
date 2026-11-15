@@ -17,7 +17,7 @@ use crate::error::DavError;
 ///
 /// The host is the account's shard.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CollectionHome {
+pub struct CollectionHome {
     /// Absolute `https` URL, including the shard host.
     pub url: String,
 }
@@ -43,6 +43,14 @@ const CALDAV_BOOTSTRAP: &str = "https://caldav.icloud.com/";
 const CARDDAV_BOOTSTRAP: &str = "https://contacts.icloud.com/";
 const CARDDAV_WELL_KNOWN: &str = "/.well-known/carddav";
 
+pub(crate) fn caldav_root() -> (Uri, &'static str) {
+    (Uri::from_static(CALDAV_BOOTSTRAP), "/")
+}
+
+pub(crate) fn carddav_root() -> (Uri, &'static str) {
+    (Uri::from_static(CARDDAV_BOOTSTRAP), CARDDAV_WELL_KNOWN)
+}
+
 /// Finds the calendar home, starting at `caldav.icloud.com`.
 ///
 /// # Errors
@@ -53,12 +61,27 @@ pub(crate) async fn discover_caldav(
     credentials: &Credentials,
     cache: &ShardCache,
 ) -> Result<CollectionHome, DavError> {
+    let (base, path) = caldav_root();
+    discover_caldav_from(transport, credentials, cache, &base, path).await
+}
+
+/// Finds the calendar home starting at `path` on `base`.
+///
+/// # Errors
+///
+/// Returns [`DavError`] when the principal or the calendar home cannot be read.
+pub(crate) async fn discover_caldav_from(
+    transport: &impl Transport,
+    credentials: &Credentials,
+    cache: &ShardCache,
+    base: &Uri,
+    path: &str,
+) -> Result<CollectionHome, DavError> {
     if let Some(home) = load(&cache.caldav) {
         return Ok(home);
     }
-    let base = Uri::from_static(CALDAV_BOOTSTRAP);
     let (principal, landed) =
-        propfind_href(transport, credentials, &base, "/", &CURRENT_USER_PRINCIPAL).await?;
+        propfind_href(transport, credentials, base, path, &CURRENT_USER_PRINCIPAL).await?;
     let principal_path = href_path(&principal)?;
     let home_base = if principal.host().is_some() {
         origin_of(&principal)?
@@ -90,18 +113,27 @@ pub(crate) async fn discover_carddav(
     credentials: &Credentials,
     cache: &ShardCache,
 ) -> Result<CollectionHome, DavError> {
+    let (base, path) = carddav_root();
+    discover_carddav_from(transport, credentials, cache, &base, path).await
+}
+
+/// Finds the address-book home starting at `path` on `base`.
+///
+/// # Errors
+///
+/// Returns [`DavError`] when the principal or the address-book home cannot be read.
+pub(crate) async fn discover_carddav_from(
+    transport: &impl Transport,
+    credentials: &Credentials,
+    cache: &ShardCache,
+    base: &Uri,
+    path: &str,
+) -> Result<CollectionHome, DavError> {
     if let Some(home) = load(&cache.carddav) {
         return Ok(home);
     }
-    let base = Uri::from_static(CARDDAV_BOOTSTRAP);
-    let (principal, landed) = propfind_href(
-        transport,
-        credentials,
-        &base,
-        CARDDAV_WELL_KNOWN,
-        &CURRENT_USER_PRINCIPAL,
-    )
-    .await?;
+    let (principal, landed) =
+        propfind_href(transport, credentials, base, path, &CURRENT_USER_PRINCIPAL).await?;
     let principal_path = href_path(&principal)?;
     let home_base = if principal.host().is_some() {
         origin_of(&principal)?
@@ -517,6 +549,50 @@ mod tests {
         assert!(
             report.any_service_ok(),
             "sign-in succeeds when only calendar validates"
+        );
+    }
+
+    #[tokio::test]
+    async fn calendar_home_second_call_makes_no_request() {
+        let script = caldav_server();
+        let client = crate::DavClient::from_script(script.clone(), credentials());
+        let first = client
+            .calendar_home()
+            .await
+            .expect("the client discovers the calendar home");
+        assert_eq!(first.url, ADA_CALENDAR_HOME);
+        let after_first = script.requests().len();
+        let again = client
+            .calendar_home()
+            .await
+            .expect("the client returns the cached home");
+        assert_eq!(again, first);
+        assert_eq!(
+            script.requests().len(),
+            after_first,
+            "the second calendar home lookup must not send a request"
+        );
+    }
+
+    #[tokio::test]
+    async fn contacts_home_second_call_makes_no_request() {
+        let script = carddav_server();
+        let client = crate::DavClient::from_script(script.clone(), credentials());
+        let first = client
+            .contacts_home()
+            .await
+            .expect("the client discovers the contacts home");
+        assert_eq!(first.url, ADA_CONTACTS_HOME);
+        let after_first = script.requests().len();
+        let again = client
+            .contacts_home()
+            .await
+            .expect("the client returns the cached home");
+        assert_eq!(again, first);
+        assert_eq!(
+            script.requests().len(),
+            after_first,
+            "the second contacts home lookup must not send a request"
         );
     }
 }

@@ -9,7 +9,7 @@ mod redirect;
 mod sync;
 
 pub use client::{DavClient, Exchange};
-pub use discovery::DavValidator;
+pub use discovery::{CollectionHome, DavValidator};
 pub use error::DavError;
 pub use sync::{SyncReport, SyncedItem};
 

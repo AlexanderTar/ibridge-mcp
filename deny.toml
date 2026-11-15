@@ -12,3 +12,10 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
+
+# Unmaintained, with no patched release. cargo-deny has no safer version to move to.
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.1 is archived and comes in through async-imap 0.12. The same advisory already fails on the parent commit. This crate never calls it." },
+    { id = "RUSTSEC-2026-0440", reason = "testcontainers 0.28 pulls astral-tokio-tar for copying files into a container. GreenMail only sets an env var and publishes port 3143. No published testcontainers release has switched to tar-codec." },
+]

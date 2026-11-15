@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 imap-codec.workspace = true
+testcontainers.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

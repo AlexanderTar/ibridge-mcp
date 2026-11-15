@@ -11,7 +11,7 @@ pub mod imap_fake;
 mod tests {
     #[test]
     fn container_stubs_are_callable() {
-        crate::containers::greenmail();
+        let _image = crate::containers::greenmail();
         crate::containers::radicale();
     }
 }

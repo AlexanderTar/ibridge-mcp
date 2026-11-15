@@ -9,6 +9,8 @@ mod pool;
 mod search;
 
 #[cfg(test)]
+mod integration;
+#[cfg(test)]
 mod support;
 
 pub use pool::ImapPool;

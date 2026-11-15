@@ -25,6 +25,7 @@ proptest = "1"
 secrecy = "0.10"
 serde = "1"
 temp-env = "0.3"
+testcontainers = "0.28"
 thiserror = "2"
 tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 trait-variant = "0.1"

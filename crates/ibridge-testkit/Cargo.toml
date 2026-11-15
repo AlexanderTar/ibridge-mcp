@@ -8,5 +8,13 @@ repository.workspace = true
 description = "Scripted protocol fakes, fixtures and test containers."
 publish = false
 
+[dependencies]
+imap-codec.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+async-imap.workspace = true
+futures.workspace = true
+
 [lints]
 workspace = true

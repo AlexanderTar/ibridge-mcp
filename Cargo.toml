@@ -34,6 +34,7 @@ hyper-util = { version = "0.1", features = [
 ibridge-auth = { path = "crates/ibridge-auth" }
 ibridge-core = { path = "crates/ibridge-core" }
 keyring-core = "1"
+libdav = "0.11.2"
 proptest = "1"
 secrecy = "0.10"
 serde = "1"

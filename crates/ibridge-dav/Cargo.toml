@@ -17,6 +17,7 @@ hyper-rustls.workspace = true
 hyper-util.workspace = true
 ibridge-auth.workspace = true
 ibridge-core.workspace = true
+libdav.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

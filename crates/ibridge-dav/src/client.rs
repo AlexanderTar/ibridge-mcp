@@ -3,6 +3,7 @@
 //! Credential-safe HTTP calls: preemptive Basic auth, retries, no HTTP/3.
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -31,6 +32,8 @@ pub struct Exchange {
     pub headers: HeaderMap,
     /// Response body.
     pub body: Bytes,
+    /// URL the response came from, after redirects.
+    pub url: Uri,
 }
 
 /// The raw network. The guard in [`execute`] attaches credentials and follows redirects.
@@ -47,7 +50,7 @@ pub(crate) trait Transport: Send + Sync {
 /// `Debug` prints the Apple ID and nothing else. The password stays inside
 /// [`Credentials`].
 pub struct DavClient {
-    credentials: Credentials,
+    credentials: Arc<Credentials>,
     http: Client<Connector, Full<Bytes>>,
 }
 
@@ -67,6 +70,10 @@ impl DavClient {
     ///
     /// Returns [`DavError::Network`] when the TLS roots cannot be loaded.
     pub fn new(credentials: Credentials) -> Result<Self, DavError> {
+        Self::from_shared(Arc::new(credentials))
+    }
+
+    pub(crate) fn from_shared(credentials: Arc<Credentials>) -> Result<Self, DavError> {
         Ok(Self {
             credentials,
             http: http_client()?,
@@ -157,7 +164,7 @@ pub(crate) async fn execute(
             outgoing.headers.remove(http::header::AUTHORIZATION);
             continue;
         }
-        return exchange_from(response).await;
+        return exchange_from(response, outgoing.uri.clone()).await;
     }
 }
 
@@ -271,7 +278,7 @@ fn jitter(attempt: u32) -> Duration {
     Duration::from_millis(base_ms.saturating_add(extra).min(30_000))
 }
 
-async fn exchange_from(response: Response<Full<Bytes>>) -> Result<Exchange, DavError> {
+async fn exchange_from(response: Response<Full<Bytes>>, url: Uri) -> Result<Exchange, DavError> {
     let (parts, body) = response.into_parts();
     let body = body
         .collect()
@@ -282,6 +289,7 @@ async fn exchange_from(response: Response<Full<Bytes>>) -> Result<Exchange, DavE
         status: parts.status,
         headers: parts.headers,
         body,
+        url,
     })
 }
 

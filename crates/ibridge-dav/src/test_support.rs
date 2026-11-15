@@ -23,6 +23,8 @@ pub(crate) struct Logged {
     pub authorization: Option<String>,
     /// When the transport saw the request. Respects a paused tokio clock.
     pub at: tokio::time::Instant,
+    /// Request body. Discovery tests read the property name from it.
+    pub body: String,
 }
 
 type Handler = Arc<dyn Fn(&Request<String>) -> Response<Full<Bytes>> + Send + Sync>;
@@ -68,6 +70,7 @@ impl Transport for Script {
             .push(Logged {
                 uri: request.uri().clone(),
                 authorization,
+                body: request.body().clone(),
                 at: tokio::time::Instant::now(),
             });
         let response = (self.handler)(&request);

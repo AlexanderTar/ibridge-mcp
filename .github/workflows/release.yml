@@ -403,3 +403,33 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+
+  # Hand-added (see docs/release.md): build the Claude Desktop extension bundles
+  # from dist's archives and attach them to the release host just created.
+  build-mcpb:
+    needs:
+      - plan
+      - host
+      - announce
+    if: ${{ always() && needs.host.result == 'success' && needs.announce.result == 'success' }}
+    runs-on: "ubuntu-22.04"
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - name: Download dist archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-build-local-*
+          path: target/distrib
+          merge-multiple: true
+      - name: Build the bundles
+        run: cargo xtask mcpb --dist target/distrib --out target/mcpb
+      - name: Attach the bundles to the release
+        run: gh release upload "$TAG" target/mcpb/*.mcpb --clobber --repo "$GITHUB_REPOSITORY"

@@ -382,3 +382,21 @@ async fn save_attachment_writes_to_download_dir() {
         "an unknown part is a tool error"
     );
 }
+
+#[tokio::test]
+async fn e2e_initialize_reports_ibridge_and_crate_version() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+
+    let info = client.peer_info().expect("initialize completed");
+    let server = info.server_info.as_ref().expect("server info");
+    assert_eq!(server.name, "ibridge", "server name");
+    assert_eq!(
+        server.version,
+        env!("CARGO_PKG_VERSION"),
+        "server version is the crate version"
+    );
+}

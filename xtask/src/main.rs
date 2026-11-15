@@ -2,6 +2,7 @@
 
 //! Workspace maintenance tasks.
 
+mod mcpb;
 mod record_calendar;
 mod record_contacts;
 mod record_fixtures;
@@ -21,7 +22,11 @@ fn main() -> ExitCode {
     match args.next().as_deref() {
         Some("check-headers") => report(check_headers(&headers_root())),
         Some("record-fixtures") => run_record_fixtures(args),
-        Some("schema-snapshot" | "mcpb") => ExitCode::from(2),
+        Some("mcpb") => match mcpb::run(&headers_root(), args) {
+            Ok(bundles) => report_paths(&bundles),
+            Err(error) => fail(&format!("mcpb: {error}")),
+        },
+        Some("schema-snapshot") => ExitCode::from(2),
         Some(command) => fail(&format!("unknown command: {command}")),
         None => fail("usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb>"),
     }
@@ -168,6 +173,17 @@ fn check_calendar(
         dav_client,
         &mut io::stdout(),
     ))
+}
+
+#[expect(
+    clippy::print_stderr,
+    reason = "xtask lists the files it wrote on stderr"
+)]
+fn report_paths(paths: &[PathBuf]) -> ExitCode {
+    for path in paths {
+        eprintln!("{}", path.display());
+    }
+    ExitCode::SUCCESS
 }
 
 #[expect(

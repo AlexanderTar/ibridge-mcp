@@ -21,11 +21,13 @@ ibridge-dav.workspace = true
 ibridge-mail.workspace = true
 mail-parser.workspace = true
 regex.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 ibridge-dav = { workspace = true, features = ["test-hosts"] }
 ibridge-testkit.workspace = true
 

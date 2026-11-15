@@ -846,7 +846,7 @@ fn status_summary(status: &AccountStatusOut) -> String {
     clippy::unused_async_trait_impl,
     reason = "the generated tool listing returns without waiting"
 )]
-#[tool_handler(router = self.router)]
+#[tool_handler(router = self.router, name = "ibridge")]
 impl<M, C, K> ServerHandler for IbridgeServer<M, C, K>
 where
     M: MailApi + Send + Sync + 'static,

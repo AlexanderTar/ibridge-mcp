@@ -2,7 +2,10 @@
 
 //! SQLite credential store. Tokens are the keys; the database holds ciphertext.
 
+mod redact;
 mod seal;
+
+pub use redact::{Redacted, redact};
 
 use std::error::Error;
 use std::fmt;
@@ -892,6 +895,7 @@ mod tests {
     use ibridge_auth::{AuthError, Credentials, ServiceCheck, ValidationReport, Validator};
     use ibridge_core::AppleId;
     use secrecy::{ExposeSecret, SecretString};
+    use sqlx::Row;
 
     use super::{IssuedTokens, Scope, Store, StoreError};
 
@@ -1474,5 +1478,102 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(opened.scope, Scope::ReadWrite);
+    }
+
+    #[tokio::test]
+    async fn db_dump_plus_config_decrypts_nothing() {
+        let store = Store::memory().await.unwrap();
+        let tokens = exchange(&store, at(0)).await;
+        let opened = store
+            .open_for_call(tokens.access.expose_secret(), at(1))
+            .await
+            .unwrap();
+        assert_eq!(opened.secret.expose_secret(), ASP);
+        let rows = sqlx::query("SELECT lookup, nonce, ciphertext FROM seals")
+            .fetch_all(&store.pool)
+            .await
+            .unwrap();
+        assert!(!rows.is_empty(), "the grant must have stored seals");
+        for row in &rows {
+            let lookup: Vec<u8> = row.try_get("lookup").unwrap();
+            let nonce: Option<Vec<u8>> = row.try_get("nonce").unwrap();
+            let ciphertext: Option<Vec<u8>> = row.try_get("ciphertext").unwrap();
+            for blob in [
+                &lookup,
+                nonce.as_deref().unwrap_or(&[]),
+                ciphertext.as_deref().unwrap_or(&[]),
+            ] {
+                assert!(
+                    !blob
+                        .windows(ASP.len())
+                        .any(|window| window == ASP.as_bytes()),
+                    "the database must not contain the password"
+                );
+            }
+            let (Some(nonce), Some(ciphertext)) = (nonce, ciphertext) else {
+                continue;
+            };
+            let sealed = super::seal::Sealed {
+                lookup: lookup.as_slice().try_into().unwrap(),
+                nonce: nonce.as_slice().try_into().unwrap(),
+                ciphertext,
+            };
+            let aad = super::associated_data("ada@icloud.com", &tokens.grant_id.0);
+            for token in [
+                b"".as_slice(),
+                b"ibridge",
+                b"ibridge-seal-v1",
+                sealed.lookup.as_slice(),
+            ] {
+                let opened = super::seal::open(&aad, token, &sealed);
+                assert!(
+                    opened.is_err(),
+                    "database bytes and server config must not open the password"
+                );
+            }
+        }
+        let unknown = store.open_for_call("ibridge", at(1)).await;
+        assert!(
+            matches!(unknown, Err(StoreError::InvalidToken)),
+            "a config string is not a token, got {unknown:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_grants_leave_nothing_decryptable() {
+        let store = Store::memory().await.unwrap();
+        let tokens = exchange(&store, at(0)).await;
+        let code = seal_code(&store, at(0)).await;
+        let ninety_days = 90 * 24 * 60 * 60;
+        let refresh = store
+            .refresh(tokens.refresh.expose_secret(), at(ninety_days))
+            .await;
+        assert!(
+            matches!(refresh, Err(StoreError::Expired)),
+            "an unused refresh token expires, got {refresh:?}"
+        );
+        let access = store
+            .open_for_call(tokens.access.expose_secret(), at(ninety_days))
+            .await;
+        assert!(
+            matches!(access, Err(StoreError::Expired)),
+            "the access token is expired too, got {access:?}"
+        );
+        let exchanged = store
+            .exchange_code(code.code.expose_secret(), at(ninety_days))
+            .await;
+        assert!(
+            matches!(exchanged, Err(StoreError::Expired)),
+            "an unused code is expired, got {exchanged:?}"
+        );
+        let left: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM seals WHERE ciphertext IS NOT NULL")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            left, 0,
+            "expired grants must delete ciphertext so the old token cannot open them"
+        );
     }
 }

@@ -4,4 +4,4 @@
 
 mod store;
 
-pub use store::{Store, StoreError};
+pub use store::{Redacted, Store, StoreError, redact};

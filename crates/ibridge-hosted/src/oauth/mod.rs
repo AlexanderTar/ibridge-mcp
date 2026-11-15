@@ -2,12 +2,18 @@
 
 //! OAuth 2.1 authorization server for the hosted MCP endpoint.
 
+mod cimd;
+mod client;
+mod dcr;
 mod metadata;
 
+use std::fmt;
 use std::sync::Arc;
 
 use axum::Router;
 use url::Url;
+
+use crate::store::{Store, StoreError};
 
 /// Where this server lives, as clients see it.
 #[derive(Clone, Debug)]
@@ -61,13 +67,55 @@ impl OAuthConfig {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct Shared {
     pub(crate) config: OAuthConfig,
+    pub(crate) registry: dcr::ClientRegistry,
+    pub(crate) clients: Arc<dyn cimd::ClientSource>,
+}
+
+impl Shared {
+    /// The client `client_id` names: a metadata document URL, or an id DCR issued.
+    #[expect(
+        dead_code,
+        reason = "the authorize page looks clients up in the next unit"
+    )]
+    pub(crate) async fn resolve_client(&self, client_id: &str) -> Option<client::ClientInfo> {
+        if client_id.starts_with("https://") || client_id.starts_with("http://") {
+            return self.clients.resolve(client_id).await.ok();
+        }
+        self.registry.get(client_id).await.ok().flatten()
+    }
+}
+
+impl fmt::Debug for Shared {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("Shared").finish_non_exhaustive()
+    }
 }
 
 /// Routes for discovery, registration, sign-in and tokens.
-pub fn router(config: OAuthConfig) -> Router {
-    let shared = Arc::new(Shared { config });
-    Router::new().merge(metadata::routes(&shared))
+///
+/// # Errors
+///
+/// Returns [`StoreError`] when the client table cannot be created.
+pub async fn router(config: OAuthConfig, store: &Store) -> Result<Router, StoreError> {
+    let transport = cimd::HttpsTransport::new().map_err(|_| StoreError::Rejected)?;
+    router_with(config, store, Arc::new(cimd::CimdFetcher::new(transport))).await
+}
+
+/// [`router`] with the client lookup replaced, so tests can name clients without a network.
+pub(crate) async fn router_with(
+    config: OAuthConfig,
+    store: &Store,
+    clients: Arc<dyn cimd::ClientSource>,
+) -> Result<Router, StoreError> {
+    let registry = dcr::ClientRegistry::open(store).await?;
+    let shared = Arc::new(Shared {
+        config,
+        registry,
+        clients,
+    });
+    Ok(Router::new()
+        .merge(metadata::routes(&shared))
+        .merge(dcr::routes(&shared)))
 }

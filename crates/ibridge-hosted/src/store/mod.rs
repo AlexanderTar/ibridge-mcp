@@ -177,6 +177,11 @@ pub struct Store {
 }
 
 impl Store {
+    /// The connection pool, for tables other modules own.
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// Opens an in-memory store and applies the schema.
     ///
     /// # Errors
@@ -408,7 +413,7 @@ async fn rollback(tx: WriteTx, err: sqlx::Error) -> StoreError {
     }
 }
 
-fn internal(err: impl Error + Send + Sync + 'static) -> StoreError {
+pub(crate) fn internal(err: impl Error + Send + Sync + 'static) -> StoreError {
     StoreError::Internal {
         source: Box::new(err),
     }

@@ -77,16 +77,20 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::oauth::{OAuthConfig, router};
+    use crate::store::Store;
 
     const PUBLIC: &str = "https://ibridge.example";
 
-    fn app() -> Router {
-        router(OAuthConfig::new(PUBLIC).expect("public url"))
+    async fn app() -> Router {
+        let store = Store::memory().await.expect("store");
+        router(OAuthConfig::new(PUBLIC).expect("public url"), &store)
+            .await
+            .expect("router")
     }
 
     async fn get(path: &str) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
         let request = Request::get(path).body(Body::empty()).expect("request");
-        let response = app().oneshot(request).await.expect("response");
+        let response = app().await.oneshot(request).await.expect("response");
         let status = response.status();
         let headers = response.headers().clone();
         let body = axum::body::to_bytes(response.into_body(), 64 * 1024)

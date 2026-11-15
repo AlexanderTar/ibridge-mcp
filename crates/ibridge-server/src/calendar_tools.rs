@@ -254,7 +254,7 @@ where
         let calendar = require_path(&params.calendar)?;
         let draft = EventDraft {
             summary: params.summary,
-            description: params.description.unwrap_or_default(),
+            description: params.description,
             start: params.start,
             end: params.end.unwrap_or_default(),
             time_zone: params.time_zone,
@@ -288,6 +288,12 @@ where
         self.reject_write()?;
         let path = require_path(&params.id)?;
         let etag = require_etag(&params.etag)?;
+        if params.start.is_some() != params.end.is_some() {
+            return Err(ErrorData::invalid_params(
+                "give both start and end, or neither",
+                None,
+            ));
+        }
         let scope = match params.occurrence {
             Some(recurrence_id) => {
                 if params.start.is_none() || params.end.is_none() {
@@ -301,13 +307,15 @@ where
             None => UpdateScope::Series,
         };
         let _permit = self.permit().await?;
-        let current = try_cal!(self.calendar.get_event(&path).await);
+        // Left-out fields stay empty: the provider keeps what the event has. Copying
+        // them from the first occurrence would write that occurrence's values onto
+        // the whole series.
         let draft = EventDraft {
-            summary: params.summary.unwrap_or(current.summary),
-            description: params.description.unwrap_or(current.description),
-            start: params.start.unwrap_or(current.start),
-            end: params.end.unwrap_or(current.end),
-            time_zone: params.time_zone.or(current.time_zone),
+            summary: params.summary.unwrap_or_default(),
+            description: params.description,
+            start: params.start.unwrap_or_default(),
+            end: params.end.unwrap_or_default(),
+            time_zone: params.time_zone,
         };
         let fresh = try_cal!(
             self.calendar
@@ -543,13 +551,25 @@ fn page<T>(items: Vec<T>, limit: u32, start: usize) -> (Vec<T>, Option<String>) 
     (shown, more.then(|| end.to_string()))
 }
 
+/// The most characters of a description or note a tool returns, like a mail body.
+const BODY_LIMIT: usize = 40_000;
+
+/// `text` cut to [`BODY_LIMIT`] characters, with a marker saying how much is missing.
+fn capped(text: &str) -> String {
+    let Some((end, _)) = text.char_indices().nth(BODY_LIMIT) else {
+        return text.to_owned();
+    };
+    let missing = text[end..].chars().count();
+    format!("{}\n[truncated, {missing} more characters]", &text[..end])
+}
+
 fn event_out(event: &Event) -> EventOut {
     EventOut {
         id: encode_resource(&event.path),
         etag: event.etag.as_str().to_owned(),
         uid: event.uid.clone(),
         summary: wrap_untrusted(&event.summary),
-        description: wrap_untrusted(&event.description),
+        description: wrap_untrusted(&capped(&event.description)),
         start: event.start.clone(),
         end: event.end.clone(),
         time_zone: event.time_zone.clone(),
@@ -566,7 +586,7 @@ fn reminder_out(reminder: &Reminder) -> ReminderOut {
         id: encode_resource(&reminder.path),
         etag: reminder.etag.as_str().to_owned(),
         title: wrap_untrusted(&reminder.title),
-        notes: wrap_untrusted(&reminder.notes),
+        notes: wrap_untrusted(&capped(&reminder.notes)),
         due: reminder.due.clone(),
         priority: reminder.priority,
         completed: reminder.completed,

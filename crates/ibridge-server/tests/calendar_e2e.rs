@@ -95,6 +95,8 @@ fn etag(number: u32) -> ETag {
 struct Fake {
     events: Mutex<Vec<Event>>,
     reminders: Mutex<Vec<Reminder>>,
+    /// Every draft an event update received, with its scope.
+    updates: Mutex<Vec<(EventDraft, UpdateScope)>>,
 }
 
 impl Fake {
@@ -190,7 +192,7 @@ impl CalendarProvider for Fake {
             etag: etag(1),
             uid: "new".to_owned(),
             summary: draft.summary.clone(),
-            description: draft.description.clone(),
+            description: draft.description.clone().unwrap_or_default(),
             start: draft.start.clone(),
             end: draft.end.clone(),
             time_zone: draft.time_zone.clone(),
@@ -208,8 +210,9 @@ impl CalendarProvider for Fake {
         target: &ResourcePath,
         expected: &ETag,
         draft: &EventDraft,
-        _scope: &UpdateScope,
+        scope: &UpdateScope,
     ) -> Result<ETag, CoreError> {
+        locked(&self.updates).push((draft.clone(), scope.clone()));
         let mut events = locked(&self.events);
         let event = events
             .iter_mut()
@@ -218,10 +221,17 @@ impl CalendarProvider for Fake {
         if &event.etag != expected {
             return Err(CoreError::Conflict);
         }
-        event.summary.clone_from(&draft.summary);
-        event.description.clone_from(&draft.description);
-        event.start.clone_from(&draft.start);
-        event.end.clone_from(&draft.end);
+        // Like the real provider: what an update leaves out keeps its value.
+        if !draft.summary.is_empty() {
+            event.summary.clone_from(&draft.summary);
+        }
+        if let Some(description) = &draft.description {
+            event.description.clone_from(description);
+        }
+        if !draft.start.is_empty() {
+            event.start.clone_from(&draft.start);
+            event.end.clone_from(&draft.end);
+        }
         event.etag = etag(2);
         Ok(event.etag.clone())
     }
@@ -642,4 +652,103 @@ async fn e2e_create_then_list_event() {
         .await
         .expect_err("a malformed id is invalid params, not a lookup");
     assert!(rejected.to_string().contains("invalid id"), "{rejected}");
+}
+
+#[tokio::test]
+async fn update_sends_only_the_fields_it_was_given() {
+    let fake = Arc::new(Fake::seeded());
+    let client = connect(
+        IbridgeServer::read_write(account(), Arc::new(NoMail)).with_calendar(Arc::clone(&fake)),
+    )
+    .await;
+    let id = ibridge_core::encode_resource(&path("work/seed.ics"));
+    let series = call(
+        &client,
+        "calendar_update_event",
+        serde_json::json!({ "id": id, "etag": "\"v1\"", "summary": "Renamed" }),
+    )
+    .await;
+    structured(&series);
+    let one = call(
+        &client,
+        "calendar_update_event",
+        serde_json::json!({
+            "id": id,
+            "etag": "\"v2\"",
+            "occurrence": "2026-11-16T09:00:00Z",
+            "start": "2026-11-16T10:00:00Z",
+            "end": "2026-11-16T11:00:00Z",
+        }),
+    )
+    .await;
+    structured(&one);
+    let updates = locked(&fake.updates);
+    let (first, scope) = &updates[0];
+    assert_eq!(*scope, UpdateScope::Series);
+    assert_eq!(first.summary, "Renamed");
+    assert_eq!(
+        (first.start.as_str(), first.end.as_str(), &first.description),
+        ("", "", &None),
+        "a series keeps its own start and end, so none is copied from an occurrence"
+    );
+    let (second, scope) = &updates[1];
+    assert!(matches!(scope, UpdateScope::Occurrence { .. }));
+    assert_eq!(second.summary, "", "an unnamed summary is left alone");
+    assert_eq!(second.description, None);
+    assert_eq!(second.time_zone, None, "the provider picks the series zone");
+}
+
+#[tokio::test]
+async fn long_descriptions_and_notes_are_cut_with_a_marker() {
+    let fake = Arc::new(Fake::seeded());
+    locked(&fake.events)[0].description = "x".repeat(50_000);
+    locked(&fake.reminders)[0].notes = "y".repeat(50_000);
+    let client = connect(
+        IbridgeServer::read_write(account(), Arc::new(NoMail)).with_calendar(Arc::clone(&fake)),
+    )
+    .await;
+    let listed = call(
+        &client,
+        "calendar_list_events",
+        serde_json::json!({ "start": "2026-11-16T00:00:00Z", "end": "2026-11-17T00:00:00Z" }),
+    )
+    .await;
+    let description = structured(&listed)["events"][0]["description"]
+        .as_str()
+        .expect("description")
+        .to_owned();
+    let reminders = call(&client, "reminders_list", serde_json::json!({})).await;
+    let notes = structured(&reminders)["reminders"][0]["notes"]
+        .as_str()
+        .expect("notes")
+        .to_owned();
+    for (text, letter) in [(&description, 'x'), (&notes, 'y')] {
+        assert_eq!(
+            text.matches(letter).count(),
+            40_000,
+            "the body is cut at 40,000 characters"
+        );
+        assert!(
+            text.contains("truncated") && text.contains("10000 more"),
+            "the cut says so and how much is missing, got the tail {}",
+            &text[text.len().saturating_sub(120)..]
+        );
+    }
+    let half = {
+        let mut params = CallToolRequestParams::new("calendar_update_event");
+        params.arguments = serde_json::json!({
+            "id": ibridge_core::encode_resource(&path("work/seed.ics")),
+            "etag": "\"v1\"",
+            "start": "2026-11-16T10:00:00Z",
+        })
+        .as_object()
+        .cloned();
+        client.call_tool(params).await
+    };
+    assert!(
+        half.expect_err("a start with no end is refused")
+            .to_string()
+            .contains("both start and end"),
+        "the error says both are needed"
+    );
 }

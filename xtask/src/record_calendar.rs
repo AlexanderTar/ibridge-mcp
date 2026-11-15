@@ -154,7 +154,7 @@ async fn record(
             &calendar.path,
             &EventDraft {
                 summary: format!("{marker} event"),
-                description: "recorded by ibridge xtask".to_owned(),
+                description: Some("recorded by ibridge xtask".to_owned()),
                 start: "2026-12-01T10:00:00Z".to_owned(),
                 end: "2026-12-01T11:00:00Z".to_owned(),
                 time_zone: None,
@@ -366,12 +366,7 @@ mod tests {
     }
 
     fn client_for(base: String) -> impl Fn(&Credentials) -> Result<DavClient, DavError> {
-        move |credentials| {
-            let copy = credentials.with_secret(|secret| {
-                Credentials::new(credentials.apple_id.clone(), secret.to_owned())
-            });
-            DavClient::for_test_server(copy, &base)
-        }
+        move |credentials| DavClient::for_test_server(credentials.duplicate(), &base)
     }
 
     #[tokio::test]

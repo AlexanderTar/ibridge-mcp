@@ -270,11 +270,10 @@ pub(crate) fn new_event_text(
     event
         .entries
         .push(text_entry(ICalendarProperty::Summary, &draft.summary));
-    if !draft.description.is_empty() {
-        event.entries.push(text_entry(
-            ICalendarProperty::Description,
-            &draft.description,
-        ));
+    if let Some(description) = draft.description.as_deref().filter(|text| !text.is_empty()) {
+        event
+            .entries
+            .push(text_entry(ICalendarProperty::Description, description));
     }
     let mut ical = ICalendar {
         components: vec![root, event],
@@ -299,7 +298,6 @@ pub(crate) fn update_event_text(
     scope: &UpdateScope,
     now: DateTime<Utc>,
 ) -> Result<String, CoreError> {
-    let (start, end) = draft_times(draft)?;
     let mut ical = parse(text).ok_or_else(|| CoreError::Protocol(String::new()))?;
     let master = ical
         .components
@@ -317,8 +315,9 @@ pub(crate) fn update_event_text(
         _ => return Err(CoreError::Unsupported("update scope")),
     };
     let component = &mut ical.components[target];
+    let times = update_times(component, draft)?;
     let before = moments(component);
-    apply(component, draft, &start, &end);
+    apply(component, draft, times.as_ref());
     mark_changed(component, &before, now);
     ical.add_missing_timezones();
     Ok(ical.to_string())
@@ -369,10 +368,42 @@ fn mark_changed(component: &mut ICalendarComponent, before: &[ICalendarEntry], n
     );
 }
 
-fn apply(component: &mut ICalendarComponent, draft: &EventDraft, start: &When, end: &When) {
-    set_text(component, &ICalendarProperty::Summary, Some(&draft.summary));
-    let description = Some(draft.description.as_str()).filter(|text| !text.is_empty());
-    set_text(component, &ICalendarProperty::Description, description);
+/// The start and end an update writes, or `None` when it names neither and the
+/// event keeps its own. A bare local time is read in the zone the event is in.
+fn update_times(
+    component: &ICalendarComponent,
+    draft: &EventDraft,
+) -> Result<Option<(When, When)>, CoreError> {
+    match (draft.start.trim().is_empty(), draft.end.trim().is_empty()) {
+        (true, true) => return Ok(None),
+        (false, false) => {}
+        _ => return Err(invalid("give both a start and an end, or neither")),
+    }
+    let own_zone = component
+        .property(&ICalendarProperty::Dtstart)
+        .and_then(ICalendarEntry::tz_id)
+        .filter(|name| name.parse::<chrono_tz::Tz>().is_ok());
+    let draft = EventDraft {
+        time_zone: draft
+            .time_zone
+            .clone()
+            .or_else(|| own_zone.map(str::to_owned)),
+        ..draft.clone()
+    };
+    draft_times(&draft).map(Some)
+}
+
+fn apply(component: &mut ICalendarComponent, draft: &EventDraft, times: Option<&(When, When)>) {
+    if !draft.summary.is_empty() {
+        set_text(component, &ICalendarProperty::Summary, Some(&draft.summary));
+    }
+    if let Some(description) = &draft.description {
+        let description = Some(description.as_str()).filter(|text| !text.is_empty());
+        set_text(component, &ICalendarProperty::Description, description);
+    }
+    let Some((start, end)) = times else {
+        return;
+    };
     component.entries.retain(|entry| {
         !matches!(
             entry.name,
@@ -711,7 +742,7 @@ mod tests {
     fn draft(summary: &str) -> EventDraft {
         EventDraft {
             summary: summary.to_owned(),
-            description: String::new(),
+            description: None,
             start: "2026-11-16T11:00:00Z".to_owned(),
             end: "2026-11-16T12:00:00Z".to_owned(),
             time_zone: None,

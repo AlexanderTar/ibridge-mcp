@@ -623,7 +623,7 @@ mod tests {
     fn draft(summary: &str, start: &str, end: &str) -> EventDraft {
         EventDraft {
             summary: summary.to_owned(),
-            description: String::new(),
+            description: None,
             start: start.to_owned(),
             end: end.to_owned(),
             time_zone: None,
@@ -921,6 +921,81 @@ mod tests {
                 ("2026-11-18T09:00:00Z", "Standup"),
             ],
             "the original 09:00 instance is replaced, not duplicated"
+        );
+    }
+
+    #[tokio::test]
+    async fn series_update_without_times_keeps_the_masters_start_and_summary() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put(
+            "work",
+            "daily.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:daily-1\nDTSTAMP:20261101T000000Z\n\
+                 DTSTART:20261116T090000\nDTEND:20261116T100000\n\
+                 RRULE:FREQ=DAILY;COUNT=4\nEXDATE:20261116T090000\nSUMMARY:Standup\nEND:VEVENT\n\
+                 BEGIN:VEVENT\nUID:daily-1\nDTSTAMP:20261101T000000Z\n\
+                 RECURRENCE-ID:20261117T090000\n\
+                 DTSTART:20261117T090000\nDTEND:20261117T100000\nSUMMARY:Special\nEND:VEVENT",
+            ),
+        );
+        let path = ResourcePath::try_from("work/daily.ics").expect("path");
+        let keep = EventDraft {
+            description: Some("Agenda".to_owned()),
+            ..draft("", "", "")
+        };
+        provider
+            .update_event(
+                &path,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &keep,
+                &UpdateScope::Series,
+            )
+            .await
+            .expect("a series update that names no times keeps them");
+        let body = fake.body("work", "daily.ics").expect("stored");
+        for kept in [
+            "DTSTART:20261116T090000\r\n",
+            "DTEND:20261116T100000\r\n",
+            "EXDATE:20261116T090000",
+            "SUMMARY:Standup",
+            "SUMMARY:Special",
+            "DESCRIPTION:Agenda",
+        ] {
+            assert!(body.contains(kept), "lost {kept} in {body}");
+        }
+        assert!(!body.contains("T090000Z"), "no zone is invented: {body}");
+    }
+
+    #[tokio::test]
+    async fn occurrence_update_inherits_the_series_zone() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put(
+            "work",
+            "berlin.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:berlin-1\nDTSTAMP:20261101T000000Z\n\
+                 DTSTART;TZID=Europe/Berlin:20261116T090000\n\
+                 DTEND;TZID=Europe/Berlin:20261116T100000\n\
+                 RRULE:FREQ=DAILY;COUNT=3\nSUMMARY:Berlin\nEND:VEVENT",
+            ),
+        );
+        let path = ResourcePath::try_from("work/berlin.ics").expect("path");
+        provider
+            .update_event(
+                &path,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &draft("", "2026-11-17T10:00:00", "2026-11-17T11:00:00"),
+                &UpdateScope::Occurrence {
+                    recurrence_id: "2026-11-17T09:00:00+01:00".to_owned(),
+                },
+            )
+            .await
+            .expect("move one occurrence");
+        let body = fake.body("work", "berlin.ics").expect("stored");
+        assert!(
+            body.contains("DTSTART;TZID=Europe/Berlin:20261117T100000"),
+            "a bare local time is read in the series' zone: {body}"
         );
     }
 

@@ -28,7 +28,7 @@ fn credentials() -> Credentials {
 fn draft(summary: &str, start: &str, end: &str) -> EventDraft {
     EventDraft {
         summary: summary.to_owned(),
-        description: "Notes".to_owned(),
+        description: Some("Notes".to_owned()),
         start: start.to_owned(),
         end: end.to_owned(),
         time_zone: None,

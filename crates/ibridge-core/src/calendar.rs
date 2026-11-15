@@ -73,15 +73,18 @@ pub struct EventList {
 /// Fields written by create and update.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventDraft {
-    /// Summary.
+    /// Summary. On update, empty keeps the event's own.
     pub summary: String,
-    /// Description.
-    pub description: String,
-    /// Start, as an ISO-8601 timestamp.
+    /// Description. `None` writes none on create and keeps the event's own on
+    /// update; `Some("")` clears it.
+    pub description: Option<String>,
+    /// Start, as an ISO-8601 timestamp. On update, empty (with an empty `end`)
+    /// keeps the event's own times, which is how a series keeps its first start.
     pub start: String,
     /// End, as an ISO-8601 timestamp. Writers always store this.
     pub end: String,
-    /// IANA zone name for `start` and `end`. `None` writes UTC or a date.
+    /// IANA zone name for `start` and `end`. `None` writes UTC or a date; on
+    /// update it falls back to the zone the event is already in.
     pub time_zone: Option<String>,
 }
 

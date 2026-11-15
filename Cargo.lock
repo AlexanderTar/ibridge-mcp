@@ -465,6 +465,14 @@ version = "0.1.0"
 [[package]]
 name = "ibridge-mail"
 version = "0.1.0"
+dependencies = [
+ "async-imap",
+ "ibridge-auth",
+ "ibridge-core",
+ "ibridge-testkit",
+ "tokio",
+ "zeroize",
+]
 
 [[package]]
 name = "ibridge-server"

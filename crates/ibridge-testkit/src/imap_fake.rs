@@ -3,6 +3,7 @@
 //! Scripted IMAP server for contract tests.
 
 use std::io;
+use std::sync::{Arc, Mutex};
 
 use imap_codec::decode::{CommandDecodeError, Decoder};
 use imap_codec::encode::Encoder;
@@ -25,6 +26,13 @@ pub struct FakeScript {
     pub throttle_list: bool,
 }
 
+#[derive(Debug)]
+struct Observed {
+    connections: usize,
+    logins: usize,
+    commands: Vec<&'static str>,
+}
+
 /// A scripted IMAP server on an in-memory duplex.
 ///
 /// The greeting advertises `IMAP4REV1` and `AUTH=PLAIN` only. After `LOGIN`,
@@ -34,13 +42,43 @@ pub struct FakeScript {
 #[derive(Clone, Debug)]
 pub struct FakeImap {
     script: FakeScript,
+    observed: Arc<Mutex<Observed>>,
 }
 
 impl FakeImap {
     /// Starts a server. Connections begin when [`Self::connect`] is called.
     #[must_use]
     pub fn spawn(script: FakeScript) -> Self {
-        Self { script }
+        Self {
+            script,
+            observed: Arc::new(Mutex::new(Observed {
+                connections: 0,
+                logins: 0,
+                commands: Vec::new(),
+            })),
+        }
+    }
+
+    /// How many duplex connections have been opened.
+    #[must_use]
+    pub fn connection_count(&self) -> usize {
+        self.observed().connections
+    }
+
+    /// How many `LOGIN` commands have arrived, including rejected ones.
+    #[must_use]
+    pub fn login_count(&self) -> usize {
+        self.observed().logins
+    }
+
+    /// Command names in arrival order. Arguments, including passwords, are not stored.
+    #[must_use]
+    pub fn commands(&self) -> Vec<&'static str> {
+        self.observed().commands.clone()
+    }
+
+    fn observed(&self) -> std::sync::MutexGuard<'_, Observed> {
+        self.observed.lock().expect("observed lock")
     }
 
     /// Opens one client half of a duplex and serves IMAP on the other half.
@@ -48,14 +86,23 @@ impl FakeImap {
     pub fn connect(&self) -> DuplexStream {
         let (client, server) = tokio::io::duplex(64 * 1024);
         let script = self.script.clone();
+        let observed = Arc::clone(&self.observed);
         tokio::spawn(async move {
-            let _ = serve(server, script).await;
+            let _ = serve(server, script, observed).await;
         });
         client
     }
 }
 
-async fn serve(mut stream: DuplexStream, script: FakeScript) -> io::Result<()> {
+async fn serve(
+    mut stream: DuplexStream,
+    script: FakeScript,
+    observed: Arc<Mutex<Observed>>,
+) -> io::Result<()> {
+    {
+        let mut observed = observed.lock().expect("observed lock");
+        observed.connections += 1;
+    }
     stream.write_all(&greeting()).await?;
     stream.flush().await?;
 
@@ -68,6 +115,13 @@ async fn serve(mut stream: DuplexStream, script: FakeScript) -> io::Result<()> {
                 let consumed = buf.len() - rest.len();
                 if consumed == 0 {
                     break;
+                }
+                {
+                    let mut observed = observed.lock().expect("observed lock");
+                    observed.commands.push(command.name());
+                    if matches!(command.body, CommandBody::Login { .. }) {
+                        observed.logins += 1;
+                    }
                 }
                 let reply = encode_reply(&command, &script);
                 buf.drain(..consumed);
@@ -100,9 +154,9 @@ fn encode_reply(command: &Command<'_>, script: &FakeScript) -> Vec<u8> {
     let tag = &command.tag;
     match &command.body {
         CommandBody::Login { .. } if script.reject_login => {
-            tagged(Status::no(Some(tag.clone()), None, "authentication failed").expect("no text"))
+            tagged(Status::no(Some(tag.clone()), None, "server-said-no").expect("no text"))
         }
-        CommandBody::Login { .. } => tagged_ok(tag),
+        CommandBody::Login { .. } | CommandBody::Noop => tagged_ok(tag),
         CommandBody::Capability => {
             let mut bytes = untagged(
                 Data::capability(names(&[

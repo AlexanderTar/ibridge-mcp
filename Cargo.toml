@@ -50,6 +50,7 @@ libdav = "0.11.2"
 mail-builder = { version = "2.0.1", default-features = false }
 mail-parser = "1.0"
 proptest = "1"
+rmcp = { version = "3.10", default-features = false }
 roxmltree = "0.21"
 secrecy = "0.10"
 serde = "1"

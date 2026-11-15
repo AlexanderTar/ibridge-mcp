@@ -7,5 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "MCP server, tool routers and error mapping."
 
+[dependencies]
+ibridge-core.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "schemars"] }
+
 [lints]
 workspace = true

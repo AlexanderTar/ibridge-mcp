@@ -58,7 +58,7 @@ pub enum Scope {
 }
 
 impl Scope {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Read => "icloud.read",
             Self::ReadWrite => "icloud.read icloud.write",
@@ -177,6 +177,11 @@ pub struct Store {
 }
 
 impl Store {
+    /// The connection pool, for tables other modules own.
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// Opens an in-memory store and applies the schema.
     ///
     /// # Errors
@@ -234,6 +239,21 @@ impl Store {
         settle(tx, result).await
     }
 
+    /// Seals the password a live check accepted under a new authorization code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Internal`] when the row cannot be written.
+    pub async fn seal_validated_under_code(
+        &self,
+        validated: &ValidatedCredentials,
+        scope: Scope,
+        now: SystemTime,
+    ) -> Result<IssuedCode, StoreError> {
+        self.seal_under_code(&validated.apple_id, &validated.secret, scope, now)
+            .await
+    }
+
     /// Exchanges a code for an access token and a refresh token, then deletes the code ciphertext.
     ///
     /// A second presentation of the same code revokes the grant.
@@ -254,6 +274,32 @@ impl Store {
         let mut tx = begin(&self.pool).await?;
         let result = exchange_in(&mut tx, code, now).await;
         settle(tx, result).await
+    }
+
+    /// Revokes the grant when `code` was already exchanged, and does nothing for any other code.
+    ///
+    /// For a caller that refused a code on its own grounds (it is no longer pending, or
+    /// its binding did not match). A live code is never exchanged here, so the caller's
+    /// checks cannot be skipped by presenting it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Internal`] when the database cannot be updated.
+    pub async fn revoke_if_code_spent(&self, code: &str) -> Result<(), StoreError> {
+        if !known_token(&self.pool, code).await? {
+            return Ok(());
+        }
+        let mut tx = begin(&self.pool).await?;
+        let hit = match load(&mut tx, code).await {
+            Ok(hit) => hit,
+            Err(StoreError::InvalidToken) => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        if hit.purpose != PURPOSE_CODE_SPENT {
+            return Ok(());
+        }
+        revoke(&mut tx, &hit.grant_id).await?;
+        tx.commit().await.map_err(internal)
     }
 
     /// Opens the password for this call. The access or API-key seal stays in the database.
@@ -408,7 +454,7 @@ async fn rollback(tx: WriteTx, err: sqlx::Error) -> StoreError {
     }
 }
 
-fn internal(err: impl Error + Send + Sync + 'static) -> StoreError {
+pub(crate) fn internal(err: impl Error + Send + Sync + 'static) -> StoreError {
     StoreError::Internal {
         source: Box::new(err),
     }
@@ -1210,6 +1256,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(from_refresh.secret.expose_secret(), ASP);
+    }
+
+    #[tokio::test]
+    async fn revoke_if_code_spent_leaves_a_live_code_alone() {
+        let store = Store::memory().await.unwrap();
+        let now = at(0);
+        let code = seal_code(&store, now).await;
+        let code_secret = code.code.expose_secret().to_owned();
+        store.revoke_if_code_spent(&code_secret).await.unwrap();
+        store.revoke_if_code_spent("ibc_unknown").await.unwrap();
+        let tokens = store.exchange_code(&code_secret, now).await;
+        assert!(tokens.is_ok(), "a live code still exchanges: {tokens:?}");
     }
 
     #[tokio::test]

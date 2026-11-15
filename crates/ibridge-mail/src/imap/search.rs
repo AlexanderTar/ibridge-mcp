@@ -2,8 +2,9 @@
 
 //! Mailbox search.
 
-use async_imap::types::Flag;
-use futures::StreamExt;
+use std::collections::HashMap;
+
+use async_imap::imap_proto::{AttributeValue, MailboxDatum, Response};
 use ibridge_core::{
     CoreError, MailSearch, MailboxPath, MessageId, MessageSummary, Uid, UidValidity,
 };
@@ -19,7 +20,7 @@ pub struct SearchPage {
     pub warnings: u32,
 }
 
-use super::pool::{Connect, ImapPool, map_command};
+use super::pool::{Connect, ImapPool, map_command, run_checked};
 
 const DEFAULT_LIMIT: u32 = 25;
 const MAX_LIMIT: u32 = 100;
@@ -75,57 +76,73 @@ async fn search_with<C: Connect>(
         .ok_or_else(|| CoreError::Protocol("imap command failed".to_owned()))?;
     let validity = UidValidity::try_from(validity)
         .map_err(|_| CoreError::Protocol("imap command failed".to_owned()))?;
-    let uids = session
-        .uid_search(criteria)
-        .await
-        .map_err(|error| map_command(&error))?;
-    if uids.is_empty() {
+    let mut uids = Vec::new();
+    let searched = run_checked(session, &format!("UID SEARCH {criteria}"), |response| {
+        if let Response::MailboxData(MailboxDatum::Search(ids)) = response {
+            uids.extend(ids.iter().copied());
+        }
+    })
+    .await?;
+    let mut warnings = u32::from(searched.unparsed);
+    if searched.unparsed || uids.is_empty() {
         return Ok(SearchPage {
             messages: Vec::new(),
             next_cursor: None,
-            warnings: 0,
+            warnings,
         });
     }
-    let set = uids
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    // ponytail: each hit's body is downloaded so one bad message can be skipped. Use BODYSTRUCTURE when mailboxes get large.
-    let mut fetches = session
-        .uid_fetch(set, "(UID INTERNALDATE FLAGS ENVELOPE BODY.PEEK[])")
-        .await
-        .map_err(|error| map_command(&error))?;
+    // ponytail: one UID FETCH for every search hit; chunk the set if a mailbox's search line exceeds the server command limit.
     let mut hits = Vec::new();
-    let mut warnings = 0_u32;
-    while let Some(item) = fetches.next().await {
-        let fetch = item.map_err(|error| map_command(&error))?;
-        let Some(uid) = fetch.uid else {
-            continue;
-        };
-        if !fetch.body().is_some_and(super::mime::parses) {
-            warnings = warnings.saturating_add(1);
-            continue;
-        }
-        let Some(internal) = fetch.internal_date() else {
-            continue;
-        };
-        hits.push(Hit {
-            uid,
-            day: internal.format("%Y-%m-%d").to_string(),
-            from: from_text(&fetch),
-            subject: subject_text(&fetch),
-            unread: !fetch.flags().any(|flag| matches!(flag, Flag::Seen)),
-            flagged: fetch.flags().any(|flag| matches!(flag, Flag::Flagged)),
-        });
+    let meta = run_checked(
+        session,
+        &format!(
+            "UID FETCH {} (UID INTERNALDATE FLAGS ENVELOPE)",
+            uid_list(&uids)
+        ),
+        |response| {
+            let Response::Fetch(_, attributes) = response else {
+                return;
+            };
+            match hit_from(attributes) {
+                Some(hit) => hits.push(hit),
+                None => warnings = warnings.saturating_add(skip_warnings(attributes)),
+            }
+        },
+    )
+    .await?;
+    if meta.unparsed {
+        warnings = warnings.saturating_add(1);
     }
-    drop(fetches);
-    hits.sort_by(|left, right| right.day.cmp(&left.day).then(right.uid.cmp(&left.uid)));
-    page(path, validity, &hits, query, warnings)
+    hits.sort_by(|left, right| right.unix.cmp(&left.unix).then(right.uid.cmp(&left.uid)));
+    // A line the parser rejected closes the stream, so the bodies cannot be read.
+    if meta.unparsed {
+        return page(path, validity, &hits, query, warnings, None);
+    }
+    let (start, end) = window(&hits, query)?;
+    if start == end {
+        return page(path, validity, &hits, query, warnings, None);
+    }
+    let page_uids: Vec<u32> = hits[start..end].iter().map(|hit| hit.uid).collect();
+    let mut bodies = HashMap::new();
+    let bodies_reply = run_checked(
+        session,
+        &format!("UID FETCH {} (BODY.PEEK[])", uid_list(&page_uids)),
+        |response| {
+            if let Some((uid, body)) = body_of(response) {
+                bodies.insert(uid, body);
+            }
+        },
+    )
+    .await?;
+    if bodies_reply.unparsed {
+        warnings = warnings.saturating_add(1);
+    }
+    page(path, validity, &hits, query, warnings, Some(&bodies))
 }
 
 struct Hit {
     uid: u32,
+    unix: i64,
     day: String,
     from: String,
     subject: String,
@@ -133,28 +150,106 @@ struct Hit {
     flagged: bool,
 }
 
+fn uid_list(uids: &[u32]) -> String {
+    uids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn skip_warnings(attributes: &[AttributeValue<'_>]) -> u32 {
+    let has_uid = attributes
+        .iter()
+        .any(|attribute| matches!(attribute, AttributeValue::Uid(uid) if *uid != 0));
+    let has_date = attributes.iter().any(|attribute| {
+        matches!(
+            attribute,
+            AttributeValue::InternalDate(value)
+                if unix_from_internal(value).is_some() && calendar_day(value).is_some()
+        )
+    });
+    u32::from(!has_uid) + u32::from(!has_date)
+}
+
+fn hit_from(attributes: &[AttributeValue<'_>]) -> Option<Hit> {
+    let uid = attributes.iter().find_map(|attribute| match attribute {
+        AttributeValue::Uid(uid) if *uid != 0 => Some(*uid),
+        _ => None,
+    })?;
+    let internal = attributes.iter().find_map(|attribute| match attribute {
+        AttributeValue::InternalDate(value) => Some(value.as_ref()),
+        _ => None,
+    })?;
+    let unix = unix_from_internal(internal)?;
+    let day = calendar_day(internal)?;
+    let flags = flag_names(attributes);
+    Some(Hit {
+        uid,
+        unix,
+        day,
+        from: from_text(attributes),
+        subject: subject_text(attributes),
+        unread: !flags.iter().any(|flag| flag.eq_ignore_ascii_case("\\Seen")),
+        flagged: flags
+            .iter()
+            .any(|flag| flag.eq_ignore_ascii_case("\\Flagged")),
+    })
+}
+
+fn body_of(response: &Response<'_>) -> Option<(u32, Vec<u8>)> {
+    let Response::Fetch(_, attributes) = response else {
+        return None;
+    };
+    let uid = attributes.iter().find_map(|attribute| match attribute {
+        AttributeValue::Uid(uid) => Some(*uid),
+        _ => None,
+    })?;
+    let body = attributes.iter().find_map(|attribute| match attribute {
+        AttributeValue::BodySection {
+            section: None,
+            data: Some(data),
+            ..
+        }
+        | AttributeValue::Rfc822(Some(data)) => Some(data.to_vec()),
+        _ => None,
+    })?;
+    Some((uid, body))
+}
+
+fn window(hits: &[Hit], query: &MailSearch) -> Result<(usize, usize), CoreError> {
+    let limit = page_limit(query.limit);
+    let start = match &query.cursor {
+        None => 0,
+        Some(cursor) => {
+            let (unix, uid) = parse_cursor(cursor)?;
+            hits.iter()
+                .position(|hit| hit.unix < unix || (hit.unix == unix && hit.uid < uid))
+                .unwrap_or(hits.len())
+        }
+    };
+    Ok((start, start.saturating_add(limit).min(hits.len())))
+}
+
 fn page(
     path: &MailboxPath,
     validity: UidValidity,
     hits: &[Hit],
     query: &MailSearch,
-    warnings: u32,
+    mut warnings: u32,
+    bodies: Option<&HashMap<u32, Vec<u8>>>,
 ) -> Result<SearchPage, CoreError> {
-    let limit = page_limit(query.limit);
-    let start = match &query.cursor {
-        None => 0,
-        Some(cursor) => {
-            let (day, uid) = parse_cursor(cursor)?;
-            hits.iter()
-                .position(|hit| {
-                    hit.day.as_str() < day.as_str() || (hit.day == day && hit.uid < uid)
-                })
-                .unwrap_or(hits.len())
-        }
-    };
-    let end = start.saturating_add(limit).min(hits.len());
-    let mut messages = Vec::with_capacity(end.saturating_sub(start));
+    let (start, end) = window(hits, query)?;
+    let mut messages = Vec::new();
     for hit in &hits[start..end] {
+        if let Some(bodies) = bodies {
+            let parsed = bodies
+                .get(&hit.uid)
+                .is_some_and(|bytes| crate::mime::parses(bytes));
+            if !parsed {
+                warnings = warnings.saturating_add(1);
+                continue;
+            }
+        }
         let uid = Uid::try_from(hit.uid)
             .map_err(|_| CoreError::Protocol("imap command failed".to_owned()))?;
         messages.push(MessageSummary {
@@ -171,7 +266,7 @@ fn page(
         });
     }
     let next_cursor = if end > start && end < hits.len() {
-        Some(format!("{}:{}", hits[end - 1].day, hits[end - 1].uid))
+        Some(format!("{}:{}", hits[end - 1].unix, hits[end - 1].uid))
     } else {
         None
     };
@@ -191,17 +286,15 @@ fn page_limit(limit: u32) -> usize {
     usize::try_from(capped).unwrap_or(usize::try_from(MAX_LIMIT).unwrap_or(25))
 }
 
-fn parse_cursor(cursor: &str) -> Result<(String, u32), CoreError> {
-    let Some((day, uid)) = cursor.rsplit_once(':') else {
+fn parse_cursor(cursor: &str) -> Result<(i64, u32), CoreError> {
+    let Some((stamp, uid)) = cursor.rsplit_once(':') else {
         return Err(CoreError::InvalidInput(
             "search cursor is not valid".to_owned(),
         ));
     };
-    if day.len() != 10 {
-        return Err(CoreError::InvalidInput(
-            "search cursor is not valid".to_owned(),
-        ));
-    }
+    let unix = stamp
+        .parse()
+        .map_err(|_| CoreError::InvalidInput("search cursor is not valid".to_owned()))?;
     let uid = uid
         .parse()
         .map_err(|_| CoreError::InvalidInput("search cursor is not valid".to_owned()))?;
@@ -210,22 +303,31 @@ fn parse_cursor(cursor: &str) -> Result<(String, u32), CoreError> {
             "search cursor is not valid".to_owned(),
         ));
     }
-    Ok((day.to_owned(), uid))
+    Ok((unix, uid))
 }
 
 fn criteria(query: &MailSearch) -> Result<String, CoreError> {
     let mut parts = Vec::new();
+    let mut charset = false;
     if let Some(from) = &query.from {
-        parts.push(format!("FROM {}", quote_atom(from)));
+        let (quoted, non_ascii) = quote_atom(from)?;
+        charset |= non_ascii;
+        parts.push(format!("FROM {quoted}"));
     }
     if let Some(to) = &query.to {
-        parts.push(format!("TO {}", quote_atom(to)));
+        let (quoted, non_ascii) = quote_atom(to)?;
+        charset |= non_ascii;
+        parts.push(format!("TO {quoted}"));
     }
     if let Some(subject) = &query.subject {
-        parts.push(format!("SUBJECT {}", quote_atom(subject)));
+        let (quoted, non_ascii) = quote_atom(subject)?;
+        charset |= non_ascii;
+        parts.push(format!("SUBJECT {quoted}"));
     }
     if let Some(text) = &query.text {
-        parts.push(format!("TEXT {}", quote_atom(text)));
+        let (quoted, non_ascii) = quote_atom(text)?;
+        charset |= non_ascii;
+        parts.push(format!("TEXT {quoted}"));
     }
     if let Some(since) = &query.since {
         parts.push(format!("SINCE {}", imap_date(since)?));
@@ -242,18 +344,31 @@ fn criteria(query: &MailSearch) -> Result<String, CoreError> {
     if parts.is_empty() {
         parts.push("ALL".to_owned());
     }
+    if charset {
+        parts.insert(0, "CHARSET UTF-8".to_owned());
+    }
     Ok(parts.join(" "))
 }
 
-fn quote_atom(value: &str) -> String {
-    let plain = value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'));
-    if plain && !value.is_empty() {
-        return value.to_owned();
+fn quote_atom(value: &str) -> Result<(String, bool), CoreError> {
+    if value.chars().any(|ch| matches!(ch, '\r' | '\n' | '\0')) {
+        return Err(CoreError::InvalidInput(
+            "search text cannot contain a line break".to_owned(),
+        ));
+    }
+    if !value.is_ascii() {
+        // ponytail: literals are sent in the same write; switch to a continuation handshake if a server refuses to read the literal until it has sent `+`.
+        return Ok((format!("{{{}}}\r\n{value}", value.len()), true));
+    }
+    let plain = !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'));
+    if plain {
+        return Ok((value.to_owned(), false));
     }
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    Ok((format!("\"{escaped}\""), false))
 }
 
 fn imap_date(iso: &str) -> Result<String, CoreError> {
@@ -301,9 +416,8 @@ fn imap_date(iso: &str) -> Result<String, CoreError> {
     Ok(format!("{day_num}-{month_name}-{year}"))
 }
 
-fn from_text(fetch: &async_imap::types::Fetch) -> String {
-    let Some(address) = fetch
-        .envelope()
+fn from_text(attributes: &[AttributeValue<'_>]) -> String {
+    let Some(address) = envelope(attributes)
         .and_then(|envelope| envelope.from.as_ref())
         .and_then(|addresses| addresses.first())
     else {
@@ -318,13 +432,33 @@ fn from_text(fetch: &async_imap::types::Fetch) -> String {
     }
 }
 
-fn subject_text(fetch: &async_imap::types::Fetch) -> String {
-    fetch
-        .envelope()
+fn subject_text(attributes: &[AttributeValue<'_>]) -> String {
+    envelope(attributes)
         .and_then(|envelope| envelope.subject.as_ref())
         .map_or(String::new(), |subject| {
             String::from_utf8_lossy(subject).into_owned()
         })
+}
+
+fn envelope<'a>(
+    attributes: &'a [AttributeValue<'a>],
+) -> Option<&'a async_imap::imap_proto::Envelope<'a>> {
+    attributes.iter().find_map(|attribute| match attribute {
+        AttributeValue::Envelope(envelope) => Some(envelope.as_ref()),
+        _ => None,
+    })
+}
+
+fn flag_names<'a>(attributes: &'a [AttributeValue<'a>]) -> Vec<&'a str> {
+    attributes
+        .iter()
+        .find_map(|attribute| match attribute {
+            AttributeValue::Flags(flags) => {
+                Some(flags.iter().map(AsRef::as_ref).collect::<Vec<_>>())
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 fn lossy(value: Option<&[u8]>) -> String {
@@ -333,9 +467,111 @@ fn lossy(value: Option<&[u8]>) -> String {
     })
 }
 
+fn calendar_day(value: &str) -> Option<String> {
+    let (day, month, year) = split_date(value)?;
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+fn unix_from_internal(value: &str) -> Option<i64> {
+    let (day, month, year) = split_date(value)?;
+    let mut parts = value.split_whitespace();
+    let _date = parts.next()?;
+    let time = parts.next()?;
+    let zone = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let mut clock = time.split(':');
+    let hour: u32 = clock.next()?.parse().ok()?;
+    let minute: u32 = clock.next()?.parse().ok()?;
+    let second: u32 = clock.next()?.parse().ok()?;
+    if clock.next().is_some() || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let offset = zone_offset(zone)?;
+    let days = days_from_civil(year, month, day)?;
+    let local = days
+        .checked_mul(86_400)?
+        .checked_add(i64::from(hour) * 3_600)?
+        .checked_add(i64::from(minute) * 60)?
+        .checked_add(i64::from(second))?;
+    local.checked_sub(offset)
+}
+
+fn split_date(value: &str) -> Option<(u32, u32, i32)> {
+    let date = value.split_whitespace().next()?;
+    let mut parts = date.split('-');
+    let day: u32 = parts.next()?.trim().parse().ok()?;
+    let month = month_index(parts.next()?)?;
+    let year: i32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || day == 0 || day > 31 {
+        return None;
+    }
+    Some((day, month, year))
+}
+
+fn month_index(name: &str) -> Option<u32> {
+    Some(match name {
+        "Jan" => 1,
+        "Feb" => 2,
+        "Mar" => 3,
+        "Apr" => 4,
+        "May" => 5,
+        "Jun" => 6,
+        "Jul" => 7,
+        "Aug" => 8,
+        "Sep" => 9,
+        "Oct" => 10,
+        "Nov" => 11,
+        "Dec" => 12,
+        _ => return None,
+    })
+}
+
+fn zone_offset(zone: &str) -> Option<i64> {
+    let (sign, rest) = zone.split_at_checked(1)?;
+    if rest.len() != 4 {
+        return None;
+    }
+    let hours: i64 = rest[..2].parse().ok()?;
+    let minutes: i64 = rest[2..].parse().ok()?;
+    if hours > 23 || minutes > 59 {
+        return None;
+    }
+    let seconds = hours * 3_600 + minutes * 60;
+    match sign {
+        "+" => Some(seconds),
+        "-" => Some(-seconds),
+        _ => None,
+    }
+}
+
+/// Days since the Unix epoch for a civil date. Howard Hinnant's `days_from_civil`.
+fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
+    if !(1..=12).contains(&month) || day == 0 || day > 31 {
+        return None;
+    }
+    let year = if month <= 2 {
+        year.checked_sub(1)?
+    } else {
+        year
+    };
+    let era = year.div_euclid(400);
+    let year_of_era = u64::try_from(year.checked_sub(era.checked_mul(400)?)?).ok()?;
+    let month_prime = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era =
+        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + u64::from(day_of_year);
+    let days = i64::from(era)
+        .checked_mul(146_097)?
+        .checked_add(i64::try_from(day_of_era).ok()?)?
+        .checked_sub(719_468)?;
+    Some(days)
+}
+
 #[cfg(test)]
 mod tests {
-    use ibridge_core::{MailSearch, MailboxPath};
+    use ibridge_core::{CoreError, MailSearch, MailboxPath};
     use ibridge_testkit::imap_fake::FakeScript;
 
     use super::super::support::pool;
@@ -448,5 +684,171 @@ mod tests {
             .collect();
         assert_eq!(rest_uids, vec![50], "the oldest message follows the cursor");
         assert!(rest.next_cursor.is_none(), "the last page has no cursor");
+    }
+
+    #[tokio::test]
+    async fn search_refuses_a_value_that_breaks_out_of_the_command() {
+        let (fake, pooled) = pool(FakeScript::default());
+        let injected = "x\r\nA9 UID STORE 1:* +FLAGS (\\Deleted)\r\nA10 EXPUNGE";
+        let error = pooled
+            .search(&MailSearch {
+                mailbox: Some(MailboxPath::try_from("INBOX").expect("inbox")),
+                text: Some(injected.to_owned()),
+                ..query()
+            })
+            .await
+            .expect_err("a value with a line break is rejected");
+        assert!(
+            matches!(error, CoreError::InvalidInput(_)),
+            "the value is invalid input, got {error:?}"
+        );
+        assert!(
+            !fake.saw("UID STORE") && !fake.saw("EXPUNGE"),
+            "the injected command must not be written"
+        );
+        let nul = pooled
+            .search(&MailSearch {
+                mailbox: Some(MailboxPath::try_from("INBOX").expect("inbox")),
+                subject: Some("a\0b".to_owned()),
+                ..query()
+            })
+            .await
+            .expect_err("NUL is rejected");
+        assert!(matches!(nul, CoreError::InvalidInput(_)), "got {nul:?}");
+    }
+
+    #[tokio::test]
+    async fn search_sends_non_ascii_as_utf8_literals() {
+        let inbox = MailboxPath::try_from("INBOX").expect("inbox");
+        let (fake, pooled) = pool(FakeScript::default());
+        let _page = pooled
+            .search(&MailSearch {
+                mailbox: Some(inbox),
+                subject: Some("für".to_owned()),
+                ..query()
+            })
+            .await
+            .expect("a non-ASCII subject is searchable");
+        let search = fake
+            .lines()
+            .into_iter()
+            .find(|line| line.contains("SEARCH"))
+            .expect("a SEARCH command was sent");
+        assert!(
+            search.contains("CHARSET UTF-8"),
+            "non-ASCII search uses CHARSET UTF-8, line {search:?}"
+        );
+        assert!(
+            search.contains("für"),
+            "the value is sent as UTF-8, line {search:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_fetches_bodies_for_the_page_only() {
+        let inbox = MailboxPath::try_from("INBOX").expect("inbox");
+        let (fake, pooled) = pool(FakeScript::default());
+        let _page = pooled
+            .search(&MailSearch {
+                mailbox: Some(inbox),
+                limit: 2,
+                ..query()
+            })
+            .await
+            .expect("page");
+        let lines = fake.lines();
+        let metadata = lines
+            .iter()
+            .find(|line| line.contains("INTERNALDATE") && !line.contains("BODY"));
+        assert!(
+            metadata.is_some(),
+            "ordering fetches metadata, not every body, commands {lines:?}"
+        );
+        let body = lines
+            .iter()
+            .find(|line| line.contains("BODY.PEEK"))
+            .map_or("", String::as_str);
+        assert!(
+            !body.contains("50") && !body.contains('7'),
+            "bodies are fetched for the page only, line {body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_orders_by_full_internal_date() {
+        let inbox = MailboxPath::try_from("INBOX").expect("inbox");
+        let (_fake, pooled) = pool(FakeScript {
+            later_clock: true,
+            ..FakeScript::default()
+        });
+        let page = pooled
+            .search(&MailSearch {
+                mailbox: Some(inbox),
+                limit: 2,
+                ..query()
+            })
+            .await
+            .expect("page");
+        let uids: Vec<u32> = page
+            .messages
+            .iter()
+            .map(|message| message.id.uid.get())
+            .collect();
+        assert_eq!(
+            uids,
+            vec![2, 4],
+            "the later clock time on the same day comes first"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_counts_a_hit_without_a_date() {
+        let inbox = MailboxPath::try_from("INBOX").expect("inbox");
+        let (_fake, pooled) = pool(FakeScript {
+            missing_date: true,
+            ..FakeScript::default()
+        });
+        let page = pooled
+            .search(&MailSearch {
+                mailbox: Some(inbox),
+                ..query()
+            })
+            .await
+            .expect("a hit without a date does not fail the search");
+        let uids: Vec<u32> = page
+            .messages
+            .iter()
+            .map(|message| message.id.uid.get())
+            .collect();
+        assert!(
+            !uids.contains(&9),
+            "the undated hit is skipped, got {uids:?}"
+        );
+        assert!(
+            page.warnings >= 2,
+            "the undated hit and the unreadable message are both warnings, got {}",
+            page.warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn search_counts_an_unparsed_fetch() {
+        let inbox = MailboxPath::try_from("INBOX").expect("inbox");
+        let (_fake, pooled) = pool(FakeScript {
+            corrupt_fetch: true,
+            ..FakeScript::default()
+        });
+        let page = pooled
+            .search(&MailSearch {
+                mailbox: Some(inbox),
+                ..query()
+            })
+            .await
+            .expect("one unparsed FETCH does not fail the search");
+        assert!(
+            page.warnings >= 1,
+            "the unparsed response is a warning, got {}",
+            page.warnings
+        );
     }
 }

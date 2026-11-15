@@ -21,11 +21,33 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 
 /// Which iCloud quirks a [`FakeImap`] injects.
 #[derive(Clone, Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each field is one independent server quirk a test turns on"
+)]
 pub struct FakeScript {
     /// `LOGIN` is rejected.
     pub reject_login: bool,
     /// `LIST` answers `NO [THROTTLED]`.
     pub throttle_list: bool,
+    /// `UID SEARCH` answers `NO [THROTTLED]`.
+    pub throttle_search: bool,
+    /// `UID FETCH` answers `NO [THROTTLED]`.
+    pub throttle_fetch: bool,
+    /// `LIST` includes a `\\Noselect` row, a `\\NonExistent` row and a path the client must skip.
+    pub list_noselect: bool,
+    /// `STATUS` for `Notes` answers `NO`.
+    pub fail_status: bool,
+    /// The first `FETCH` response is not valid IMAP.
+    pub corrupt_fetch: bool,
+    /// Search results include a hit whose `FETCH` has no `INTERNALDATE`.
+    pub missing_date: bool,
+    /// The lower inbox UID on 3 Nov has a later clock time.
+    pub later_clock: bool,
+    /// Inbox UID 8 is a text attachment longer than 40,000 characters.
+    pub long_attachment: bool,
+    /// `UIDVALIDITY` advertised by `SELECT`. `None` means 1.
+    pub uid_validity: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -34,6 +56,8 @@ struct Observed {
     logins: usize,
     commands: Vec<&'static str>,
     lines: Vec<String>,
+    /// Bytes of a command the decoder rejected. Successful `LOGIN` is never stored.
+    inbound: Vec<u8>,
 }
 
 /// A scripted IMAP server on an in-memory duplex.
@@ -60,6 +84,7 @@ impl FakeImap {
                 logins: 0,
                 commands: Vec::new(),
                 lines: Vec::new(),
+                inbound: Vec::new(),
             })),
         }
     }
@@ -86,6 +111,14 @@ impl FakeImap {
     #[must_use]
     pub fn lines(&self) -> Vec<String> {
         self.observed().lines.clone()
+    }
+
+    /// Whether a successfully parsed command, or a command the decoder rejected, contains `needle`.
+    #[must_use]
+    pub fn saw(&self, needle: &str) -> bool {
+        let observed = self.observed();
+        observed.lines.iter().any(|line| line.contains(needle))
+            || String::from_utf8_lossy(&observed.inbound).contains(needle)
     }
 
     fn observed(&self) -> std::sync::MutexGuard<'_, Observed> {
@@ -147,7 +180,11 @@ async fn serve(
                 Some(reply)
             }
             Err(CommandDecodeError::Incomplete) => None,
-            Err(_) => break,
+            Err(_) => {
+                let mut observed = observed.lock().expect("observed lock");
+                observed.inbound.extend_from_slice(&buf);
+                break;
+            }
         };
         if let Some(reply) = reply {
             stream.write_all(&reply).await?;
@@ -203,20 +240,20 @@ fn encode_reply(command: &Command<'_>, script: &FakeScript, selected: &str) -> V
             bytes.extend(tagged_ok(tag));
             bytes
         }
-        CommandBody::List { .. } if script.throttle_list => tagged(
-            Status::no(
-                Some(tag.clone()),
-                Some(Code::Other(CodeOther::unvalidated(b"THROTTLED".as_slice()))),
-                "THROTTLED",
-            )
-            .expect("throttle text"),
-        ),
-        CommandBody::List { .. } => list_reply(tag),
+        CommandBody::List { .. } if script.throttle_list => throttled(tag),
+        CommandBody::List { .. } => list_reply(tag, script),
+        CommandBody::Status { mailbox, .. }
+            if script.fail_status && mailbox_name(mailbox) == "Notes" =>
+        {
+            tagged(Status::no(Some(tag.clone()), None, "no status").expect("status text"))
+        }
         CommandBody::Status { mailbox, .. } => status_reply(tag, mailbox),
-        CommandBody::Select { .. } => select_reply(tag, selected),
-        CommandBody::Search { .. } if selected == "INBOX" => search_reply(tag, &[4, 2, 50, 7]),
+        CommandBody::Select { .. } => select_reply(tag, selected, script),
+        CommandBody::Search { .. } if script.throttle_search => throttled(tag),
+        CommandBody::Search { .. } if selected == "INBOX" => search_reply(tag, &inbox_uids(script)),
         CommandBody::Search { .. } => search_reply(tag, &[]),
-        CommandBody::Fetch { .. } if selected == "INBOX" => fetch_inbox(tag),
+        CommandBody::Fetch { .. } if script.throttle_fetch => throttled(tag),
+        CommandBody::Fetch { .. } if selected == "INBOX" => fetch_inbox(tag, script),
         _ => tagged(Status::bad(Some(tag.clone()), None, "unknown").expect("bad text")),
     }
 }
@@ -239,10 +276,15 @@ const MAILBOXES: &[(&str, Option<&str>, u32, u32)] = &[
     ("Notes", None, 0, 0),
 ];
 
-fn list_reply(tag: &Tag<'_>) -> Vec<u8> {
+fn list_reply(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
     let mut bytes = Vec::new();
     for (name, attribute, _, _) in MAILBOXES {
         bytes.extend(untagged(list_data(name, *attribute)));
+    }
+    if script.list_noselect {
+        bytes.extend(untagged(list_data("All Mail", Some("Noselect"))));
+        bytes.extend(untagged(list_data("Ghost", Some("NonExistent"))));
+        bytes.extend(untagged(list_data("http://evil", None)));
     }
     bytes.extend(tagged_ok(tag));
     bytes
@@ -278,17 +320,37 @@ fn status_reply(tag: &Tag<'_>, mailbox: &Mailbox<'_>) -> Vec<u8> {
     bytes
 }
 
-fn select_reply(tag: &Tag<'_>, selected: &str) -> Vec<u8> {
+fn select_reply(tag: &Tag<'_>, selected: &str, script: &FakeScript) -> Vec<u8> {
     let total = MAILBOXES
         .iter()
         .find(|(name, _, _, _)| *name == selected)
         .map_or(0, |(_, _, total, _)| *total);
+    let validity = script.uid_validity.unwrap_or(1);
     let mut bytes = format!(
-        "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n* {total} EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 1] uid\r\n* OK [UIDNEXT 51] uid\r\n"
+        "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n* {total} EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY {validity}] uid\r\n* OK [UIDNEXT 51] uid\r\n"
     )
     .into_bytes();
     bytes.extend(tagged_ok(tag));
     bytes
+}
+
+fn inbox_uids(script: &FakeScript) -> Vec<u32> {
+    let mut uids = vec![4, 2, 50, 7];
+    if script.missing_date {
+        uids.push(9);
+    }
+    uids
+}
+
+fn throttled(tag: &Tag<'_>) -> Vec<u8> {
+    tagged(
+        Status::no(
+            Some(tag.clone()),
+            Some(Code::Other(CodeOther::unvalidated(b"THROTTLED".as_slice()))),
+            "THROTTLED",
+        )
+        .expect("throttle text"),
+    )
 }
 
 fn search_reply(tag: &Tag<'_>, uids: &[u32]) -> Vec<u8> {
@@ -302,37 +364,80 @@ fn search_reply(tag: &Tag<'_>, uids: &[u32]) -> Vec<u8> {
     bytes
 }
 
-fn fetch_inbox(tag: &Tag<'_>) -> Vec<u8> {
+fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
     let mut bytes = Vec::new();
+    if script.corrupt_fetch {
+        bytes.extend(b"* 1 FETCH !!!\r\n");
+    }
     let mut long = vec![b'x'; 40_000];
     long.extend(b"0123456789");
-    let messages: [(u32, &str, Vec<u8>); 4] = [
+    let older_clock = if script.later_clock {
+        "18:00:00"
+    } else {
+        "00:00:00"
+    };
+    let older_head = format!(
+        r#"INTERNALDATE "03-Nov-2026 {older_clock} +0000" FLAGS (\Seen) ENVELOPE (NIL "older-same-day" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#
+    );
+    let mut messages = vec![
         (
             4,
-            r#"INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "newer" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#,
+            r#"INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "newer" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#
+                .to_owned(),
             single_part("text/html; charset=utf-8", b"<p>Hello <b>there</b></p>"),
         ),
         (
             2,
-            r#"INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS (\Seen) ENVELOPE (NIL "older-same-day" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#,
+            older_head,
             single_part("text/plain; charset=utf-8", &long),
         ),
         (
             50,
-            r#"INTERNALDATE "01-Nov-2026 00:00:00 +0000" FLAGS (\Seen \Flagged) ENVELOPE (NIL "oldest" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#,
+            r#"INTERNALDATE "01-Nov-2026 00:00:00 +0000" FLAGS (\Seen \Flagged) ENVELOPE (NIL "oldest" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#
+                .to_owned(),
             note_and_blob(),
         ),
         (
             7,
-            r#"INTERNALDATE "01-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "bad" NIL NIL NIL NIL NIL NIL NIL NIL)"#,
+            r#"INTERNALDATE "01-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "bad" NIL NIL NIL NIL NIL NIL NIL NIL)"#
+                .to_owned(),
             b"not-a-message".to_vec(),
         ),
     ];
+    if script.missing_date {
+        messages.push((
+            9,
+            r#"FLAGS () ENVELOPE (NIL "nodate" NIL NIL NIL NIL NIL NIL NIL NIL)"#.to_owned(),
+            single_part("text/plain; charset=utf-8", b"dated"),
+        ));
+    }
+    if script.long_attachment {
+        messages.push((
+            8,
+            r#"INTERNALDATE "02-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "long" NIL NIL NIL NIL NIL NIL NIL NIL)"#
+                .to_owned(),
+            long_note(),
+        ));
+    }
     for (seq, (uid, head, body)) in messages.into_iter().enumerate() {
         let seq = u32::try_from(seq.saturating_add(1)).unwrap_or(1);
-        push_fetch(&mut bytes, seq, uid, head, &body);
+        push_fetch(&mut bytes, seq, uid, &head, &body);
     }
     bytes.extend(tagged_ok(tag));
+    bytes
+}
+
+fn long_note() -> Vec<u8> {
+    let mut bytes = b"MIME-Version: 1.0\r\n\
+        Content-Type: multipart/mixed; boundary=\"b\"\r\n\
+        \r\n\
+        --b\r\n\
+        Content-Type: text/plain; charset=utf-8\r\n\
+        Content-Disposition: attachment; filename=\"long.txt\"\r\n\
+        \r\n"
+        .to_vec();
+    bytes.extend(std::iter::repeat_n(b'a', 40_010));
+    bytes.extend(b"\r\n--b--");
     bytes
 }
 

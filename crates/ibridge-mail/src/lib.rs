@@ -3,5 +3,6 @@
 //! IMAP and SMTP mail provider.
 
 mod imap;
+mod mime;
 
 pub use imap::ImapPool;

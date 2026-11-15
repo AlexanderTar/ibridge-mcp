@@ -2,11 +2,11 @@
 
 //! Mailbox listing.
 
+use async_imap::imap_proto::{MailboxDatum, Response};
 use async_imap::types::NameAttribute;
-use futures::StreamExt;
 use ibridge_core::{CoreError, Mailbox, MailboxPath, MailboxRole};
 
-use super::pool::{Connect, ImapPool, map_command};
+use super::pool::{Connect, ImapPool, map_command, run_checked};
 
 impl<C: Connect> ImapPool<C> {
     /// Lists mailboxes and maps SPECIAL-USE attributes to roles.
@@ -28,38 +28,53 @@ async fn list_with<C: Connect>(
     let Some(session) = lease.session_mut() else {
         return Err(CoreError::Network);
     };
-    let mut names = session
-        .list(Some(""), Some("*"))
-        .await
-        .map_err(|error| map_command(&error))?;
     let mut found = Vec::new();
-    while let Some(name) = names.next().await {
-        let name = name.map_err(|error| map_command(&error))?;
-        let path = name.name();
-        let role = role_of(path, name.attributes());
-        found.push((path.to_owned(), role));
+    let reply = run_checked(session, "LIST \"\" *", |response| {
+        let Response::MailboxData(MailboxDatum::List(data)) = response else {
+            return;
+        };
+        if unselectable(&data.name_attributes) {
+            return;
+        }
+        let Ok(path) = MailboxPath::try_from(data.name.as_ref()) else {
+            return;
+        };
+        let role = role_of(data.name.as_ref(), &data.name_attributes);
+        found.push((path, role));
+    })
+    .await?;
+    if reply.unparsed {
+        return Err(CoreError::Protocol("imap command failed".to_owned()));
     }
-    drop(names);
-
-    let Some(session) = lease.session_mut() else {
-        return Err(CoreError::Network);
-    };
     let mut mailboxes = Vec::with_capacity(found.len());
     for (path, role) in found {
-        let status = session
-            .status(&path, "(MESSAGES UNSEEN)")
-            .await
-            .map_err(|error| map_command(&error))?;
-        let mailbox_path = MailboxPath::try_from(path.as_str())
-            .map_err(|_| CoreError::Protocol("imap command failed".to_owned()))?;
+        let status = session.status(path.as_str(), "(MESSAGES UNSEEN)").await;
+        let (total, unread) = match status {
+            Ok(status) => (status.exists, status.unseen.unwrap_or(0)),
+            Err(error) => {
+                let mapped = map_command(&error);
+                if matches!(mapped, CoreError::RateLimited { .. }) {
+                    return Err(mapped);
+                }
+                (0, 0)
+            }
+        };
         mailboxes.push(Mailbox {
-            path: mailbox_path,
+            path,
             role,
-            total: status.exists,
-            unread: status.unseen.unwrap_or(0),
+            total,
+            unread,
         });
     }
     Ok(mailboxes)
+}
+
+fn unselectable(attributes: &[NameAttribute<'_>]) -> bool {
+    attributes.iter().any(|attribute| match attribute {
+        NameAttribute::NoSelect => true,
+        NameAttribute::Extension(name) => name.eq_ignore_ascii_case("\\NonExistent"),
+        _ => false,
+    })
 }
 
 /// `\Sent` and the other RFC 6154 attributes win. iCloud's Notes mailbox has no
@@ -117,5 +132,50 @@ mod tests {
             .expect("sent");
         assert_eq!(sent.total, 4, "STATUS MESSAGES");
         assert_eq!(sent.unread, 2, "STATUS UNSEEN");
+    }
+
+    #[tokio::test]
+    async fn list_skips_unselectable_and_a_bad_path() {
+        let (_fake, pooled) = pool(FakeScript {
+            list_noselect: true,
+            ..FakeScript::default()
+        });
+        let boxes = pooled
+            .list_mailboxes()
+            .await
+            .expect("the list still succeeds");
+        let names: Vec<&str> = boxes.iter().map(|mailbox| mailbox.path.as_str()).collect();
+        assert!(
+            names.contains(&"INBOX"),
+            "selectable mailboxes remain, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"All Mail")
+                && !names.contains(&"Ghost")
+                && !names.contains(&"http://evil"),
+            "unselectable rows and a path that is not a mailbox id are skipped, got {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_keeps_a_mailbox_when_its_status_fails() {
+        let (_fake, pooled) = pool(FakeScript {
+            fail_status: true,
+            ..FakeScript::default()
+        });
+        let boxes = pooled
+            .list_mailboxes()
+            .await
+            .expect("one STATUS failure does not fail the list");
+        let notes = boxes
+            .iter()
+            .find(|mailbox| mailbox.path.as_str() == "Notes")
+            .expect("Notes is still listed");
+        assert_eq!(notes.total, 0, "a failed STATUS leaves the counts unknown");
+        assert_eq!(notes.unread, 0);
+        assert!(
+            boxes.iter().any(|mailbox| mailbox.path.as_str() == "INBOX"),
+            "the other mailboxes are still returned"
+        );
     }
 }

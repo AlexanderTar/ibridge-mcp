@@ -11,22 +11,22 @@ const BODY_WINDOW: usize = 40_000;
 const BINARY_LIMIT: usize = 65_536;
 
 /// Whether `bytes` is a message the parser can read.
-pub(super) fn parses(bytes: &[u8]) -> bool {
+pub(crate) fn parses(bytes: &[u8]) -> bool {
     MessageParser::new().parse(bytes).is_some()
 }
 
-pub(super) struct ReadMessage {
-    pub(super) from: String,
-    pub(super) to: Vec<String>,
-    pub(super) subject: String,
-    pub(super) date: String,
-    pub(super) body: String,
-    pub(super) next_offset: Option<usize>,
-    pub(super) attachments: Vec<AttachmentInfo>,
+pub(crate) struct ReadMessage {
+    pub(crate) from: String,
+    pub(crate) to: Vec<String>,
+    pub(crate) subject: String,
+    pub(crate) date: String,
+    pub(crate) body: String,
+    pub(crate) next_offset: Option<usize>,
+    pub(crate) attachments: Vec<AttachmentInfo>,
 }
 
 /// Text window and attachment list for one parsed message.
-pub(super) fn read_message(bytes: &[u8], offset: usize) -> Option<ReadMessage> {
+pub(crate) fn read_message(bytes: &[u8], offset: usize) -> Option<ReadMessage> {
     let message = MessageParser::new().parse(bytes)?;
     let text = message.body_text(0).unwrap_or(Cow::Borrowed(""));
     let (body, next_offset) = window(&text, offset);
@@ -43,35 +43,48 @@ pub(super) fn read_message(bytes: &[u8], offset: usize) -> Option<ReadMessage> {
     })
 }
 
-/// One attachment. Text parts come back as text. A binary part over 64 KiB is refused.
+/// One attachment. Text parts use the same 40,000-scalar window as a body.
+/// A binary part over 64 KiB is refused.
 ///
 /// # Errors
 ///
-/// Returns [`CoreError::NotFound`] when the part is missing, and
+/// Returns [`CoreError::NotFound`] when the part is not an attachment, and
 /// [`CoreError::InvalidInput`] when a binary part is over 64 KiB.
-pub(super) fn read_attachment(bytes: &[u8], part: &str) -> Result<Attachment, CoreError> {
+pub(crate) fn read_attachment(
+    bytes: &[u8],
+    part: &str,
+    offset: usize,
+) -> Result<(Attachment, Option<usize>), CoreError> {
     let message = MessageParser::new()
         .parse(bytes)
         .ok_or(CoreError::NotFound)?;
-    let found = part_by_id(&message, part)?;
+    let found = attachment_part(&message, part)?;
     let info = attachment_info(found);
     if found.is_text() {
-        return Ok(Attachment {
-            info,
-            text: found.text().map(Cow::into_owned),
-            bytes: None,
-        });
+        let text = found.text().unwrap_or(Cow::Borrowed(""));
+        let (windowed, next_offset) = window(&text, offset);
+        return Ok((
+            Attachment {
+                info,
+                text: Some(windowed),
+                bytes: None,
+            },
+            next_offset,
+        ));
     }
     if found.decoded_len() > BINARY_LIMIT {
         return Err(CoreError::InvalidInput(
             "binary attachment is too large".to_owned(),
         ));
     }
-    Ok(Attachment {
-        info,
-        text: None,
-        bytes: Some(found.decoded().into_owned()),
-    })
+    Ok((
+        Attachment {
+            info,
+            text: None,
+            bytes: Some(found.decoded().into_owned()),
+        },
+        None,
+    ))
 }
 
 fn window(text: &str, offset: usize) -> (String, Option<usize>) {
@@ -81,11 +94,14 @@ fn window(text: &str, offset: usize) -> (String, Option<usize>) {
     (body, next_offset)
 }
 
-fn part_by_id<'m>(message: &'m Message<'m>, part: &str) -> Result<MessagePart<'m>, CoreError> {
+fn attachment_part<'m>(message: &'m Message<'m>, part: &str) -> Result<MessagePart<'m>, CoreError> {
     let id = part
         .parse::<mail_parser::PartId>()
         .map_err(|_| CoreError::NotFound)?;
-    message.part(id).ok_or(CoreError::NotFound)
+    message
+        .attachments()
+        .find(|item| item.id() == id)
+        .ok_or(CoreError::NotFound)
 }
 
 fn attachment_info(part: MessagePart<'_>) -> AttachmentInfo {

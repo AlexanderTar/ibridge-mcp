@@ -4,7 +4,6 @@
 
 mod fetch;
 mod mailbox;
-mod mime;
 mod pool;
 mod search;
 

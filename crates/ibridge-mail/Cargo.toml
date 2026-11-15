@@ -9,7 +9,6 @@ description = "IMAP and SMTP mail provider."
 
 [dependencies]
 async-imap.workspace = true
-futures.workspace = true
 ibridge-auth.workspace = true
 mail-parser.workspace = true
 ibridge-core.workspace = true

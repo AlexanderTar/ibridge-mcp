@@ -72,17 +72,6 @@ impl<C: Connect> Lease<'_, C> {
     pub(super) fn session_mut(&mut self) -> Option<&mut async_imap::Session<C::Stream>> {
         self.session.as_mut().map(|idle| &mut idle.session)
     }
-
-    async fn list(&mut self) -> Result<(), CoreError> {
-        let Some(session) = self.session.as_mut() else {
-            return Err(CoreError::Network);
-        };
-        session
-            .session
-            .run_command_and_check_ok("LIST \"\" *")
-            .await
-            .map_err(|error| map_command(&error))
-    }
 }
 
 /// Two IMAP sessions for one account, reused after `NOOP` while they are fresh.
@@ -152,18 +141,6 @@ impl<C: Connect> ImapPool<C> {
             session: Some(session),
             permit: Some(permit),
         })
-    }
-
-    /// Runs `LIST` on a pooled session.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CoreError::RateLimited`] when the server answers `NO [THROTTLED]`.
-    pub async fn list(&self) -> Result<(), CoreError> {
-        let mut lease = self.checkout().await?;
-        let listed = lease.list().await;
-        lease.release();
-        listed
     }
 
     async fn reuse(&self) -> Option<IdleSession<C::Stream>> {
@@ -245,6 +222,81 @@ pub(super) fn map_command(error: &ImapError) -> CoreError {
     }
 }
 
+/// How a command finished. Untagged replies are handed to the caller as they arrive.
+pub(super) struct Checked {
+    /// The stream stopped on a line the parser could not read.
+    pub(super) unparsed: bool,
+}
+
+/// Runs a command and reads through the tagged completion.
+///
+/// `Session::list` and `Session::uid_fetch` stop before that completion, so a
+/// `NO [THROTTLED]` there never becomes an error. `on_item` sees each untagged
+/// reply and must copy anything it keeps.
+///
+/// # Errors
+///
+/// Returns [`CoreError::RateLimited`] when the tagged status mentions `THROTTLED`,
+/// [`CoreError::Network`] when the stream ends, and [`CoreError::Protocol`] for any
+/// other failed status. Server text is not copied into the error.
+pub(super) async fn run_checked<S>(
+    session: &mut async_imap::Session<S>,
+    command: &str,
+    mut on_item: impl FnMut(&async_imap::imap_proto::Response<'_>),
+) -> Result<Checked, CoreError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + fmt::Debug + Send,
+{
+    let id = session
+        .run_command(command)
+        .await
+        .map_err(|error| map_command(&error))?;
+    loop {
+        match session.read_response().await {
+            Ok(Some(response)) => {
+                let finished = match response.parsed() {
+                    async_imap::imap_proto::Response::Done {
+                        tag,
+                        status,
+                        outcome,
+                    } if tag == &id => Some(done_status(status, outcome)),
+                    _ => None,
+                };
+                if let Some(finished) = finished {
+                    finished?;
+                    return Ok(Checked { unparsed: false });
+                }
+                on_item(response.parsed());
+            }
+            Ok(None) => return Err(CoreError::Network),
+            Err(error) => {
+                if error.to_string().contains("during parsing") {
+                    return Ok(Checked { unparsed: true });
+                }
+                return Err(CoreError::Network);
+            }
+        }
+    }
+}
+
+fn done_status(
+    status: &async_imap::imap_proto::Status,
+    outcome: &async_imap::imap_proto::Outcome<'_>,
+) -> Result<(), CoreError> {
+    if matches!(status, async_imap::imap_proto::Status::Ok) {
+        return Ok(());
+    }
+    let rendered = format!(
+        "{:?} {}",
+        outcome.code,
+        outcome.information.as_deref().unwrap_or("")
+    );
+    if rendered.to_ascii_uppercase().contains("THROTTLED") {
+        return Err(CoreError::RateLimited { retry_after: None });
+    }
+    Err(CoreError::Protocol("imap command failed".to_owned()))
+}
+
 fn throttled(error: &ImapError) -> bool {
     let text = match error {
         ImapError::No(text) | ImapError::Bad(text) => text.as_str(),
@@ -257,7 +309,7 @@ fn throttled(error: &ImapError) -> bool {
 mod tests {
     use std::time::Duration;
 
-    use ibridge_core::CoreError;
+    use ibridge_core::{CoreError, MailSearch, MailboxPath, MessageId, Uid, UidValidity};
     use ibridge_testkit::imap_fake::FakeScript;
 
     use super::super::support::{PASSWORD, pool};
@@ -349,16 +401,78 @@ mod tests {
         assert_eq!(fake.login_count(), 1, "an auth failure sends LOGIN once");
     }
 
+    fn message_id(uid: u32) -> MessageId {
+        MessageId {
+            mailbox: MailboxPath::try_from("INBOX").expect("inbox"),
+            validity: UidValidity::try_from(1).expect("validity"),
+            uid: Uid::try_from(uid).expect("uid"),
+        }
+    }
+
+    fn inbox_query() -> MailSearch {
+        MailSearch {
+            mailbox: Some(MailboxPath::try_from("INBOX").expect("inbox")),
+            role: None,
+            from: None,
+            to: None,
+            subject: None,
+            text: None,
+            since: None,
+            before: None,
+            unread_only: false,
+            flagged_only: false,
+            limit: 25,
+            cursor: None,
+        }
+    }
+
     #[tokio::test]
     async fn throttled_maps_to_rate_limited() {
-        let (_fake, pool) = pool(FakeScript {
+        let (_fake, listed) = pool(FakeScript {
             throttle_list: true,
             ..FakeScript::default()
         });
-        let error = pool.list().await.expect_err("LIST is throttled");
+        let list_error = listed
+            .list_mailboxes()
+            .await
+            .expect_err("LIST is throttled");
         assert!(
-            matches!(error, CoreError::RateLimited { retry_after: None }),
-            "NO [THROTTLED] is rate limited with no retry delay, got {error:?}"
+            matches!(list_error, CoreError::RateLimited { retry_after: None }),
+            "a throttled LIST is rate limited, got {list_error:?}"
+        );
+
+        let (_fake, searched) = pool(FakeScript {
+            throttle_search: true,
+            ..FakeScript::default()
+        });
+        let search_error = searched
+            .search(&inbox_query())
+            .await
+            .expect_err("SEARCH is throttled");
+        assert!(
+            matches!(search_error, CoreError::RateLimited { retry_after: None }),
+            "a throttled UID SEARCH is rate limited, got {search_error:?}"
+        );
+
+        let (_fake, fetched) = pool(FakeScript {
+            throttle_fetch: true,
+            ..FakeScript::default()
+        });
+        let fetch_error = fetched
+            .search(&inbox_query())
+            .await
+            .expect_err("FETCH during search is throttled");
+        assert!(
+            matches!(fetch_error, CoreError::RateLimited { retry_after: None }),
+            "a throttled UID FETCH is rate limited, got {fetch_error:?}"
+        );
+        let message_error = fetched
+            .get_message(&message_id(4), 0)
+            .await
+            .expect_err("FETCH of one message is throttled");
+        assert!(
+            matches!(message_error, CoreError::RateLimited { retry_after: None }),
+            "get_message maps a throttled FETCH to rate limited, got {message_error:?}"
         );
     }
 }

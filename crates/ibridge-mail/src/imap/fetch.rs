@@ -2,11 +2,11 @@
 
 //! Message and attachment fetch.
 
-use futures::StreamExt;
+use async_imap::imap_proto::{AttributeValue, Response};
 use ibridge_core::{Attachment, CoreError, Message, MessageId};
 
-use super::mime;
-use super::pool::{Connect, ImapPool, Lease, map_command};
+use super::pool::{Connect, ImapPool, Lease, map_command, run_checked};
+use crate::mime;
 
 /// A message body window. `next_offset` is the scalar offset of the unread tail.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,6 +14,15 @@ pub struct FetchedMessage {
     /// Headers, the body window, and the attachment list.
     pub message: Message,
     /// Set when another window starts at this scalar offset.
+    pub next_offset: Option<usize>,
+}
+
+/// One attachment. Text parts use the same window as a message body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FetchedAttachment {
+    /// The part that was fetched.
+    pub attachment: Attachment,
+    /// Set when a text part has another window at this scalar offset.
     pub next_offset: Option<usize>,
 }
 
@@ -44,7 +53,7 @@ impl<C: Connect> ImapPool<C> {
         })
     }
 
-    /// Fetches one attachment.
+    /// Fetches one attachment. `offset` is a Unicode scalar index into a text part.
     ///
     /// # Errors
     ///
@@ -53,9 +62,14 @@ impl<C: Connect> ImapPool<C> {
         &self,
         id: &MessageId,
         part: &str,
-    ) -> Result<Attachment, CoreError> {
+        offset: usize,
+    ) -> Result<FetchedAttachment, CoreError> {
         let body = load_body(self, id).await?;
-        mime::read_attachment(&body, part)
+        let (attachment, next_offset) = mime::read_attachment(&body, part, offset)?;
+        Ok(FetchedAttachment {
+            attachment,
+            next_offset,
+        })
     }
 }
 
@@ -73,24 +87,48 @@ async fn fetch_body<C: Connect>(
     let Some(session) = lease.session_mut() else {
         return Err(CoreError::Network);
     };
-    session
+    let selected = session
         .select(id.mailbox.as_str())
         .await
         .map_err(|error| map_command(&error))?;
-    let mut fetches = session
-        .uid_fetch(id.uid.get().to_string(), "(BODY.PEEK[])")
-        .await
-        .map_err(|error| map_command(&error))?;
-    let mut body = None;
-    while let Some(item) = fetches.next().await {
-        let fetch = item.map_err(|error| map_command(&error))?;
-        if fetch.uid == Some(id.uid.get())
-            && let Some(bytes) = fetch.body()
-        {
-            body = Some(bytes.to_vec());
-        }
+    let server_validity = selected
+        .uid_validity
+        .ok_or_else(|| CoreError::Protocol("imap command failed".to_owned()))?;
+    if server_validity != id.validity.get() {
+        return Err(CoreError::NotFound);
     }
-    drop(fetches);
+    let mut body = None;
+    let reply = run_checked(
+        session,
+        &format!("UID FETCH {} (BODY.PEEK[])", id.uid.get()),
+        |response| {
+            let Response::Fetch(_, attributes) = response else {
+                return;
+            };
+            let uid = attributes.iter().find_map(|attribute| match attribute {
+                AttributeValue::Uid(uid) => Some(*uid),
+                _ => None,
+            });
+            let bytes = attributes.iter().find_map(|attribute| match attribute {
+                AttributeValue::BodySection {
+                    section: None,
+                    data: Some(data),
+                    ..
+                }
+                | AttributeValue::Rfc822(Some(data)) => Some(data.as_ref()),
+                _ => None,
+            });
+            if uid == Some(id.uid.get())
+                && let Some(bytes) = bytes
+            {
+                body = Some(bytes.to_vec());
+            }
+        },
+    )
+    .await?;
+    if reply.unparsed && body.is_none() {
+        return Err(CoreError::Protocol("imap command failed".to_owned()));
+    }
     body.ok_or(CoreError::NotFound)
 }
 
@@ -199,12 +237,12 @@ mod tests {
     async fn get_attachment_text_extracted() {
         let (_fake, pooled) = pool(FakeScript::default());
         let attachment = pooled
-            .get_attachment(&message_id(50), "1")
+            .get_attachment(&message_id(50), "1", 0)
             .await
             .expect("text part");
-        assert_eq!(attachment.text.as_deref(), Some("note"));
+        assert_eq!(attachment.attachment.text.as_deref(), Some("note"));
         assert!(
-            attachment.bytes.is_none(),
+            attachment.attachment.bytes.is_none(),
             "text parts are returned as text"
         );
     }
@@ -213,7 +251,7 @@ mod tests {
     async fn get_attachment_binary_over_64k_refused() {
         let (_fake, pooled) = pool(FakeScript::default());
         let error = pooled
-            .get_attachment(&message_id(50), "2")
+            .get_attachment(&message_id(50), "2", 0)
             .await
             .expect_err("a binary over 64 KiB is refused");
         assert!(matches!(error, CoreError::InvalidInput(_)), "got {error:?}");
@@ -241,5 +279,67 @@ mod tests {
             "a bad message is skipped and the others remain, got {uids:?}"
         );
         assert_eq!(page.warnings, 1, "the skip is counted");
+    }
+
+    #[tokio::test]
+    async fn get_message_rejects_stale_uidvalidity() {
+        let (_fake, pooled) = pool(FakeScript {
+            uid_validity: Some(9),
+            ..FakeScript::default()
+        });
+        let error = pooled
+            .get_message(&message_id(4), 0)
+            .await
+            .expect_err("a stale UIDVALIDITY is not that message");
+        assert!(
+            matches!(error, CoreError::NotFound),
+            "UIDVALIDITY mismatch is not found, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_attachment_text_is_windowed() {
+        let (_fake, pooled) = pool(FakeScript {
+            long_attachment: true,
+            ..FakeScript::default()
+        });
+        let first = pooled
+            .get_attachment(&message_id(8), "1", 0)
+            .await
+            .expect("long text attachment");
+        assert_eq!(
+            first
+                .attachment
+                .text
+                .as_deref()
+                .map(str::chars)
+                .map_or(0, std::iter::Iterator::count),
+            40_000,
+            "a text attachment is capped like a body"
+        );
+        assert_eq!(first.next_offset, Some(40_000));
+        let rest = pooled
+            .get_attachment(&message_id(8), "1", 40_000)
+            .await
+            .expect("attachment tail");
+        assert_eq!(
+            rest.attachment.text.as_deref(),
+            Some("aaaaaaaaaa"),
+            "the tail is the unread scalars"
+        );
+        assert_eq!(rest.next_offset, None);
+    }
+
+    #[tokio::test]
+    async fn get_attachment_rejects_a_non_attachment() {
+        let (_fake, pooled) = pool(FakeScript::default());
+        let error = pooled
+            .get_attachment(&message_id(50), "0", 0)
+            .await
+            .expect_err("the whole message is not an attachment");
+        assert!(
+            matches!(error, CoreError::NotFound),
+            "only listed attachments can be fetched, got {error:?}"
+        );
     }
 }

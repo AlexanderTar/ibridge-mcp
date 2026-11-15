@@ -19,4 +19,10 @@ The commands CI runs are listed in `AGENTS.md`. Run that list on a clean tree be
 
 The live Apple test account is `~/.config/ibridge/test-account.env`. Do not create a repo `.env`, and do not print the password.
 
-BeautifulRust is installed with the command in `AGENTS.md`, at the commit named there. Do not enable its remote MCP server.
+Install BeautifulRust with the pinned command in `AGENTS.md`:
+
+```sh
+npx skills add morganlinton/BeautifulRust@b9718436d77ee7bcf17cdcb6aa27628feb95d97a
+```
+
+Do not enable its remote MCP server.

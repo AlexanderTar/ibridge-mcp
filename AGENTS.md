@@ -7,10 +7,10 @@ The binary, crates, keychain service and env prefix are `ibridge`. The git repos
 Use `rust-best-practices` while writing Rust and `rust-review` while reviewing it. Install the skills at user scope, at commit `b9718436d77ee7bcf17cdcb6aa27628feb95d97a`, and do not commit them:
 
 ```sh
-npx skills add morganlinton/BeautifulRust
+npx skills add morganlinton/BeautifulRust@b9718436d77ee7bcf17cdcb6aa27628feb95d97a
 ```
 
-That checkout is pinned to `b9718436d77ee7bcf17cdcb6aa27628feb95d97a`. Never enable BeautifulRust's remote MCP server.
+Never enable BeautifulRust's remote MCP server.
 
 Workspace lints are that commit's `lints/lints.toml`, plus `unsafe_code = "forbid"`. Silence a lint with `#[expect(lint, reason = "...")]` on the narrowest item. Do not use `#[allow]` except in generated code. Do not put `#![deny(warnings)]` in source. CI passes `-D warnings`.
 
@@ -26,7 +26,7 @@ Binary features: `mail`, `calendar`, `contacts`, `stdio` and `http` are on by de
 
 ## Error mapping
 
-Each provider crate maps protocol failures onto `Auth`, `Network`, `Protocol`, `NotFound`, `Conflict`, `RateLimited`, `Unsupported` and `HostNotAllowed`. One conversion in `ibridge-server` turns those into MCP errors:
+Each provider crate maps protocol failures onto `Auth`, `Network`, `Protocol`, `NotFound`, `Conflict`, `RateLimited`, `Unsupported`, `HostNotAllowed` and `InvalidInput`. One conversion in `ibridge-server` turns those into MCP errors:
 
 - Bad input becomes `invalid_params`.
 - `NotFound` and `Conflict` become tool errors that say what to do next.

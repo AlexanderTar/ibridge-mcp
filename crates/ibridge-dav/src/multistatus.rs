@@ -16,6 +16,10 @@ pub struct Entry {
     pub etag: Option<String>,
     /// `calendar-data`.
     pub calendar_data: Option<String>,
+    /// `address-data`.
+    pub address_data: Option<String>,
+    /// `resourcetype` holds `addressbook`.
+    pub is_address_book: bool,
     /// `displayname`.
     pub display_name: Option<String>,
     /// `resourcetype` holds `calendar`.
@@ -28,6 +32,7 @@ pub struct Entry {
 
 const NS_DAV: &str = "DAV:";
 const NS_CALDAV: &str = "urn:ietf:params:xml:ns:caldav";
+const NS_CARDDAV: &str = "urn:ietf:params:xml:ns:carddav";
 
 /// Reads every `response` of a multistatus `body`.
 ///
@@ -85,9 +90,15 @@ fn read_prop(prop: roxmltree::Node<'_, '_>, entry: &mut Entry) {
                 entry.is_calendar = node
                     .children()
                     .any(|child| is(&child, NS_CALDAV, "calendar"));
+                entry.is_address_book = node
+                    .children()
+                    .any(|child| is(&child, NS_CARDDAV, "addressbook"));
             }
             (Some(NS_CALDAV), "calendar-data") => {
                 entry.calendar_data = Some(node.text().unwrap_or_default().to_owned());
+            }
+            (Some(NS_CARDDAV), "address-data") => {
+                entry.address_data = Some(node.text().unwrap_or_default().to_owned());
             }
             (Some(NS_CALDAV), "supported-calendar-component-set") => {
                 entry.components = Some(
@@ -195,6 +206,30 @@ mod tests {
         assert_eq!(entries[1].calendar_data.as_deref(), Some("BEGIN:VCALENDAR"));
         assert!(!entries[1].not_found);
         assert!(entries[2].not_found);
+    }
+
+    #[test]
+    fn parse_reads_address_books_and_cards() {
+        let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/1/carddavhome/card/</D:href>
+    <D:propstat><D:prop>
+      <D:displayname>card</D:displayname>
+      <D:resourcetype><D:collection/><A:addressbook/></D:resourcetype>
+    </D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/1/carddavhome/card/a.vcf</D:href>
+    <D:propstat><D:prop>
+      <D:getetag>"e1"</D:getetag><A:address-data>BEGIN:VCARD</A:address-data>
+    </D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+</D:multistatus>"#;
+        let entries = parse(body.as_bytes()).expect("parse");
+        assert!(entries[0].is_address_book && !entries[0].is_calendar);
+        assert!(!entries[1].is_address_book);
+        assert_eq!(entries[1].address_data.as_deref(), Some("BEGIN:VCARD"));
     }
 
     #[test]

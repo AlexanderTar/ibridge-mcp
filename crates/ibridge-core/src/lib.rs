@@ -15,7 +15,9 @@ pub use calendar::{
     Reminder, ReminderDraft, ReminderList, ReminderPage, RemindersProvider, UPGRADED_LISTS_NOTE,
     UpdateScope,
 };
-pub use contacts::{Contact, ContactDraft, ContactQuery, ContactsProvider, GroupChange};
+pub use contacts::{
+    Contact, ContactDraft, ContactList, ContactQuery, ContactsProvider, GroupChange, LabeledValue,
+};
 pub use error::{CoreError, IdError, ParseError};
 pub use ids::{ETag, ResourcePath, decode, decode_resource, encode, encode_resource};
 pub use mail::{
@@ -168,7 +170,7 @@ mod provider_tests {
         reason = "null provider returns immediately"
     )]
     impl ContactsProvider for NullProvider {
-        async fn search(&self, _query: &ContactQuery) -> Result<Vec<super::Contact>, CoreError> {
+        async fn search(&self, _query: &ContactQuery) -> Result<super::ContactList, CoreError> {
             Err(CoreError::Unsupported("null"))
         }
         async fn get(&self, _path: &super::ResourcePath) -> Result<super::Contact, CoreError> {

@@ -14,6 +14,24 @@ pub struct ContactQuery {
     pub limit: u32,
 }
 
+/// An email address or phone number with the label the card gives it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LabeledValue {
+    /// The address or number. Untrusted content.
+    pub value: String,
+    /// `Home`, `Work`, `Cell` or a custom label. Untrusted content.
+    pub label: Option<String>,
+}
+
+/// Contacts from a search, with a count of cards that were skipped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContactList {
+    /// Matching contacts in name order.
+    pub contacts: Vec<Contact>,
+    /// Cards that could not be read and were left out.
+    pub warnings: u32,
+}
+
 /// One contact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Contact {
@@ -24,9 +42,15 @@ pub struct Contact {
     /// Full name. Untrusted content.
     pub full_name: String,
     /// Email addresses.
-    pub emails: Vec<String>,
+    pub emails: Vec<LabeledValue>,
     /// Phone numbers.
-    pub phones: Vec<String>,
+    pub phones: Vec<LabeledValue>,
+    /// Company. Untrusted content.
+    pub organization: Option<String>,
+    /// Free-text note. Untrusted content.
+    pub note: Option<String>,
+    /// Names of the groups the contact is in. Filled by `get` only. Untrusted content.
+    pub groups: Vec<String>,
 }
 
 /// Fields written by create and update.
@@ -58,7 +82,7 @@ pub trait ContactsProvider {
     /// # Errors
     ///
     /// Returns [`CoreError`] when the search cannot be run.
-    async fn search(&self, query: &ContactQuery) -> Result<Vec<Contact>, CoreError>;
+    async fn search(&self, query: &ContactQuery) -> Result<ContactList, CoreError>;
 
     /// Fetches one contact.
     ///

@@ -2,4 +2,25 @@
 
 //! Contacts provider over `CardDAV`.
 
+mod books;
+mod provider;
+mod search;
+#[cfg(test)]
+mod test_support;
 mod vcard;
+
+use ibridge_dav::DavClient;
+
+/// iCloud contacts through one `CardDAV` client.
+#[derive(Debug)]
+pub struct CardDavProvider {
+    client: DavClient,
+}
+
+impl CardDavProvider {
+    /// Wraps a signed-in `CardDAV` client.
+    #[must_use]
+    pub fn new(client: DavClient) -> Self {
+        Self { client }
+    }
+}

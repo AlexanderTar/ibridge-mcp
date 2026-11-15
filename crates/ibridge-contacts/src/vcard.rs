@@ -9,8 +9,8 @@
 
 use std::collections::BTreeSet;
 
-use calcard::vcard::{VCard, VCardProperty, VCardValue};
-use ibridge_core::{ContactDraft, CoreError};
+use calcard::vcard::{VCard, VCardEntry, VCardParameterName, VCardProperty, VCardValue};
+use ibridge_core::{ContactDraft, CoreError, LabeledValue};
 
 /// Longest full name, in characters.
 const MAX_NAME: usize = 200;
@@ -29,31 +29,120 @@ pub(crate) fn parse(text: &str) -> Option<VCard> {
 /// The values the contacts tools show for a card.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Fields {
+    pub(crate) uid: Option<String>,
     pub(crate) full_name: String,
-    pub(crate) emails: Vec<String>,
-    pub(crate) phones: Vec<String>,
+    pub(crate) emails: Vec<LabeledValue>,
+    pub(crate) phones: Vec<LabeledValue>,
+    pub(crate) organization: Option<String>,
+    pub(crate) note: Option<String>,
+    /// The card is a group: it lists members and is not a person.
+    pub(crate) is_group: bool,
+    /// `UID`s of a group's members.
+    pub(crate) members: Vec<String>,
 }
 
 /// Reads the shown values out of a parsed card.
 pub(crate) fn read(card: &VCard) -> Fields {
-    let texts = |property: &VCardProperty| -> Vec<String> {
-        card.properties(property)
-            .filter_map(|entry| entry.values.first())
-            .filter_map(VCardValue::as_text)
+    let text_of = |entry: &VCardEntry| {
+        entry
+            .values
+            .first()
+            .and_then(VCardValue::as_text)
             .map(|text| text.trim().to_owned())
             .filter(|text| !text.is_empty())
+    };
+    let texts = |property: &VCardProperty| -> Vec<String> {
+        card.properties(property).filter_map(text_of).collect()
+    };
+    let labeled = |property: &VCardProperty| -> Vec<LabeledValue> {
+        card.properties(property)
+            .filter_map(|entry| {
+                Some(LabeledValue {
+                    value: text_of(entry)?,
+                    label: label_of(card, entry),
+                })
+            })
             .collect()
     };
+    let other = |name: &str| -> Vec<&VCardEntry> {
+        card.entries
+            .iter()
+            .filter(|entry| matches!(&entry.name, VCardProperty::Other(n) if n.eq_ignore_ascii_case(name)))
+            .collect()
+    };
+    let organization = texts(&VCardProperty::Org).into_iter().next();
+    let emails = labeled(&VCardProperty::Email);
     let full_name = texts(&VCardProperty::Fn)
         .into_iter()
         .next()
         .or_else(|| name_from_n(card))
+        .or_else(|| organization.clone())
+        .or_else(|| emails.first().map(|email| email.value.clone()))
         .unwrap_or_default();
+    let is_group = card
+        .properties(&VCardProperty::Kind)
+        .chain(other("X-ADDRESSBOOKSERVER-KIND"))
+        .filter_map(text_of)
+        .any(|kind| kind.eq_ignore_ascii_case("group"));
+    let members = card
+        .properties(&VCardProperty::Member)
+        .chain(other("X-ADDRESSBOOKSERVER-MEMBER"))
+        .filter_map(text_of)
+        .map(|member| {
+            member
+                .strip_prefix("urn:uuid:")
+                .unwrap_or(&member)
+                .to_owned()
+        })
+        .collect();
     Fields {
+        uid: card.uid().map(str::to_owned),
         full_name,
-        emails: texts(&VCardProperty::Email),
-        phones: texts(&VCardProperty::Tel),
+        emails,
+        phones: labeled(&VCardProperty::Tel),
+        organization,
+        note: texts(&VCardProperty::Note).into_iter().next(),
+        is_group,
+        members,
     }
+}
+
+/// The label of a value: the `itemN.X-ABLabel` of its group, else its `TYPE`.
+fn label_of(card: &VCard, entry: &VCardEntry) -> Option<String> {
+    let from_group = entry.group.as_ref().and_then(|group| {
+        card.entries
+            .iter()
+            .filter(|other| other.group.as_ref() == Some(group))
+            .filter(|other| {
+                matches!(&other.name, VCardProperty::Other(n) if n.eq_ignore_ascii_case("X-ABLabel"))
+            })
+            .find_map(|other| other.values.first().and_then(VCardValue::as_text))
+    });
+    if let Some(label) = from_group {
+        let label = label
+            .trim()
+            .trim_start_matches("_$!<")
+            .trim_end_matches(">!$_")
+            .trim();
+        if !label.is_empty() {
+            return Some(label.to_owned());
+        }
+    }
+    entry
+        .params
+        .iter()
+        .filter(|param| param.name == VCardParameterName::Type)
+        .filter_map(|param| param.value.as_text())
+        .find(|kind| !["voice", "pref", "internet"].contains(&kind.to_ascii_lowercase().as_str()))
+        .map(|kind| {
+            let mut chars = kind.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first
+                    .to_uppercase()
+                    .chain(chars.flat_map(char::to_lowercase))
+                    .collect()
+            })
+        })
 }
 
 /// `given family` from the structured name, for a card that has no `FN`.
@@ -373,6 +462,10 @@ mod tests {
         "VERSION:3.0\r\n",
     ];
 
+    fn values(items: &[ibridge_core::LabeledValue]) -> Vec<String> {
+        items.iter().map(|item| item.value.clone()).collect()
+    }
+
     fn draft(name: &str, emails: &[&str], phones: &[&str]) -> ContactDraft {
         ContactDraft {
             full_name: name.to_owned(),
@@ -459,8 +552,8 @@ mod tests {
         let card = parse(&text).expect("calcard reads what we wrote");
         let fields = read(&card);
         assert_eq!(fields.full_name, "Grace Hopper");
-        assert_eq!(fields.emails, ["grace@example.com"]);
-        assert_eq!(fields.phones, ["+1 555 0101"]);
+        assert_eq!(values(&fields.emails), ["grace@example.com"]);
+        assert_eq!(values(&fields.phones), ["+1 555 0101"]);
     }
 
     #[test]
@@ -523,8 +616,8 @@ mod tests {
             let created = new_card_text("uid-p", &first).expect("create");
             let fields = read(&parse(&created).expect("calcard reads it"));
             prop_assert_eq!(fields.full_name, name.clone());
-            prop_assert_eq!(fields.emails, emails.iter().cloned().collect::<Vec<_>>());
-            prop_assert_eq!(fields.phones, phones.iter().cloned().collect::<Vec<_>>());
+            prop_assert_eq!(values(&fields.emails), emails.iter().cloned().collect::<Vec<_>>());
+            prop_assert_eq!(values(&fields.phones), phones.iter().cloned().collect::<Vec<_>>());
             // Writing the same values back changes no byte.
             prop_assert_eq!(update_card_text(&created, &first).expect("same"), created.clone());
             // An unknown property survives a change of the touched ones.
@@ -545,7 +638,7 @@ mod tests {
             let again = read(&parse(&edited).expect("still a vCard"));
             prop_assert_eq!(again.phones.len(), later_phones.len());
             for phone in &later_phones {
-                prop_assert!(again.phones.contains(phone), "{phone} missing from {edited:?}");
+                prop_assert!(values(&again.phones).contains(phone), "{phone} missing from {edited:?}");
             }
         }
     }

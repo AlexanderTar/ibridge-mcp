@@ -5,10 +5,12 @@
 //! [`FakeCalDav`] is a small in-memory `CalDAV` server on a loopback port. It
 //! answers discovery, collection listing, `calendar-query` reports and
 //! conditional writes, and it logs every request so tests can assert on what
-//! the provider sent.
+//! the provider sent. [`FakeCardDav`] is the same server speaking `CardDAV`:
+//! address books, `addressbook-query` reports and vCards.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::ops::Deref;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use wiremock::matchers::any;
@@ -18,6 +20,25 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 const PRINCIPAL: &str = "/principals/ada/";
 /// Calendar home path, relative to the server root.
 const HOME: &str = "/ada/calendars/";
+/// Address-book home path, relative to the server root.
+const CARD_HOME: &str = "/ada/carddavhome/";
+
+/// Which DAV dialect the fake speaks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Flavor {
+    #[default]
+    Cal,
+    Card,
+}
+
+impl Flavor {
+    fn home(self) -> &'static str {
+        match self {
+            Self::Cal => HOME,
+            Self::Card => CARD_HOME,
+        }
+    }
+}
 
 /// One request the fake saw.
 #[derive(Clone, Debug)]
@@ -49,6 +70,7 @@ struct Collection {
 
 #[derive(Debug, Default)]
 struct State {
+    flavor: Flavor,
     collections: BTreeMap<String, Collection>,
     log: Vec<LoggedRequest>,
     counter: u64,
@@ -61,11 +83,49 @@ pub struct FakeCalDav {
     state: Arc<Mutex<State>>,
 }
 
+/// An in-memory `CardDAV` server. It shares the resource methods of
+/// [`FakeCalDav`] (`put`, `body`, `files`, `requests`, `base_url`), where a
+/// collection is an address book and a resource is a vCard.
+#[derive(Debug)]
+pub struct FakeCardDav(FakeCalDav);
+
+impl FakeCardDav {
+    /// Starts the fake on a free loopback port with no address books.
+    pub async fn start() -> Self {
+        Self(FakeCalDav::start_with(Flavor::Card).await)
+    }
+
+    /// Adds an address book under the address-book home.
+    pub fn add_book(&self, slug: &str, name: &str) {
+        self.0.add_collection(slug, name, &[]);
+    }
+
+    /// Address-book home path, relative to the server root.
+    pub fn home_path() -> &'static str {
+        CARD_HOME
+    }
+}
+
+impl Deref for FakeCardDav {
+    type Target = FakeCalDav;
+
+    fn deref(&self) -> &FakeCalDav {
+        &self.0
+    }
+}
+
 impl FakeCalDav {
     /// Starts the fake on a free loopback port with no calendars.
     pub async fn start() -> Self {
+        Self::start_with(Flavor::Cal).await
+    }
+
+    async fn start_with(flavor: Flavor) -> Self {
         let server = MockServer::start().await;
-        let state = Arc::new(Mutex::new(State::default()));
+        let state = Arc::new(Mutex::new(State {
+            flavor,
+            ..State::default()
+        }));
         Mock::given(any())
             .respond_with(Responder {
                 state: Arc::clone(&state),
@@ -180,31 +240,48 @@ fn route(state: &mut State, request: &LoggedRequest) -> ResponseTemplate {
     }
 }
 
-fn multistatus(responses: &str) -> ResponseTemplate {
+/// A 207 whose `C:` prefix is the dialect's own namespace.
+fn multistatus(flavor: Flavor, responses: &str) -> ResponseTemplate {
+    let namespace = match flavor {
+        Flavor::Cal => "urn:ietf:params:xml:ns:caldav",
+        Flavor::Card => "urn:ietf:params:xml:ns:carddav",
+    };
     let body = format!(
         "<?xml version=\"1.0\"?><multistatus xmlns=\"DAV:\" \
-         xmlns:C=\"urn:ietf:params:xml:ns:caldav\">{responses}</multistatus>"
+         xmlns:C=\"{namespace}\">{responses}</multistatus>"
     );
     ResponseTemplate::new(207).set_body_raw(body, "application/xml")
 }
 
 fn propfind(state: &State, request: &LoggedRequest) -> ResponseTemplate {
     if request.body.contains("current-user-principal") {
-        return multistatus(&format!(
-            "<response><href>/</href><propstat><prop><current-user-principal>\
+        return multistatus(
+            state.flavor,
+            &format!(
+                "<response><href>/</href><propstat><prop><current-user-principal>\
              <href>{PRINCIPAL}</href></current-user-principal></prop>\
              <status>HTTP/1.1 200 OK</status></propstat></response>"
-        ));
+            ),
+        );
     }
-    if request.body.contains("calendar-home-set") {
-        return multistatus(&format!(
-            "<response><href>{PRINCIPAL}</href><propstat><prop><C:calendar-home-set>\
-             <href>{HOME}</href></C:calendar-home-set></prop>\
+    let home = state.flavor.home();
+    if request.body.contains("calendar-home-set") || request.body.contains("addressbook-home-set") {
+        let tag = if state.flavor == Flavor::Card {
+            "addressbook-home-set"
+        } else {
+            "calendar-home-set"
+        };
+        return multistatus(
+            state.flavor,
+            &format!(
+                "<response><href>{PRINCIPAL}</href><propstat><prop><C:{tag}>\
+             <href>{home}</href></C:{tag}></prop>\
              <status>HTTP/1.1 200 OK</status></propstat></response>"
-        ));
+            ),
+        );
     }
     let mut responses = format!(
-        "<response><href>{HOME}</href><propstat><prop><resourcetype><collection/></resourcetype>\
+        "<response><href>{home}</href><propstat><prop><resourcetype><collection/></resourcetype>\
          </prop><status>HTTP/1.1 200 OK</status></propstat></response>"
     );
     for (slug, collection) in &state.collections {
@@ -212,28 +289,38 @@ fn propfind(state: &State, request: &LoggedRequest) -> ResponseTemplate {
         for name in &collection.components {
             let _ = write!(components, "<C:comp name=\"{name}\"/>");
         }
+        let (kind, set) = if state.flavor == Flavor::Card {
+            ("addressbook", String::new())
+        } else {
+            (
+                "calendar",
+                format!(
+                    "<C:supported-calendar-component-set>{components}\
+                     </C:supported-calendar-component-set>"
+                ),
+            )
+        };
         let _ = write!(
             responses,
-            "<response><href>{HOME}{slug}/</href><propstat><prop>\
+            "<response><href>{home}{slug}/</href><propstat><prop>\
              <displayname>{}</displayname>\
-             <resourcetype><collection/><C:calendar/></resourcetype>\
-             <C:supported-calendar-component-set>{components}</C:supported-calendar-component-set>\
+             <resourcetype><collection/><C:{kind}/></resourcetype>{set}\
              </prop><status>HTTP/1.1 200 OK</status></propstat></response>",
             collection.name
         );
     }
-    multistatus(&responses)
+    multistatus(state.flavor, &responses)
 }
 
-fn collection_slug(path: &str) -> Option<(&str, Option<&str>)> {
-    let rest = path.strip_prefix(HOME)?;
+fn collection_slug<'a>(state: &State, path: &'a str) -> Option<(&'a str, Option<&'a str>)> {
+    let rest = path.strip_prefix(state.flavor.home())?;
     let mut parts = rest.trim_end_matches('/').splitn(2, '/');
     let slug = parts.next().filter(|slug| !slug.is_empty())?;
     Some((slug, parts.next()))
 }
 
 fn report(state: &State, request: &LoggedRequest) -> ResponseTemplate {
-    let Some((slug, None)) = collection_slug(&request.path) else {
+    let Some((slug, None)) = collection_slug(state, &request.path) else {
         return ResponseTemplate::new(404);
     };
     let Some(collection) = state.collections.get(slug) else {
@@ -241,20 +328,26 @@ fn report(state: &State, request: &LoggedRequest) -> ResponseTemplate {
     };
     let mut responses = String::new();
     for (file, item) in &collection.items {
+        let data = if state.flavor == Flavor::Card {
+            "address-data"
+        } else {
+            "calendar-data"
+        };
         let _ = write!(
             responses,
-            "<response><href>{HOME}{slug}/{file}</href><propstat><prop>\
-             <getetag>{}</getetag><C:calendar-data>{}</C:calendar-data></prop>\
+            "<response><href>{}{slug}/{file}</href><propstat><prop>\
+             <getetag>{}</getetag><C:{data}>{}</C:{data}></prop>\
              <status>HTTP/1.1 200 OK</status></propstat></response>",
+            state.flavor.home(),
             item.etag,
             xml_escape(&item.body)
         );
     }
-    multistatus(&responses)
+    multistatus(state.flavor, &responses)
 }
 
 fn put_item(state: &mut State, request: &LoggedRequest) -> ResponseTemplate {
-    let Some((slug, Some(file))) = collection_slug(&request.path) else {
+    let Some((slug, Some(file))) = collection_slug(state, &request.path) else {
         return ResponseTemplate::new(404);
     };
     let (slug, file) = (slug.to_owned(), file.to_owned());
@@ -289,7 +382,7 @@ fn put_item(state: &mut State, request: &LoggedRequest) -> ResponseTemplate {
 }
 
 fn delete_item(state: &mut State, request: &LoggedRequest) -> ResponseTemplate {
-    let Some((slug, Some(file))) = collection_slug(&request.path) else {
+    let Some((slug, Some(file))) = collection_slug(state, &request.path) else {
         return ResponseTemplate::new(404);
     };
     let Some(collection) = state.collections.get_mut(slug) else {
@@ -308,7 +401,7 @@ fn delete_item(state: &mut State, request: &LoggedRequest) -> ResponseTemplate {
 }
 
 fn get_item(state: &State, request: &LoggedRequest) -> ResponseTemplate {
-    let Some((slug, Some(file))) = collection_slug(&request.path) else {
+    let Some((slug, Some(file))) = collection_slug(state, &request.path) else {
         return ResponseTemplate::new(404);
     };
     match state
@@ -318,7 +411,14 @@ fn get_item(state: &State, request: &LoggedRequest) -> ResponseTemplate {
     {
         Some(item) => ResponseTemplate::new(200)
             .insert_header("etag", item.etag.as_str())
-            .set_body_raw(item.body.clone(), "text/calendar"),
+            .set_body_raw(
+                item.body.clone(),
+                if state.flavor == Flavor::Card {
+                    "text/vcard"
+                } else {
+                    "text/calendar"
+                },
+            ),
         None => ResponseTemplate::new(404),
     }
 }

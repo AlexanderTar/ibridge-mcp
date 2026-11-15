@@ -22,6 +22,40 @@ pub struct CollectionHome {
     pub url: String,
 }
 
+impl CollectionHome {
+    /// Absolute URL of the resource at `path`, which is relative to the home
+    /// and not percent-encoded.
+    #[must_use]
+    pub fn url_of(&self, path: &str) -> String {
+        format!(
+            "{}/{}",
+            self.url.trim_end_matches('/'),
+            crate::multistatus::encode_path(path)
+        )
+    }
+
+    /// The decoded path of `href` relative to the home, or `None` outside the
+    /// home. Servers differ in what they percent-encode (`@` for one), so the
+    /// comparison is on decoded text.
+    #[must_use]
+    pub fn relative(&self, href: &str) -> Option<String> {
+        let path_of = |text: &str| -> String {
+            text.find("://").map_or_else(
+                || text.to_owned(),
+                |scheme_end| {
+                    let rest = &text[scheme_end + 3..];
+                    rest.find('/').map_or("", |slash| &rest[slash..]).to_owned()
+                },
+            )
+        };
+        let href_path = crate::multistatus::decode_path(&path_of(href))?;
+        let home_path = crate::multistatus::decode_path(&path_of(&self.url))?;
+        let rest = href_path.strip_prefix(home_path.trim_end_matches('/'))?;
+        let rest = rest.strip_prefix('/')?;
+        (!rest.is_empty()).then(|| rest.to_owned())
+    }
+}
+
 /// Homes already discovered for one account.
 ///
 /// A second lookup for the same account reuses the stored URL and does not

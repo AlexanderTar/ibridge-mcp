@@ -1880,8 +1880,13 @@ name = "ibridge-contacts"
 version = "0.1.0"
 dependencies = [
  "calcard",
+ "http",
+ "ibridge-auth",
  "ibridge-core",
+ "ibridge-dav",
+ "ibridge-testkit",
  "proptest",
+ "tokio",
 ]
 
 [[package]]

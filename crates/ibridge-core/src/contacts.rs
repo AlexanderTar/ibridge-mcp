@@ -12,6 +12,17 @@ pub struct ContactQuery {
     pub text: String,
     /// Maximum hits. Callers cap this at 100.
     pub limit: u32,
+    /// Also return groups, so a caller can find one to put a contact in.
+    pub include_groups: bool,
+}
+
+/// A group a contact is in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupRef {
+    /// Path of the group card, for `set_group_membership`.
+    pub path: ResourcePath,
+    /// Group name. Untrusted content.
+    pub name: String,
 }
 
 /// An email address or phone number with the label the card gives it.
@@ -49,8 +60,10 @@ pub struct Contact {
     pub organization: Option<String>,
     /// Free-text note. Untrusted content.
     pub note: Option<String>,
-    /// Names of the groups the contact is in. Filled by `get` only. Untrusted content.
-    pub groups: Vec<String>,
+    /// The card is a group, not a person.
+    pub is_group: bool,
+    /// The groups the contact is in. Filled by `get` only.
+    pub groups: Vec<GroupRef>,
 }
 
 /// Fields written by create and update.

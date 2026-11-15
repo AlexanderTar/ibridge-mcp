@@ -113,6 +113,7 @@ async fn radicale_vcard_edit_preserves_props() {
         .search(&ContactQuery {
             text: "lovelace".to_owned(),
             limit: 25,
+            include_groups: false,
         })
         .await
         .expect("search");
@@ -166,7 +167,7 @@ async fn radicale_vcard_edit_preserves_props() {
         .await
         .expect("add to group");
     let contact = provider.get(&path("card/ada.vcf")).await.expect("get");
-    assert_eq!(contact.groups, ["Pioneers"]);
+    assert_eq!(contact.groups[0].name, "Pioneers");
     assert_eq!(contact.full_name, "Ada King");
 
     let stale = provider.delete(&path("card/ada.vcf"), &ada.etag).await;

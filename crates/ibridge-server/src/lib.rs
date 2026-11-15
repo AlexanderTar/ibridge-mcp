@@ -5,6 +5,8 @@
 mod account;
 mod calendar_dto;
 mod calendar_tools;
+mod contacts_dto;
+mod contacts_tools;
 mod dto;
 mod error_map;
 mod handler;
@@ -20,6 +22,10 @@ pub use calendar_dto::{
     ListRemindersParams, UpdateEventParams, UpdateReminderParams,
 };
 pub use calendar_tools::NoCalendar;
+pub use contacts_dto::{
+    CreateContactParams, SearchContactsParams, SetGroupMembershipParams, UpdateContactParams,
+};
+pub use contacts_tools::NoContacts;
 pub use dto::{
     FlagParams, GetAttachmentParams, GetMessageParams, MoveParams, SearchParams, SendParams,
 };

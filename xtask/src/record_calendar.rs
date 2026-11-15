@@ -89,14 +89,14 @@ pub(crate) async fn check_calendar(
     Ok(())
 }
 
-async fn load(account: &Path) -> Result<Credentials, RecordError> {
+pub(crate) async fn load(account: &Path) -> Result<Credentials, RecordError> {
     FileSource::new(account)
         .credentials()
         .await
         .map_err(|_| RecordError::Account)
 }
 
-fn dav(_error: DavError) -> RecordError {
+pub(crate) fn dav(_error: DavError) -> RecordError {
     RecordError::Dav("the request could not be completed")
 }
 
@@ -237,7 +237,7 @@ async fn record(
 
 /// The numeric account id in a calendar home URL such as
 /// `https://p12-caldav.icloud.com/184573921/calendars/`.
-fn dsid_of(url: &str) -> Option<String> {
+pub(crate) fn dsid_of(url: &str) -> Option<String> {
     let path = url.split_once("://").map_or(url, |(_, rest)| rest);
     let segment = path.split('/').nth(1)?;
     (segment.len() >= 6 && segment.bytes().all(|byte| byte.is_ascii_digit()))
@@ -266,7 +266,7 @@ fn query(component: &str, range: &str) -> String {
 }
 
 /// Sends one request and returns the response body as text.
-async fn send(
+pub(crate) async fn send(
     client: &DavClient,
     method: &str,
     url: &str,
@@ -315,7 +315,11 @@ async fn clean_up(
     }
 }
 
-async fn delete_marked(raw: &DavClient, url: &str, marker: &str) -> Result<(), RecordError> {
+pub(crate) async fn delete_marked(
+    raw: &DavClient,
+    url: &str,
+    marker: &str,
+) -> Result<(), RecordError> {
     let request = Request::builder()
         .method(Method::GET)
         .uri(url)

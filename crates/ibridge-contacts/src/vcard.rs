@@ -201,8 +201,8 @@ pub(crate) fn update_card_text(existing: &str, draft: &ContactDraft) -> Result<S
     };
     let mut props = split(existing);
     if draft.name != current.full_name {
-        replace_or_insert(&mut props, "FN", fold(&fn_line(&draft.name), eol));
-        replace_or_insert(&mut props, "N", fold(&n_line(&draft.name), eol));
+        replace_or_insert(&mut props, "FN", &fold(&fn_line(&draft.name), eol));
+        replace_or_insert(&mut props, "N", &fold(&n_line(&draft.name), eol));
     }
     reconcile(&mut props, "EMAIL", &draft.emails, &email_line, eol, |v| {
         v.to_ascii_lowercase()
@@ -319,8 +319,8 @@ pub(crate) fn eol_of(text: &str) -> &'static str {
 }
 
 /// Swaps the first `name` property for `line`, or adds it before `END`.
-fn replace_or_insert(props: &mut Vec<Prop>, name: &str, line: String) {
-    let fresh = prop_of(&line);
+fn replace_or_insert(props: &mut Vec<Prop>, name: &str, line: &str) {
+    let fresh = prop_of(line);
     match props.iter().position(|prop| prop.name == name) {
         Some(at) => props[at] = fresh,
         None => insert_before_end(props, fresh),
@@ -622,11 +622,11 @@ mod tests {
             );
             let created = new_card_text("uid-p", &first).expect("create");
             let fields = read(&parse(&created).expect("calcard reads it"));
-            prop_assert_eq!(fields.full_name, name.clone());
+            prop_assert_eq!(&fields.full_name, &name);
             prop_assert_eq!(values(&fields.emails), emails.iter().cloned().collect::<Vec<_>>());
             prop_assert_eq!(values(&fields.phones), phones.iter().cloned().collect::<Vec<_>>());
             // Writing the same values back changes no byte.
-            prop_assert_eq!(update_card_text(&created, &first).expect("same"), created.clone());
+            prop_assert_eq!(&update_card_text(&created, &first).expect("same"), &created);
             // An unknown property survives a change of the touched ones.
             let with_unknown = created.replace(
                 "END:VCARD\r\n",

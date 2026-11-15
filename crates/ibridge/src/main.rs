@@ -5,6 +5,7 @@
 mod account;
 mod calendar;
 mod cli;
+mod contacts;
 mod login;
 mod mail;
 mod platform;

@@ -3,6 +3,7 @@
 //! Workspace maintenance tasks.
 
 mod record_calendar;
+mod record_contacts;
 mod record_fixtures;
 mod scrub;
 
@@ -26,18 +27,19 @@ fn main() -> ExitCode {
     }
 }
 
-/// `record-fixtures mail|calendar [--account FILE] [--out DIR] [--check]`.
+/// `record-fixtures mail|calendar|contacts [--account FILE] [--out DIR] [--check]`.
 ///
 /// The account file defaults to `~/.config/ibridge/test-account.env`. Output goes
-/// to `tests/fixtures/imap` or `tests/fixtures/caldav`, where the user reviews the
-/// diff before committing. `--check` is for `calendar` only: it lists the
-/// `ibridge-test` calendar and list and writes nothing.
+/// to `tests/fixtures/imap`, `tests/fixtures/caldav` or `tests/fixtures/carddav`,
+/// where the user reviews the diff before committing. `--check` is for `calendar`
+/// only: it lists the `ibridge-test` calendar and list and writes nothing.
+/// `contacts` creates one marker contact, records it and deletes it again.
 fn run_record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
-    const USAGE: &str =
-        "usage: cargo xtask record-fixtures <mail|calendar> [--account FILE] [--out DIR] [--check]";
+    const USAGE: &str = "usage: cargo xtask record-fixtures <mail|calendar|contacts> [--account FILE] [--out DIR] [--check]";
     let mut kind = match args.next().as_deref() {
         Some("mail") => Kind::Mail,
         Some("calendar") => Kind::Calendar,
+        Some("contacts") => Kind::Contacts,
         _ => return fail(USAGE),
     };
     let mut account = env::var_os("HOME")
@@ -45,6 +47,7 @@ fn run_record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
     let mut out = headers_root().join(match kind {
         Kind::Mail => "tests/fixtures/imap",
         Kind::Calendar | Kind::CalendarCheck => "tests/fixtures/caldav",
+        Kind::Contacts => "tests/fixtures/carddav",
     });
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -79,6 +82,7 @@ fn run_record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
         Kind::Mail => record_mail(&runtime, &account, &out, &nonce),
         Kind::Calendar => record_calendar(&runtime, &account, &out, &nonce),
         Kind::CalendarCheck => check_calendar(&runtime, &account),
+        Kind::Contacts => record_contacts(&runtime, &account, &out, &nonce),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -90,6 +94,7 @@ fn run_record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
 enum Kind {
     Mail,
     Calendar,
+    Contacts,
     /// Lists the test calendar and list and writes nothing.
     CalendarCheck,
 }
@@ -131,6 +136,21 @@ fn record_calendar(
     nonce: &str,
 ) -> Result<(), record_fixtures::RecordError> {
     runtime.block_on(record_calendar::run_calendar(
+        account,
+        dav_client,
+        out,
+        nonce,
+        &mut io::stdout(),
+    ))
+}
+
+fn record_contacts(
+    runtime: &tokio::runtime::Runtime,
+    account: &Path,
+    out: &Path,
+    nonce: &str,
+) -> Result<(), record_fixtures::RecordError> {
+    runtime.block_on(record_contacts::run_contacts(
         account,
         dav_client,
         out,

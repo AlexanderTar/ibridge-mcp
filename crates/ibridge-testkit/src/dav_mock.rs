@@ -334,7 +334,12 @@ fn report(state: &State, request: &LoggedRequest) -> ResponseTemplate {
         return ResponseTemplate::new(404);
     };
     let mut responses = String::new();
+    // A multiget names the resources it wants; a query lists everything.
+    let multiget = request.body.contains("multiget");
     for (file, item) in &collection.items {
+        if multiget && !request.body.contains(&format!("/{slug}/{file}<")) {
+            continue;
+        }
         let data = if state.flavor == Flavor::Card {
             "address-data"
         } else {

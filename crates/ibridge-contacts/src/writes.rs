@@ -2,6 +2,8 @@
 
 //! Creating, changing and deleting contacts.
 
+use std::fmt::Write as _;
+
 use ibridge_core::{ContactDraft, CoreError, ETag, ResourcePath};
 
 use crate::CardDavProvider;
@@ -77,7 +79,10 @@ fn new_uid() -> Result<String, CoreError> {
     getrandom::fill(&mut bytes).map_err(|_| protocol())?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
+    let mut hex = String::with_capacity(32);
+    for byte in bytes {
+        let _ = write!(hex, "{byte:02X}");
+    }
     Ok(format!(
         "{}-{}-{}-{}-{}",
         &hex[..8],
@@ -159,7 +164,7 @@ mod tests {
             .await
             .expect("create");
         assert!(
-            path.as_str().starts_with("card/") && path.as_str().ends_with(".vcf"),
+            path.as_str().starts_with("card/") && path.as_str().rsplit('.').next() == Some("vcf"),
             "{path:?}"
         );
         let put = fake

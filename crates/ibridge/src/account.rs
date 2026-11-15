@@ -94,8 +94,7 @@ fn reason(check: &ServiceCheck) -> Option<String> {
 
 /// What `account_status` reports.
 ///
-/// `recorded` is the sign-in result, when there is one. Contacts have no tools
-/// in this release, so they report off even when sign-in worked.
+/// `recorded` is the sign-in result, when there is one.
 pub(crate) fn snapshot(
     apple_id: AppleId,
     services: Services,
@@ -104,7 +103,6 @@ pub(crate) fn snapshot(
     let failed = |pick: fn(&State) -> Option<&String>| recorded.and_then(pick).cloned();
     let not_built =
         |built: bool, name: &str| (!built).then(|| format!("{name} is not enabled in this build"));
-    let no_tools = |name: &str| Some(format!("{name} tools are not available in this release"));
     AccountSnapshot {
         apple_id,
         mail: status([
@@ -120,7 +118,7 @@ pub(crate) fn snapshot(
         contacts: status([
             not_built(services.contacts, "contacts"),
             failed(|state| state.contacts.as_ref()),
-            no_tools("contacts"),
+            None,
         ]),
     }
 }
@@ -199,6 +197,52 @@ mod tests {
                 reason: "calendar is not enabled in this build".to_owned()
             },
             "a build without calendar says so"
+        );
+    }
+
+    #[test]
+    fn account_status_reports_contacts() {
+        let signed_in = State::from_report(
+            &apple_id(),
+            &ValidationReport {
+                mail: ServiceCheck::Ok,
+                calendar: ServiceCheck::Ok,
+                contacts: ServiceCheck::Ok,
+            },
+        );
+        assert_eq!(
+            snapshot(apple_id(), with_calendar(), Some(&signed_in)).contacts,
+            ServiceStatus::On,
+            "contacts is on when sign-in worked and the build has it"
+        );
+
+        let rejected = State::from_report(
+            &apple_id(),
+            &ValidationReport {
+                mail: ServiceCheck::Ok,
+                calendar: ServiceCheck::Ok,
+                contacts: ServiceCheck::Failed {
+                    reason: "contacts rejected".to_owned(),
+                },
+            },
+        );
+        assert_eq!(
+            snapshot(apple_id(), with_calendar(), Some(&rejected)).contacts,
+            ServiceStatus::Off {
+                reason: "contacts rejected".to_owned()
+            },
+            "a failed sign-in check turns contacts off with its reason"
+        );
+        let no_contacts = Services {
+            contacts: false,
+            ..with_calendar()
+        };
+        assert_eq!(
+            snapshot(apple_id(), no_contacts, Some(&signed_in)).contacts,
+            ServiceStatus::Off {
+                reason: "contacts is not enabled in this build".to_owned()
+            },
+            "a build without contacts says so"
         );
     }
 }

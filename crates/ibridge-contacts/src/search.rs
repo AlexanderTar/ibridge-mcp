@@ -2,7 +2,7 @@
 
 //! Searching and reading contacts. Matching happens here, not on the server.
 
-use ibridge_core::{Contact, ContactList, ContactQuery, CoreError, ETag, ResourcePath};
+use ibridge_core::{Contact, ContactList, ContactQuery, CoreError, ETag, GroupRef, ResourcePath};
 
 use crate::CardDavProvider;
 use crate::books::protocol;
@@ -49,7 +49,7 @@ impl CardDavProvider {
                     continue;
                 };
                 let fields = vcard::read(&card);
-                if fields.is_group || !matcher.matches(&fields) {
+                if (fields.is_group && !query.include_groups) || !matcher.matches(&fields) {
                     continue;
                 }
                 found.push((
@@ -78,7 +78,7 @@ impl CardDavProvider {
 
     /// Names of the groups in `path`'s address book that list `uid`. A failure
     /// to read them leaves the list empty: the card itself was read.
-    async fn groups_of(&self, path: &ResourcePath, uid: &str) -> Vec<String> {
+    async fn groups_of(&self, path: &ResourcePath, uid: &str) -> Vec<GroupRef> {
         let Some((book, _)) = path.as_str().split_once('/') else {
             return Vec::new();
         };
@@ -93,15 +93,23 @@ impl CardDavProvider {
         };
         entries
             .iter()
-            .filter_map(|entry| entry.address_data.as_deref().and_then(vcard::parse))
-            .map(|card| vcard::read(&card))
-            .filter(|group| group.is_group && group.members.iter().any(|member| member == uid))
-            .map(|group| group.full_name)
+            .filter_map(|entry| {
+                let card = vcard::read(&entry.address_data.as_deref().and_then(vcard::parse)?);
+                let path = home
+                    .relative(&entry.href)
+                    .and_then(|relative| ResourcePath::try_from(relative.as_str()).ok())?;
+                (card.is_group && card.members.iter().any(|member| member == uid)).then_some(
+                    GroupRef {
+                        path,
+                        name: card.full_name,
+                    },
+                )
+            })
             .collect()
     }
 }
 
-fn contact(path: ResourcePath, etag: ETag, fields: Fields, groups: Vec<String>) -> Contact {
+fn contact(path: ResourcePath, etag: ETag, fields: Fields, groups: Vec<GroupRef>) -> Contact {
     Contact {
         path,
         etag,
@@ -110,6 +118,7 @@ fn contact(path: ResourcePath, etag: ETag, fields: Fields, groups: Vec<String>) 
         phones: fields.phones,
         organization: fields.organization,
         note: fields.note,
+        is_group: fields.is_group,
         groups,
     }
 }
@@ -166,6 +175,7 @@ mod tests {
         ContactQuery {
             text: text.to_owned(),
             limit,
+            include_groups: false,
         }
     }
 
@@ -221,7 +231,10 @@ mod tests {
             names(provider.search(&query("o", 1)).await.expect("limit")),
             ["Ada Lovelace"]
         );
-        assert!(names(provider.search(&query("zzz", 25)).await.expect("none")).is_empty());
+        assert_eq!(
+            names(provider.search(&query("zzz", 25)).await.expect("none")),
+            Vec::<String>::new()
+        );
         assert!(
             names(
                 provider
@@ -293,8 +306,39 @@ mod tests {
         assert_eq!(contact.emails[0].label.as_deref(), Some("Home"));
         assert_eq!(contact.phones[0].value, "+1 (555) 010-0100");
         assert_eq!(contact.phones[0].label.as_deref(), Some("Cell"));
-        assert_eq!(contact.groups, ["Pioneers"]);
-        assert!(!contact.etag.as_str().is_empty());
+        assert_eq!(contact.groups.len(), 1);
+        assert_eq!(contact.groups[0].name, "Pioneers");
+        assert_eq!(contact.groups[0].path.as_str(), "card/pioneers.vcf");
+        assert_ne!(contact.etag.as_str(), "");
+    }
+
+    #[tokio::test]
+    async fn search_can_include_groups() {
+        let (fake, provider) = setup().await;
+        fake.put("card", "ada.vcf", &vcard(ADA));
+        fake.put("card", "pioneers.vcf", &vcard(GROUP));
+        let mut asked = query("pioneers", 25);
+        asked.include_groups = true;
+        let found = provider.search(&asked).await.expect("search");
+        assert_eq!(found.contacts.len(), 1, "{:?}", found.contacts);
+        assert!(found.contacts[0].is_group);
+        assert_eq!(found.contacts[0].path.as_str(), "card/pioneers.vcf");
+        // People stay people when groups are included.
+        let mut everyone = query("o", 25);
+        everyone.include_groups = true;
+        let found = provider.search(&everyone).await.expect("search");
+        let kinds: Vec<(String, bool)> = found
+            .contacts
+            .into_iter()
+            .map(|c| (c.full_name, c.is_group))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("Ada Lovelace".to_owned(), false),
+                ("Pioneers".to_owned(), true)
+            ]
+        );
     }
 
     #[tokio::test]

@@ -16,7 +16,8 @@ pub use calendar::{
     UpdateScope,
 };
 pub use contacts::{
-    Contact, ContactDraft, ContactList, ContactQuery, ContactsProvider, GroupChange, LabeledValue,
+    Contact, ContactDraft, ContactList, ContactQuery, ContactsProvider, GroupChange, GroupRef,
+    LabeledValue,
 };
 pub use error::{CoreError, IdError, ParseError};
 pub use ids::{ETag, ResourcePath, decode, decode_resource, encode, encode_resource};
@@ -223,6 +224,7 @@ mod provider_tests {
         let query = ContactQuery {
             text: String::new(),
             limit: 1,
+            include_groups: false,
         };
         let _future = require_send(provider.search(&query));
     }

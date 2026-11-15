@@ -11,7 +11,7 @@ description = "iCloud Mail, Calendar, Reminders and Contacts MCP server."
 default = ["mail", "calendar", "contacts", "stdio", "http"]
 mail = ["dep:ibridge-mail"]
 calendar = ["dep:ibridge-calendar", "dep:ibridge-dav"]
-contacts = []
+contacts = ["dep:ibridge-contacts", "dep:ibridge-dav"]
 stdio = ["rmcp/transport-io"]
 http = []
 hosted = []
@@ -21,6 +21,7 @@ anyhow.workspace = true
 clap.workspace = true
 ibridge-auth.workspace = true
 ibridge-calendar = { workspace = true, optional = true }
+ibridge-contacts = { workspace = true, optional = true }
 ibridge-core.workspace = true
 ibridge-dav = { workspace = true, optional = true }
 ibridge-mail = { workspace = true, optional = true }

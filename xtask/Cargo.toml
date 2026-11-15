@@ -15,6 +15,7 @@ getrandom.workspace = true
 http.workspace = true
 ibridge-auth.workspace = true
 ibridge-calendar.workspace = true
+ibridge-contacts.workspace = true
 ibridge-core.workspace = true
 ibridge-dav.workspace = true
 ibridge-mail.workspace = true

@@ -44,6 +44,7 @@ hyper-util = { version = "0.1", features = [
 ] }
 ibridge-auth = { path = "crates/ibridge-auth" }
 ibridge-calendar = { path = "crates/ibridge-calendar" }
+ibridge-contacts = { path = "crates/ibridge-contacts" }
 ibridge-core = { path = "crates/ibridge-core" }
 ibridge-dav = { path = "crates/ibridge-dav" }
 ibridge-mail = { path = "crates/ibridge-mail" }

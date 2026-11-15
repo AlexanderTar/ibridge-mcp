@@ -6,8 +6,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use ibridge_core::{
-    CalendarProvider, CoreError, Draft, FlagChange, MailSearch, Mailbox, MailboxPath, MailboxRole,
-    Message, MessageId, MessageSummary, RemindersProvider, decode, encode,
+    CalendarProvider, ContactsProvider, CoreError, Draft, FlagChange, MailSearch, Mailbox,
+    MailboxPath, MailboxRole, Message, MessageId, MessageSummary, RemindersProvider, decode,
+    encode,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -17,6 +18,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::account::{AccountSnapshot, ServiceStatus};
 use crate::calendar_tools::{CALENDAR_TOOLS, CALENDAR_WRITE_TOOLS, NoCalendar};
+use crate::contacts_tools::{CONTACTS_TOOLS, CONTACTS_WRITE_TOOLS, NoContacts};
 use crate::dto::{
     AccountStatusOut, AttachmentInfoOut, AttachmentOut, FlagParams, FlagsOut, GetAttachmentParams,
     GetMessageParams, IdOut, MailboxListOut, MailboxOut, MessageOut, MoveOut, MoveParams,
@@ -65,6 +67,14 @@ enum Tools {
     Hidden,
 }
 
+/// Which services' tools are listed.
+#[derive(Debug, Clone, Copy)]
+struct Tools3 {
+    mail: Tools,
+    calendar: Tools,
+    contacts: Tools,
+}
+
 /// Who may call write tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Access {
@@ -78,19 +88,22 @@ enum Access {
 ///
 /// At most four tool calls run at once. A read-only server omits write tools
 /// from the tool list and rejects a direct write call. Calendar and reminders
-/// tools appear once [`IbridgeServer::with_calendar`] gives the server a backend.
-pub struct IbridgeServer<M, C = NoCalendar> {
+/// tools appear once [`IbridgeServer::with_calendar`] gives the server a backend,
+/// and contacts tools once [`IbridgeServer::with_contacts`] does.
+pub struct IbridgeServer<M, C = NoCalendar, K = NoContacts> {
     access: Access,
     account: AccountSnapshot,
     mail: Arc<M>,
     pub(crate) calendar: Arc<C>,
+    pub(crate) contacts: Arc<K>,
     mail_tools: Tools,
     calendar_tools: Tools,
+    contacts_tools: Tools,
     gate: Arc<Semaphore>,
     router: ToolRouter<Self>,
 }
 
-impl<M, C> fmt::Debug for IbridgeServer<M, C> {
+impl<M, C, K> fmt::Debug for IbridgeServer<M, C, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("IbridgeServer")
             .field("access", &self.access)
@@ -99,57 +112,106 @@ impl<M, C> fmt::Debug for IbridgeServer<M, C> {
     }
 }
 
-impl<M, C> Clone for IbridgeServer<M, C> {
+impl<M, C, K> Clone for IbridgeServer<M, C, K> {
     fn clone(&self) -> Self {
         Self {
             access: self.access,
             account: self.account.clone(),
             mail: Arc::clone(&self.mail),
             calendar: Arc::clone(&self.calendar),
+            contacts: Arc::clone(&self.contacts),
             mail_tools: self.mail_tools,
             calendar_tools: self.calendar_tools,
+            contacts_tools: self.contacts_tools,
             gate: Arc::clone(&self.gate),
             router: self.router.clone(),
         }
     }
 }
 
-impl<M> IbridgeServer<M, NoCalendar>
+impl<M> IbridgeServer<M, NoCalendar, NoContacts>
 where
     M: MailApi + Send + Sync + 'static,
 {
     /// Hides write tools from the tool list and rejects write calls.
     #[must_use]
     pub fn read_only(account: AccountSnapshot, mail: Arc<M>) -> Self {
-        Self::build(Access::ReadOnly, account, mail, Arc::new(NoCalendar))
+        Self::build(
+            Access::ReadOnly,
+            account,
+            mail,
+            Arc::new(NoCalendar),
+            Arc::new(NoContacts),
+        )
     }
 
     /// Shows read and write tools.
     #[must_use]
     pub fn read_write(account: AccountSnapshot, mail: Arc<M>) -> Self {
-        Self::build(Access::ReadWrite, account, mail, Arc::new(NoCalendar))
+        Self::build(
+            Access::ReadWrite,
+            account,
+            mail,
+            Arc::new(NoCalendar),
+            Arc::new(NoContacts),
+        )
     }
 }
 
-impl<M, C> IbridgeServer<M, C>
+impl<M, C, K> IbridgeServer<M, C, K>
 where
     M: MailApi + Send + Sync + 'static,
     C: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+    K: ContactsProvider + Send + Sync + 'static,
 {
     /// Shows the calendar and reminders tools, backed by `calendar`.
     #[must_use]
-    pub fn with_calendar<C2>(self, calendar: Arc<C2>) -> IbridgeServer<M, C2>
+    pub fn with_calendar<C2>(self, calendar: Arc<C2>) -> IbridgeServer<M, C2, K>
     where
         C2: CalendarProvider + RemindersProvider + Send + Sync + 'static,
     {
-        IbridgeServer::<M, C2>::build_with(
+        IbridgeServer::<M, C2, K>::build_with(
             self.access,
             self.account,
             self.mail,
             calendar,
-            self.mail_tools,
-            Tools::Shown,
+            self.contacts,
+            Tools3 {
+                mail: self.mail_tools,
+                calendar: Tools::Shown,
+                contacts: self.contacts_tools,
+            },
         )
+    }
+
+    /// Shows the contacts tools, backed by `contacts`.
+    #[must_use]
+    pub fn with_contacts<K2>(self, contacts: Arc<K2>) -> IbridgeServer<M, C, K2>
+    where
+        K2: ContactsProvider + Send + Sync + 'static,
+    {
+        IbridgeServer::<M, C, K2>::build_with(
+            self.access,
+            self.account,
+            self.mail,
+            self.calendar,
+            contacts,
+            Tools3 {
+                mail: self.mail_tools,
+                calendar: self.calendar_tools,
+                contacts: Tools::Shown,
+            },
+        )
+    }
+
+    /// Hides every contacts tool.
+    #[must_use]
+    pub fn without_contacts(mut self) -> Self {
+        for name in CONTACTS_TOOLS {
+            self.router.disable_route(*name);
+        }
+        self.contacts_tools = Tools::Hidden;
+        self
     }
 
     /// Hides every calendar and reminders tool.
@@ -184,8 +246,19 @@ where
         self.router.list_all()
     }
 
-    fn build(access: Access, account: AccountSnapshot, mail: Arc<M>, calendar: Arc<C>) -> Self {
-        Self::build_with(access, account, mail, calendar, Tools::Shown, Tools::Hidden)
+    fn build(
+        access: Access,
+        account: AccountSnapshot,
+        mail: Arc<M>,
+        calendar: Arc<C>,
+        contacts: Arc<K>,
+    ) -> Self {
+        let tools = Tools3 {
+            mail: Tools::Shown,
+            calendar: Tools::Hidden,
+            contacts: Tools::Hidden,
+        };
+        Self::build_with(access, account, mail, calendar, contacts, tools)
     }
 
     fn build_with(
@@ -193,20 +266,29 @@ where
         account: AccountSnapshot,
         mail: Arc<M>,
         calendar: Arc<C>,
-        mail_tools: Tools,
-        calendar_tools: Tools,
+        contacts: Arc<K>,
+        tools: Tools3,
     ) -> Self {
-        let mut router = Self::tool_router() + Self::calendar_router();
+        let Tools3 {
+            mail: mail_tools,
+            calendar: calendar_tools,
+            contacts: contacts_tools,
+        } = tools;
+        let mut router = Self::tool_router() + Self::calendar_router() + Self::contacts_router();
         let mut hidden: Vec<&str> = Vec::new();
         if access == Access::ReadOnly {
             hidden.extend(WRITE_TOOLS);
             hidden.extend(CALENDAR_WRITE_TOOLS);
+            hidden.extend(CONTACTS_WRITE_TOOLS);
         }
         if mail_tools == Tools::Hidden {
             hidden.extend(MAIL_TOOLS);
         }
         if calendar_tools == Tools::Hidden {
             hidden.extend(CALENDAR_TOOLS);
+        }
+        if contacts_tools == Tools::Hidden {
+            hidden.extend(CONTACTS_TOOLS);
         }
         for name in hidden {
             router.disable_route(name);
@@ -216,8 +298,10 @@ where
             account,
             mail,
             calendar,
+            contacts,
             mail_tools,
             calendar_tools,
+            contacts_tools,
             gate: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
             router,
         }
@@ -225,10 +309,11 @@ where
 }
 
 #[tool_router]
-impl<M, C> IbridgeServer<M, C>
+impl<M, C, K> IbridgeServer<M, C, K>
 where
     M: MailApi + Send + Sync + 'static,
     C: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+    K: ContactsProvider + Send + Sync + 'static,
 {
     /// Lists mailboxes with their roles and counts.
     ///
@@ -684,9 +769,10 @@ fn status_summary(status: &AccountStatusOut) -> String {
     reason = "the generated tool listing returns without waiting"
 )]
 #[tool_handler(router = self.router)]
-impl<M, C> ServerHandler for IbridgeServer<M, C>
+impl<M, C, K> ServerHandler for IbridgeServer<M, C, K>
 where
     M: MailApi + Send + Sync + 'static,
     C: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+    K: ContactsProvider + Send + Sync + 'static,
 {
 }

@@ -3,9 +3,10 @@
 //! Calendar and reminders tools.
 
 use ibridge_core::{
-    Calendar, CalendarProvider, CompletedFilter, CoreError, ETag, Event, EventDraft, EventList,
-    EventQuery, Reminder, ReminderDraft, ReminderList, ReminderPage, RemindersProvider,
-    ResourcePath, UPGRADED_LISTS_NOTE, UpdateScope, decode_resource, encode_resource,
+    Calendar, CalendarProvider, CompletedFilter, ContactsProvider, CoreError, ETag, Event,
+    EventDraft, EventList, EventQuery, Reminder, ReminderDraft, ReminderList, ReminderPage,
+    RemindersProvider, ResourcePath, UPGRADED_LISTS_NOTE, UpdateScope, decode_resource,
+    encode_resource,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ErrorData};
@@ -135,10 +136,11 @@ macro_rules! try_cal {
 }
 
 #[tool_router(router = calendar_router, vis = "pub(crate)")]
-impl<M, C> IbridgeServer<M, C>
+impl<M, C, K> IbridgeServer<M, C, K>
 where
     M: MailApi + Send + Sync + 'static,
     C: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+    K: ContactsProvider + Send + Sync + 'static,
 {
     /// Lists calendars and says whether each holds events, tasks or both.
     ///
@@ -525,11 +527,11 @@ where
     }
 }
 
-fn require_path(id: &str) -> Result<ResourcePath, ErrorData> {
+pub(crate) fn require_path(id: &str) -> Result<ResourcePath, ErrorData> {
     decode_resource(id).map_err(|_| ErrorData::invalid_params("invalid id", None))
 }
 
-fn require_etag(etag: &str) -> Result<ETag, ErrorData> {
+pub(crate) fn require_etag(etag: &str) -> Result<ETag, ErrorData> {
     ETag::try_from(etag).map_err(|_| ErrorData::invalid_params("invalid etag", None))
 }
 
@@ -543,7 +545,7 @@ fn cursor_offset(cursor: Option<&str>) -> Result<usize, ErrorData> {
 }
 
 /// One page of `items`, and the cursor for the next page when there is one.
-fn page<T>(items: Vec<T>, limit: u32, start: usize) -> (Vec<T>, Option<String>) {
+pub(crate) fn page<T>(items: Vec<T>, limit: u32, start: usize) -> (Vec<T>, Option<String>) {
     let limit = usize::try_from(limit).unwrap_or(usize::MAX);
     let end = start.saturating_add(limit);
     let more = items.len() > end;
@@ -552,10 +554,10 @@ fn page<T>(items: Vec<T>, limit: u32, start: usize) -> (Vec<T>, Option<String>) 
 }
 
 /// The most characters of a description or note a tool returns, like a mail body.
-const BODY_LIMIT: usize = 40_000;
+pub(crate) const BODY_LIMIT: usize = 40_000;
 
 /// `text` cut to [`BODY_LIMIT`] characters, with a marker saying how much is missing.
-fn capped(text: &str) -> String {
+pub(crate) fn capped(text: &str) -> String {
     let Some((end, _)) = text.char_indices().nth(BODY_LIMIT) else {
         return text.to_owned();
     };

@@ -130,7 +130,7 @@ mod tests {
         assert!(!stored.contains("grace-uid"), "{stored:?}");
         assert!(stored.contains("urn:uuid:ada-uid"), "{stored:?}");
         let contact = provider.get(&path("card/ada.vcf")).await.expect("get");
-        assert_eq!(contact.groups, ["Pioneers"]);
+        assert_eq!(contact.groups[0].name, "Pioneers");
     }
 
     #[tokio::test]

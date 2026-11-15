@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use ibridge_auth::{CredentialSource as _, Credentials, EnvSource, KeyringSource};
-use ibridge_core::{CalendarProvider, RemindersProvider};
+use ibridge_core::{CalendarProvider, ContactsProvider, RemindersProvider};
 use ibridge_server::{AccountSnapshot, IbridgeServer, MailApi};
 
 use crate::account::{Services, State, snapshot};
@@ -23,26 +23,34 @@ pub(crate) enum Access {
 /// Builds the server for one account.
 ///
 /// A build without mail hides the mail tools. [`Access::ReadOnly`] hides every write tool.
-pub(crate) fn assemble<M, C>(
+pub(crate) fn assemble<M, C, K>(
     services: Services,
     access: Access,
     account: AccountSnapshot,
     mail: Arc<M>,
     calendar: Arc<C>,
-) -> IbridgeServer<M, C>
+    contacts: Arc<K>,
+) -> IbridgeServer<M, C, K>
 where
     M: MailApi + Send + Sync + 'static,
     C: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+    K: ContactsProvider + Send + Sync + 'static,
 {
     let server = match access {
         Access::ReadOnly => IbridgeServer::read_only(account, mail),
         Access::ReadWrite => IbridgeServer::read_write(account, mail),
     }
-    .with_calendar(calendar);
+    .with_calendar(calendar)
+    .with_contacts(contacts);
     let server = if services.calendar {
         server
     } else {
         server.without_calendar()
+    };
+    let server = if services.contacts {
+        server
+    } else {
+        server.without_contacts()
     };
     if services.mail {
         server
@@ -93,7 +101,8 @@ pub(crate) async fn stdio(access: Access) -> anyhow::Result<()> {
     let account = snapshot(credentials.apple_id.clone(), services, state.as_ref());
     let mail = crate::mail::backend(&credentials)?;
     let calendar = crate::calendar::backend(&credentials)?;
-    let server = assemble(services, access, account, mail, calendar);
+    let contacts = crate::contacts::backend(&credentials)?;
+    let server = assemble(services, access, account, mail, calendar, contacts);
     tracing::info!(?access, "serving MCP over stdio");
     server
         .serve(rmcp::transport::stdio())
@@ -124,7 +133,7 @@ mod tests {
     use std::sync::Arc;
 
     use ibridge_core::AppleId;
-    use ibridge_server::{NoCalendar, ServiceStatus};
+    use ibridge_server::{NoCalendar, NoContacts, ServiceStatus};
 
     use super::{Access, assemble};
     use crate::account::{Services, snapshot};
@@ -150,6 +159,7 @@ mod tests {
             account,
             Arc::new(NoMail),
             Arc::new(NoCalendar),
+            Arc::new(NoContacts),
         );
         let names: Vec<String> = server
             .tools()
@@ -163,6 +173,43 @@ mod tests {
         assert!(
             names.iter().any(|name| name == "account_status"),
             "account_status stays, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn contacts_tools_follow_the_contacts_service() {
+        let names = |contacts: bool| -> Vec<String> {
+            let services = Services {
+                mail: true,
+                calendar: true,
+                contacts,
+            };
+            let apple_id = AppleId::try_from("ada@icloud.com").expect("apple id");
+            let account = snapshot(apple_id, services, None);
+            assemble(
+                services,
+                Access::ReadWrite,
+                account,
+                Arc::new(NoMail),
+                Arc::new(NoCalendar),
+                Arc::new(NoContacts),
+            )
+            .tools()
+            .into_iter()
+            .map(|tool| tool.name.into_owned())
+            .collect()
+        };
+        let on = names(true);
+        for tool in ["contacts_search", "contacts_set_group_membership"] {
+            assert!(
+                on.iter().any(|name| name == tool),
+                "{tool} is listed, got {on:?}"
+            );
+        }
+        let off = names(false);
+        assert!(
+            !off.iter().any(|name| name.starts_with("contacts_")),
+            "contacts tools are hidden when contacts is off, got {off:?}"
         );
     }
 
@@ -182,6 +229,7 @@ mod tests {
                 account,
                 Arc::new(NoMail),
                 Arc::new(NoCalendar),
+                Arc::new(NoContacts),
             )
             .tools()
             .into_iter()

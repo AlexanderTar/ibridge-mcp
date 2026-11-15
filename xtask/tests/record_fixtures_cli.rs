@@ -93,3 +93,33 @@ fn calendar_recorder_refuses_bad_account_files_without_printing_the_password() {
         let _ = fs::remove_file(path);
     }
 }
+
+#[test]
+fn contacts_recorder_refuses_bad_account_files_without_printing_the_password() {
+    let out = std::env::temp_dir().join(format!("ibridge-card-cli-out-{}", std::process::id()));
+    let bad_id = account_file("card-badid", 0o600, "not-an-apple-id");
+    let loose = account_file("card-loose", 0o644, "ada@icloud.com");
+    let missing =
+        std::env::temp_dir().join(format!("ibridge-card-cli-missing-{}", std::process::id()));
+
+    for account in [&bad_id, &loose, &missing] {
+        let output = run_kind("contacts", account, &out);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+        assert!(
+            stderr.contains("record-fixtures:"),
+            "the failure reaches stderr: {stderr}"
+        );
+        assert!(
+            !stdout.contains(PASSWORD) && !stderr.contains(PASSWORD),
+            "the password was printed for {}:\nstdout: {stdout}\nstderr: {stderr}",
+            account.display()
+        );
+    }
+    assert!(!out.exists(), "nothing is recorded");
+    for path in [bad_id, loose] {
+        let _ = fs::remove_file(path);
+    }
+}

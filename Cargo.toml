@@ -8,6 +8,7 @@ edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
 repository = "https://github.com/AlexanderTar/icloud-mcp"
+homepage = "https://github.com/AlexanderTar/icloud-mcp"
 
 # Dependencies arrive with the crates that use them. Versions live here so
 # every crate resolves the same one.
@@ -136,3 +137,8 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 module_inception = "allow"
 enum_glob_use = "allow"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

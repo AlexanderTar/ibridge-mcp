@@ -1,0 +1,5 @@
+# Steps dist injects into every build job, before it builds.
+- name: Enable the hardened runtime for macOS signing
+  # dist passes CODESIGN_OPTIONS to codesign --options; notarization needs "runtime".
+  shell: bash
+  run: echo "CODESIGN_OPTIONS=runtime" >> "$GITHUB_ENV"

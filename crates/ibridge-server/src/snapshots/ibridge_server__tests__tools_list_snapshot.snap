@@ -1,0 +1,724 @@
+---
+source: crates/ibridge-server/src/tests.rs
+expression: tools
+---
+[
+  {
+    "name": "account_status",
+    "description": "Reports the signed-in address, each service, and the server version.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "ServiceOut": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/ServiceState"
+            }
+          },
+          "required": [
+            "name",
+            "status",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "ServiceState": {
+          "enum": [
+            "on",
+            "off"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "apple_id": {
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/ServiceOut"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apple_id",
+        "services",
+        "version"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "mail_create_draft",
+    "description": "Saves a draft in Drafts.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body": {
+          "description": "Body as text.",
+          "type": "string"
+        },
+        "from": {
+          "default": null,
+          "description": "From address when it is not the signed-in Apple ID.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reply_to_id": {
+          "default": null,
+          "description": "Opaque id of the message this one replies to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subject": {
+          "description": "Subject.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Recipients.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "to",
+        "subject",
+        "body"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mail_get_attachment",
+    "description": "Fetches one attachment as text or as a small inline file.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "Opaque message id.",
+          "type": "string"
+        },
+        "offset": {
+          "default": 0,
+          "description": "Unicode scalar offset into a text part. Omitted means the start.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "part": {
+          "description": "Part identifier from `mail_get_message`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "part"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "bytes_base64": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "next_offset": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "content_type",
+        "name",
+        "size",
+        "text",
+        "bytes_base64",
+        "next_offset"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mail_get_message",
+    "description": "Fetches one message, including its text and attachment list.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "Opaque message id.",
+          "type": "string"
+        },
+        "offset": {
+          "default": 0,
+          "description": "Unicode scalar offset into the body. Omitted means the start.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "AttachmentInfoOut": {
+          "properties": {
+            "content_type": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "part": {
+              "type": "string"
+            },
+            "size": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "part",
+            "content_type",
+            "size",
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/AttachmentInfoOut"
+          },
+          "type": "array"
+        },
+        "body": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "next_offset": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "subject": {
+          "type": "string"
+        },
+        "to": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "subject",
+        "date",
+        "body",
+        "attachments",
+        "next_offset"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mail_list_mailboxes",
+    "description": "Lists mailboxes with their roles and counts.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "MailboxOut": {
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "total": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "unread": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "path",
+            "role",
+            "total",
+            "unread"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mailboxes": {
+          "items": {
+            "$ref": "#/$defs/MailboxOut"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "mailboxes"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mail_move",
+    "description": "Moves a message to a mailbox or a role.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "Opaque message id.",
+          "type": "string"
+        },
+        "mailbox": {
+          "default": null,
+          "description": "Mailbox path. Set this or `role`, not both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "default": null,
+          "description": "Role: inbox, archive, trash, junk, sent, drafts, or notes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "moved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "moved"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mail_search",
+    "description": "Searches messages, newest first.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "before": {
+          "default": null,
+          "description": "Messages before this date.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursor": {
+          "default": null,
+          "description": "Cursor from the previous page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flagged": {
+          "default": null,
+          "description": "When set, only flagged messages.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "from": {
+          "default": null,
+          "description": "From header contains this text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 25,
+          "description": "Page size. Omitted means 25. More than 100 is rejected.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mailbox": {
+          "default": null,
+          "description": "Mailbox path. Omit to use `role` or the inbox.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "default": null,
+          "description": "Well-known role: inbox, sent, drafts, trash, junk, archive, notes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "default": null,
+          "description": "Messages on or after this date.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subject": {
+          "default": null,
+          "description": "Subject contains this text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "default": null,
+          "description": "Body or subject contains this text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to": {
+          "default": null,
+          "description": "To header contains this text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unread": {
+          "default": null,
+          "description": "When set, only unseen messages.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "SearchHitOut": {
+          "properties": {
+            "date": {
+              "type": "string"
+            },
+            "flagged": {
+              "type": "boolean"
+            },
+            "from": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "unread": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "from",
+            "subject",
+            "date",
+            "unread",
+            "flagged"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/SearchHitOut"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "warnings": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "messages",
+        "next_cursor",
+        "warnings"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mail_send",
+    "description": "Sends a message and saves a copy in Sent Messages.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body": {
+          "description": "Body as text.",
+          "type": "string"
+        },
+        "from": {
+          "default": null,
+          "description": "From address when it is not the signed-in Apple ID.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reply_to_id": {
+          "default": null,
+          "description": "Opaque id of the message this one replies to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subject": {
+          "description": "Subject.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Recipients.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "to",
+        "subject",
+        "body"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "warning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "warning"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mail_set_flags",
+    "description": "Sets or clears seen and flagged. Repeating the same change does nothing more.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "flagged": {
+          "default": null,
+          "description": "Flagged flag. Omit to leave it unchanged.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Opaque message id.",
+          "type": "string"
+        },
+        "seen": {
+          "default": null,
+          "description": "Seen flag. Omit to leave it unchanged.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "updated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "updated"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  }
+]

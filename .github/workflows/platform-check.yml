@@ -5,6 +5,7 @@ on:
     paths:
       - "**/platform/**"
       - "Cargo.lock"
+      - ".github/workflows/platform-check.yml"
   push:
     branches: [main]
 
@@ -17,7 +18,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Check
         run: cargo check --workspace
 
@@ -26,6 +27,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Check
         run: cargo check --workspace --no-default-features --features stdio,mail,calendar,contacts

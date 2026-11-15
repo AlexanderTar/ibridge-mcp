@@ -1,10 +1,10 @@
 # Local development
 
-`rust-toolchain.toml` pins the dev toolchain at 1.100. The minimum supported version is 1.98 (`rust-version` in the workspace manifest). `cargo +1.98 check` is the MSRV check, so both toolchains need to be installed:
+`rust-toolchain.toml` pins the dev toolchain at 1.100. The minimum supported version is 1.98 (`rust-version` in the workspace manifest). `cargo +1.98 check` is the MSRV check. That selector is the toolchain named `1.98`, which is not the same install as `1.98.0`, so both toolchains need to be installed:
 
 ```sh
 rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy,llvm-tools-preview
-rustup toolchain install 1.98.0
+rustup toolchain install 1.98
 ```
 
 Install the CI tools with the pinned toolchain. `cargo-shear` 1.14.1 does not build on rustc 1.91, which is what an un-updated `stable` may still be:

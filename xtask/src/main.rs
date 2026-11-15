@@ -13,7 +13,7 @@ const SPDX_HEADER: &str = "// SPDX-License-Identifier: Apache-2.0";
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
-        Some("check-headers") => report(check_headers(Path::new("."))),
+        Some("check-headers") => report(check_headers(&headers_root())),
         Some("record-fixtures" | "schema-snapshot" | "mcpb") => ExitCode::from(2),
         Some(command) => fail(&format!("unknown command: {command}")),
         None => fail("usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb>"),
@@ -47,6 +47,13 @@ fn report(result: io::Result<Vec<PathBuf>>) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn headers_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask is a workspace member")
+        .to_path_buf()
 }
 
 fn check_headers(root: &Path) -> io::Result<Vec<PathBuf>> {
@@ -83,7 +90,8 @@ fn has_header(path: &Path) -> io::Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::check_headers;
+    use super::{check_headers, headers_root};
+    use std::env;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -107,6 +115,29 @@ mod tests {
         let missing = check_headers(&root).unwrap();
 
         assert_eq!(missing, vec![root.join("nested").join("bare.rs")]);
+    }
+
+    #[test]
+    fn header_scan_root_is_the_workspace_from_a_child_directory() {
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let _restore = Restore(env::current_dir().unwrap());
+        env::set_current_dir(workspace.join("crates")).unwrap();
+
+        let root = headers_root().canonicalize().unwrap();
+
+        assert_eq!(root, workspace);
+    }
+
+    struct Restore(PathBuf);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.0);
+        }
     }
 
     struct RemoveDir(PathBuf);

@@ -3,7 +3,7 @@
 //! Dynamic client registration, the fallback for clients without a metadata document.
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
@@ -14,9 +14,9 @@ use base64::Engine;
 use serde_json::{Value, json};
 use sqlx::{Row, SqlitePool};
 
-use super::Shared;
 use super::cimd::display_name;
 use super::client::{ClientInfo, valid_redirect_uri};
+use super::{Peer, Shared};
 use crate::store::{Store, StoreError, internal};
 
 /// Registrations kept before new ones are refused.
@@ -141,7 +141,14 @@ fn refusal(error: &str, description: &str) -> Response {
 }
 
 /// RFC 7591 registration, limited to public clients.
-async fn register(State(shared): State<Arc<Shared>>, Json(request): Json<Value>) -> Response {
+async fn register(
+    State(shared): State<Arc<Shared>>,
+    peer: Peer,
+    Json(request): Json<Value>,
+) -> Response {
+    if !shared.registrations.allow(&peer.0, Instant::now()) {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
     let redirect_uris: Vec<String> = request
         .get("redirect_uris")
         .and_then(Value::as_array)
@@ -221,16 +228,11 @@ mod tests {
     use tower::ServiceExt;
 
     use super::ClientRegistry;
-    use crate::oauth::{OAuthConfig, router};
-    use crate::store::Store;
+    use crate::oauth::Access;
+    use crate::oauth::test_support::{Harness, harness};
 
-    async fn register(store: &Store, body: &Value) -> (StatusCode, Value) {
-        let app = router(
-            OAuthConfig::new("https://ibridge.example").expect("public url"),
-            store,
-        )
-        .await
-        .expect("router");
+    async fn register(harness: &Harness, body: &Value) -> (StatusCode, Value) {
+        let app = harness.app.clone();
         let request = Request::post("/register")
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string()))
@@ -248,9 +250,9 @@ mod tests {
 
     #[tokio::test]
     async fn dcr_fallback_registers_public_client() {
-        let store = Store::memory().await.expect("store");
+        let harness = harness(Access::MultiTenant).await;
         let (status, reply) = register(
-            &store,
+            &harness,
             &json!({
                 "client_name": "Test Client",
                 "redirect_uris": ["http://127.0.0.1/cb", "https://app.example/cb"],
@@ -274,7 +276,9 @@ mod tests {
             json!(["http://127.0.0.1/cb", "https://app.example/cb"])
         );
 
-        let registry = ClientRegistry::open(&store).await.expect("registry");
+        let registry = ClientRegistry::open(&harness.store)
+            .await
+            .expect("registry");
         let stored = registry
             .get(client_id)
             .await
@@ -293,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn dcr_rejects_metadata_a_public_client_cannot_have() {
-        let store = Store::memory().await.expect("store");
+        let harness = harness(Access::MultiTenant).await;
         let cases = [
             (json!({"client_name": "x"}), "invalid_redirect_uri"),
             (json!({"redirect_uris": []}), "invalid_redirect_uri"),
@@ -315,9 +319,43 @@ mod tests {
             ),
         ];
         for (body, error) in cases {
-            let (status, reply) = register(&store, &body).await;
+            let (status, reply) = register(&harness, &body).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
             assert_eq!(reply["error"], error, "{body}");
         }
+    }
+
+    #[tokio::test]
+    async fn registration_is_rate_limited_per_ip() {
+        let harness = harness(Access::MultiTenant).await;
+        let post = |ip: &'static str| {
+            let harness = &harness;
+            async move {
+                let request = Request::post("/register")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({"redirect_uris": ["https://app.example/cb"]}).to_string(),
+                    ))
+                    .expect("request");
+                harness.send(request, ip).await.status
+            }
+        };
+        for attempt in 0..10 {
+            assert_eq!(
+                post("198.51.100.9").await,
+                StatusCode::CREATED,
+                "registration {attempt}"
+            );
+        }
+        assert_eq!(
+            post("198.51.100.9").await,
+            StatusCode::TOO_MANY_REQUESTS,
+            "the eleventh registration from one address in an hour"
+        );
+        assert_eq!(
+            post("198.51.100.10").await,
+            StatusCode::CREATED,
+            "another address is unaffected"
+        );
     }
 }

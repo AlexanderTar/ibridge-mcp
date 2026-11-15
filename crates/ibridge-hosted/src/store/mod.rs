@@ -239,6 +239,21 @@ impl Store {
         settle(tx, result).await
     }
 
+    /// Seals the password a live check accepted under a new authorization code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Internal`] when the row cannot be written.
+    pub async fn seal_validated_under_code(
+        &self,
+        validated: &ValidatedCredentials,
+        scope: Scope,
+        now: SystemTime,
+    ) -> Result<IssuedCode, StoreError> {
+        self.seal_under_code(&validated.apple_id, &validated.secret, scope, now)
+            .await
+    }
+
     /// Exchanges a code for an access token and a refresh token, then deletes the code ciphertext.
     ///
     /// A second presentation of the same code revokes the grant.

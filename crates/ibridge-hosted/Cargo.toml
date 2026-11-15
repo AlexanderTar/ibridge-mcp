@@ -9,6 +9,7 @@ description = "Hosted OAuth server and token-sealed credential store."
 
 [dependencies]
 aes-gcm.workspace = true
+askama.workspace = true
 axum.workspace = true
 base64.workspace = true
 bytes.workspace = true
@@ -21,9 +22,11 @@ hyper-util.workspace = true
 ibridge-auth.workspace = true
 ibridge-core.workspace = true
 secrecy.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower.workspace = true

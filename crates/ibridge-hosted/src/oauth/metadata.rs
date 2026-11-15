@@ -76,16 +76,10 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
-    use crate::oauth::{OAuthConfig, router};
-    use crate::store::Store;
-
-    const PUBLIC: &str = "https://ibridge.example";
+    use crate::oauth::test_support::harness;
 
     async fn app() -> Router {
-        let store = Store::memory().await.expect("store");
-        router(OAuthConfig::new(PUBLIC).expect("public url"), &store)
-            .await
-            .expect("router")
+        harness(crate::oauth::Access::MultiTenant).await.app
     }
 
     async fn get(path: &str) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {

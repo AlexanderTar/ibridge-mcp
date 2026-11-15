@@ -17,10 +17,6 @@ pub(crate) struct ClientInfo {
 
 impl ClientInfo {
     /// True when `requested` is one of the registered redirects.
-    #[expect(
-        dead_code,
-        reason = "the authorize page checks redirects in the next unit"
-    )]
     pub(crate) fn allows_redirect(&self, requested: &str) -> bool {
         redirect_allowed(&self.redirect_uris, requested)
     }

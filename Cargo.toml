@@ -9,9 +9,11 @@ rust-version = "1.98"
 license = "Apache-2.0"
 repository = "https://github.com/AlexanderTar/icloud-mcp"
 
-# Dependencies arrive with the crates that use them. An empty table keeps
-# path-deps and versions in one place from the first commit.
+# Dependencies arrive with the crates that use them. Versions live here so
+# every crate resolves the same one.
 [workspace.dependencies]
+proptest = "1"
+thiserror = "2"
 
 # Lints pasted from BeautifulRust lints/lints.toml at
 # b9718436d77ee7bcf17cdcb6aa27628feb95d97a, plus unsafe_code = "forbid"

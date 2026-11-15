@@ -17,7 +17,7 @@ mod test_support;
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -157,9 +157,24 @@ impl FromRequestParts<Arc<Shared>> for Peer {
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
             .map(|ConnectInfo(addr)| addr.ip().to_string());
-        Ok(Self(
-            forwarded.or(direct).unwrap_or_else(|| "unknown".to_owned()),
-        ))
+        let peer = forwarded.or(direct).unwrap_or_else(|| "unknown".to_owned());
+        Ok(Self(budget_key(&peer)))
+    }
+}
+
+/// The key a peer's rate-limit budget is kept under. A client usually holds a whole
+/// IPv6 /64, so every address in one /64 shares a budget; anything else is kept as is.
+fn budget_key(peer: &str) -> String {
+    match peer.parse::<IpAddr>() {
+        Ok(IpAddr::V6(ip)) if ip.to_ipv4_mapped().is_some() => {
+            // A dual-stack socket reports an IPv4 client this way; it is one host, not a /64.
+            ip.to_ipv4_mapped().map_or_else(|| peer.to_owned(), |v4| v4.to_string())
+        }
+        Ok(IpAddr::V6(ip)) => {
+            let [a, b, c, d, ..] = ip.segments();
+            format!("{}/64", Ipv6Addr::new(a, b, c, d, 0, 0, 0, 0))
+        }
+        _ => peer.to_owned(),
     }
 }
 

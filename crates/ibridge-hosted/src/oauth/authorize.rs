@@ -959,6 +959,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ipv6_peers_share_one_budget_per_64() {
+        let h = harness(Access::MultiTenant).await;
+        let page = h
+            .get_authorize(&Harness::authorize_path(&[], &[]), IP)
+            .await;
+        // Ten addresses inside one /64 spend one budget between them.
+        for n in 0..10 {
+            let reply = h
+                .post_form(
+                    &page,
+                    &format!("2001:db8:1:2::{n:x}"),
+                    &format!("user{n}@icloud.com"),
+                    "wrong-wrong",
+                    None,
+                )
+                .await;
+            assert_eq!(reply.status, StatusCode::BAD_REQUEST, "attempt {n}");
+        }
+        let limited = h
+            .post_form(
+                &page,
+                "2001:db8:1:2:ffff::1",
+                "user99@icloud.com",
+                ASP_ALL,
+                None,
+            )
+            .await;
+        assert_eq!(
+            limited.status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "another address in the same /64 is limited"
+        );
+        let elsewhere = h
+            .post_form(&page, "2001:db8:1:3::1", "user99@icloud.com", ASP_ALL, None)
+            .await;
+        assert_eq!(
+            elsewhere.status,
+            StatusCode::SEE_OTHER,
+            "a different /64 has its own budget"
+        );
+        // A dual-stack socket shows IPv4 clients as mapped addresses; they stay separate hosts.
+        for (n, ip) in ["::ffff:192.0.2.1", "::ffff:192.0.2.2"].iter().enumerate() {
+            let reply = h
+                .post_form(&page, ip, &format!("mapped{n}@icloud.com"), ASP_ALL, None)
+                .await;
+            assert_eq!(reply.status, StatusCode::SEE_OTHER, "{ip}");
+        }
+    }
+
+    #[tokio::test]
     async fn allowlist_enforced_in_self_host() {
         let ada = ibridge_core::AppleId::try_from(ADA).expect("ada");
         let h = harness(Access::AllowList(vec![ada])).await;

@@ -7,5 +7,19 @@ license.workspace = true
 repository.workspace = true
 description = "Calendar and reminders providers."
 
+[dependencies]
+calcard.workspace = true
+chrono.workspace = true
+http.workspace = true
+ibridge-core.workspace = true
+ibridge-dav.workspace = true
+roxmltree.workspace = true
+
+[dev-dependencies]
+ibridge-auth.workspace = true
+ibridge-dav = { workspace = true, features = ["test-hosts"] }
+ibridge-testkit.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
 [lints]
 workspace = true

@@ -11,8 +11,8 @@ mod mail;
 
 pub use account::AppleId;
 pub use calendar::{
-    Calendar, CalendarProvider, CompletedFilter, Event, EventDraft, EventQuery, Reminder,
-    ReminderDraft, ReminderList, RemindersProvider,
+    Calendar, CalendarProvider, CompletedFilter, Event, EventDraft, EventList, EventQuery,
+    Reminder, ReminderDraft, ReminderList, RemindersProvider, UPGRADED_LISTS_NOTE, UpdateScope,
 };
 pub use contacts::{Contact, ContactDraft, ContactQuery, ContactsProvider, GroupChange};
 pub use error::{CoreError, IdError, ParseError};
@@ -89,7 +89,7 @@ mod provider_tests {
         async fn list_events(
             &self,
             _query: &super::EventQuery,
-        ) -> Result<Vec<super::Event>, CoreError> {
+        ) -> Result<super::EventList, CoreError> {
             Err(CoreError::Unsupported("null"))
         }
         async fn get_event(&self, _path: &super::ResourcePath) -> Result<super::Event, CoreError> {
@@ -107,6 +107,7 @@ mod provider_tests {
             _path: &super::ResourcePath,
             _etag: &super::ETag,
             _draft: &super::EventDraft,
+            _scope: &super::UpdateScope,
         ) -> Result<super::ETag, CoreError> {
             Err(CoreError::Unsupported("null"))
         }

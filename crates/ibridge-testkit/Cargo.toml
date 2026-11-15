@@ -12,6 +12,7 @@ publish = false
 imap-codec.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
+wiremock.workspace = true
 
 [dev-dependencies]
 async-imap.workspace = true

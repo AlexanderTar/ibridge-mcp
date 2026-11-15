@@ -5,6 +5,7 @@
 use ibridge_core::{CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId};
 
 use crate::imap::{Connect, ImapPool};
+use crate::limits::{SendLimits, SendWindow};
 use crate::smtp::{OutgoingMail, SmtpClient};
 
 /// IMAP and SMTP for one account.
@@ -12,21 +13,37 @@ use crate::smtp::{OutgoingMail, SmtpClient};
 pub struct MailSession<C: Connect> {
     imap: ImapPool<C>,
     smtp: SmtpClient,
+    sends: SendWindow,
 }
 
 impl<C: Connect> MailSession<C> {
     /// Builds a session. The pool and the SMTP client share one account.
+    ///
+    /// Send caps are [`SendLimits::default`]: 50 recipients, 20 sends an hour.
     #[must_use]
     pub fn new(imap: ImapPool<C>, smtp: SmtpClient) -> Self {
-        Self { imap, smtp }
+        Self::with_limits(imap, smtp, SendLimits::default())
+    }
+
+    /// Builds a session with explicit send caps.
+    #[must_use]
+    pub fn with_limits(imap: ImapPool<C>, smtp: SmtpClient, limits: SendLimits) -> Self {
+        Self {
+            imap,
+            smtp,
+            sends: SendWindow::new(limits),
+        }
     }
 
     /// Sends `draft` and appends the same MIME to Sent Messages.
     ///
     /// # Errors
     ///
-    /// Returns [`CoreError`] when SMTP or the Sent append fails.
+    /// Returns [`CoreError::InvalidInput`] when the draft has more recipients
+    /// than the cap, [`CoreError::RateLimited`] when this account has already
+    /// sent its hourly cap, and [`CoreError`] when SMTP or the Sent append fails.
     pub async fn send(&self, draft: &Draft) -> Result<MessageId, CoreError> {
+        self.sends.admit(draft.to.len())?;
         let mail = outgoing(self.smtp.login_address(), draft);
         let bytes = self.smtp.transmit(&mail).await?;
         self.imap.append(MailboxRole::Sent, None, &bytes).await
@@ -90,9 +107,12 @@ fn outgoing(from: &str, draft: &Draft) -> OutgoingMail {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use ibridge_auth::Credentials;
     use ibridge_core::{
-        AppleId, Draft, FlagChange, MailboxPath, MailboxRole, MessageId, Uid, UidValidity,
+        AppleId, CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId, Uid,
+        UidValidity,
     };
     use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
 
@@ -288,5 +308,58 @@ mod tests {
             1,
             "a second identical store does not add a second \\Seen"
         );
+    }
+
+    #[tokio::test]
+    async fn send_refuses_over_50_recipients() {
+        let (fake, capture, session) = session().await;
+        let mut mail = draft();
+        mail.to = (0..51).map(|n| format!("r{n}@example.com")).collect();
+        let err = session
+            .send(&mail)
+            .await
+            .expect_err("51 recipients are refused");
+        assert!(
+            matches!(err, CoreError::InvalidInput(_)),
+            "too many recipients is invalid input, got {err:?}"
+        );
+        assert!(
+            fake.appended().is_empty(),
+            "a refused send is not appended to Sent"
+        );
+        assert!(
+            capture.message().is_empty(),
+            "a refused send is not transmitted"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn send_refuses_21st_in_hour() {
+        let (fake, _capture, session) = session().await;
+        for _ in 0..20 {
+            session
+                .send(&draft())
+                .await
+                .expect("a send within the hour");
+        }
+        let err = session
+            .send(&draft())
+            .await
+            .expect_err("the 21st send in an hour is refused");
+        assert!(
+            matches!(err, CoreError::RateLimited { .. }),
+            "the hourly cap is rate limited, got {err:?}"
+        );
+        assert_eq!(
+            fake.appended().len(),
+            20,
+            "the refused send is not appended"
+        );
+        tokio::time::sleep(Duration::from_hours(1)).await;
+        session
+            .send(&draft())
+            .await
+            .expect("a send is allowed after an hour");
+        assert_eq!(fake.appended().len(), 21, "the later send is appended");
     }
 }

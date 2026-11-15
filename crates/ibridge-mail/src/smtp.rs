@@ -133,6 +133,8 @@ impl SmtpClient {
         } else {
             AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(self.host.clone())
                 .port(self.port)
+                // A paused test clock makes lettre's 60s connect timeout fire at once.
+                .timeout(None)
                 .credentials(smtp_credentials)
         };
         Ok(builder.build())
@@ -284,10 +286,15 @@ pub(crate) mod tests {
             let seen = Arc::new(Mutex::new(Seen::default()));
             let slot = Arc::clone(&seen);
             let task = tokio::spawn(async move {
-                let Ok((socket, _)) = listener.accept().await else {
-                    return;
-                };
-                let _ = serve(socket, slot).await;
+                loop {
+                    let Ok((socket, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let slot = Arc::clone(&slot);
+                    tokio::spawn(async move {
+                        let _ = serve(socket, slot).await;
+                    });
+                }
             });
             Self {
                 host: "127.0.0.1".to_owned(),

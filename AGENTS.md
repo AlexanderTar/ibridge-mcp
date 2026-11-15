@@ -60,6 +60,6 @@ Run each of these once, on a clean tree, before pushing:
 - `cargo shear`
 - `cargo xtask check-headers`
 
-Docker tests match `test(/(^|::)integration::/)` (a crate-root `mod integration`, named `integration::…`, or any `…::integration::…`) or `binary(integration)` (`tests/integration.rs`, whose test names have no module prefix). The default nextest profile excludes that set. Run them with `cargo nextest run --workspace --profile integration`. CI adds `--no-tests=pass` so an empty group does not fail the build; a failing test still does.
+Docker tests match `test(/(^|::)integration::/)`: a crate-root `mod integration` (the name is `integration::…`, with no leading `::`) or any `…::integration::…`. A top-level test in `tests/integration.rs` has no module prefix, so it runs in the default profile; put it in `mod integration` in that file. The filter does not use `binary(integration)`, because nextest rejects a binary predicate that matches no binary and this repo has none until a Docker suite lands. The default nextest profile excludes the set. Run them with `cargo nextest run --workspace --profile integration`. CI adds `--no-tests=pass` so an empty group does not fail the build; a failing test still does.
 
 Every `.rs` file starts with `// SPDX-License-Identifier: Apache-2.0`. Sign off commits with `git commit -s` and leave GPG signing on. See `docs/local-development.md` for the toolchain and the tool install.

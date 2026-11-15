@@ -21,8 +21,40 @@ const ID_HEADERS: [&str; 4] = [
     "resent-message-id",
 ];
 
+/// Headers a relay adds on the way. They hold the sender's address, hostnames
+/// and queue ids, so they are dropped rather than edited.
+const TRACE_HEADERS: [&str; 6] = [
+    "received",
+    "x-originating-ip",
+    "authentication-results",
+    "received-spf",
+    "arc-authentication-results",
+    "x-apple-originating-ip",
+];
+const IPV4: &str = "192.0.2.1";
+const IPV6: &str = "2001:db8::1";
+
 static ID_TOKEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<[^<>\s@]+@[^<>\s]+>").expect("message id pattern"));
+static PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        "<{MESSAGE_ID}-([0-9]+)@{}>",
+        regex::escape(MESSAGE_ID_HOST)
+    ))
+    .expect("placeholder pattern")
+});
+static IPV4_ADDR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b").expect("ipv4 pattern"));
+// ponytail: "::" followed by hex also matches in prose such as `std::add`; recorded
+// marker mails hold no such text. Tighten this if a fixture ever does.
+static IPV6_ADDR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b",
+        r"|\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?",
+        r"|::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})",
+    ))
+    .expect("ipv6 pattern")
+});
 static SHARD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bp[0-9]+-([a-z]+)\.icloud\.com").expect("shard pattern"));
 static DSID_PATH: LazyLock<Regex> =
@@ -47,6 +79,8 @@ pub(crate) struct Identity {
 pub(crate) struct Scrubber {
     identity: Identity,
     ids: HashMap<String, String>,
+    /// The highest placeholder number handed out or seen in the input.
+    highest: usize,
 }
 
 impl Scrubber {
@@ -54,6 +88,7 @@ impl Scrubber {
         Self {
             identity,
             ids: HashMap::new(),
+            highest: 0,
         }
     }
 
@@ -66,6 +101,8 @@ impl Scrubber {
         }
         let out = DSID_PATH.replace_all(&out, NoExpand(&format!("/{DSID}/")));
         let out = DSID_LABEL.replace_all(&out, format!("${{1}}{DSID}"));
+        let out = IPV4_ADDR.replace_all(&out, NoExpand(IPV4));
+        let out = IPV6_ADDR.replace_all(&out, NoExpand(IPV6));
         SHARD.replace_all(&out, "p00-$1.icloud.com").into_owned()
     }
 
@@ -86,20 +123,35 @@ impl Scrubber {
         literals
     }
 
-    /// Replaces Message-IDs in header lines only. A body or address line that
-    /// happens to contain `<a@b>` is left to the other rules.
+    /// Replaces Message-IDs and drops trace headers, in header lines only. A body
+    /// or address line that happens to contain `<a@b>` is left to the other rules.
     fn scrub_message_ids(&mut self, text: &str) -> String {
+        for found in PLACEHOLDER.captures_iter(text) {
+            if let Ok(number) = found[1].parse::<usize>() {
+                self.highest = self.highest.max(number);
+            }
+        }
         let mut out = String::with_capacity(text.len());
         let mut in_headers = true;
         let mut id_header = false;
+        let mut trace_header = false;
         for line in text.split_inclusive('\n') {
             if in_headers && line.trim_end_matches(['\r', '\n']).is_empty() {
                 in_headers = false;
             }
             if in_headers && !line.starts_with([' ', '\t']) {
-                id_header = line.split_once(':').is_some_and(|(name, _)| {
-                    ID_HEADERS.contains(&name.trim().to_ascii_lowercase().as_str())
-                });
+                let name = line
+                    .split_once(':')
+                    .map(|(name, _)| name.trim().to_ascii_lowercase());
+                id_header = name
+                    .as_deref()
+                    .is_some_and(|name| ID_HEADERS.contains(&name));
+                trace_header = name
+                    .as_deref()
+                    .is_some_and(|name| TRACE_HEADERS.contains(&name));
+            }
+            if in_headers && trace_header {
+                continue;
             }
             if in_headers && id_header {
                 let replaced = ID_TOKEN.replace_all(line, |found: &regex::Captures<'_>| {
@@ -117,11 +169,13 @@ impl Scrubber {
         if id.ends_with(&format!("@{MESSAGE_ID_HOST}>")) {
             return id.to_owned();
         }
-        let next = self.ids.len() + 1;
-        self.ids
-            .entry(id.to_owned())
-            .or_insert_with(|| format!("<{MESSAGE_ID}-{next}@{MESSAGE_ID_HOST}>"))
-            .clone()
+        if let Some(known) = self.ids.get(id) {
+            return known.clone();
+        }
+        self.highest += 1;
+        let placeholder = format!("<{MESSAGE_ID}-{}@{MESSAGE_ID_HOST}>", self.highest);
+        self.ids.insert(id.to_owned(), placeholder.clone());
+        placeholder
     }
 }
 
@@ -135,6 +189,11 @@ mod tests {
     use super::{Identity, Scrubber};
 
     const RECORDING: &str = "\
+Received: from [192.168.1.20] (unknown [203.0.113.77])\r\n\
+\tby relay-17.mr.icloud.com with ESMTPSA id 9f8e7d\r\n\
+\tfor <ada.lovelace@icloud.com>; Wed, 4 Nov 2026 12:30:45 +0000\r\n\
+X-Originating-IP: [2001:db8:85a3::8a2e:370:7334]\r\n\
+Date: Wed, 4 Nov 2026 12:30:45 +0000\r\n\
 Message-ID: <aaa111@mail.icloud.com>\r\n\
 In-Reply-To: <bbb222@mail.icloud.com>\r\n\
 References: <bbb222@mail.icloud.com> <aaa111@mail.icloud.com>\r\n\
@@ -173,18 +232,37 @@ dsid 12345678901\r\n";
                 "{leaked} survived the scrub:\n{scrubbed}"
             );
         }
+        for leaked in [
+            "203.0.113.77",
+            "2001:db8:85a3::8a2e:370:7334",
+            "relay-17.mr.icloud.com",
+        ] {
+            assert!(
+                !scrubbed.contains(leaked),
+                "{leaked} survived the scrub:\n{scrubbed}"
+            );
+        }
+        assert!(
+            scrubbed.contains("Date: Wed, 4 Nov 2026 12:30:45 +0000"),
+            "a clock time is not an IPv6 address:\n{scrubbed}"
+        );
         assert!(
             scrubbed.contains("p00-caldav.icloud.com")
                 && scrubbed.contains("p00-contacts.icloud.com"),
             "shard numbers become p00, hosts stay recognisable:\n{scrubbed}"
         );
-        let lines: Vec<&str> = scrubbed.lines().collect();
-        let own = lines[0].trim_start_matches("Message-ID: ");
-        let parent = lines[1].trim_start_matches("In-Reply-To: ");
+        let header = |name: &str| {
+            scrubbed
+                .lines()
+                .find_map(|line| line.strip_prefix(name))
+                .unwrap_or_else(|| panic!("{name} header missing:\n{scrubbed}"))
+        };
+        let own = header("Message-ID: ");
+        let parent = header("In-Reply-To: ");
         assert_ne!(own, parent, "two Message-IDs stay two placeholders");
         assert_eq!(
-            lines[2],
-            format!("References: {parent} {own}"),
+            header("References: "),
+            format!("{parent} {own}"),
             "a reference points at the same placeholder as the header it came from"
         );
     }
@@ -200,5 +278,25 @@ dsid 12345678901\r\n";
         );
 
         assert_eq!(twice, once, "a second scrub must change nothing");
+    }
+
+    #[test]
+    fn scrub_does_not_reuse_existing_placeholders() {
+        let partly = "\
+Message-ID: <msg-1@scrub.invalid>\r\n\
+In-Reply-To: <fresh999@mail.icloud.com>\r\n\
+\r\n";
+        let scrubbed = Scrubber::new(identity()).scrub(partly);
+
+        assert!(!scrubbed.contains("fresh999"), "{scrubbed}");
+        assert!(
+            scrubbed.contains("Message-ID: <msg-1@scrub.invalid>"),
+            "an existing placeholder is kept:\n{scrubbed}"
+        );
+        assert!(
+            scrubbed.contains("In-Reply-To: <msg-2@scrub.invalid>"),
+            "a new id numbers past the existing placeholder:\n{scrubbed}"
+        );
+        assert_eq!(Scrubber::new(identity()).scrub(&scrubbed), scrubbed);
     }
 }

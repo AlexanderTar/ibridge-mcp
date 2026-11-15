@@ -194,11 +194,7 @@ pub(crate) fn new_card_text(uid: &str, draft: &ContactDraft) -> Result<String, C
 pub(crate) fn update_card_text(existing: &str, draft: &ContactDraft) -> Result<String, CoreError> {
     let draft = checked(draft)?;
     let current = read(&parse(existing).ok_or_else(|| CoreError::Protocol(String::new()))?);
-    let eol = if existing.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
+    let eol = eol_of(existing);
     let mut props = split(existing);
     if draft.name != current.full_name {
         replace_or_insert(&mut props, "FN", &fold(&fn_line(&draft.name), eol));
@@ -350,7 +346,7 @@ fn reconcile(
         if prop.name != name {
             return true;
         }
-        let key = normal(prop.value.trim());
+        let key = normal(unescape(prop.value.trim()).trim());
         if wanted_keys.contains(&key) {
             present.insert(key);
             return true;
@@ -397,6 +393,24 @@ fn email_line(email: &str) -> String {
 
 fn phone_line(phone: &str) -> String {
     format!("TEL;TYPE=VOICE:{phone}")
+}
+
+/// The text a vCard 3.0 value stands for, with its backslash escapes undone.
+fn unescape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n' | 'N') => out.push('\n'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Escapes text for a vCard 3.0 value.
@@ -534,6 +548,28 @@ mod tests {
             "{edited:?}"
         );
         assert!(edited.contains("N:Lovelace;Ada;;;\r\n"), "{edited:?}");
+    }
+
+    #[test]
+    fn escaped_values_read_back_keep_their_group_and_label() {
+        let card = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:u1\r\nN:Lovelace;Ada;;;\r\nFN:Ada Lovelace\r\n\
+            item1.EMAIL;type=INTERNET:Ada\\,Home@Example.com\r\nitem1.X-ABLabel:Home\r\n\
+            item2.TEL;type=CELL:555\\;0100\r\nitem2.X-ABLabel:Work\r\nEND:VCARD\r\n";
+        let fields = read(&parse(card).expect("calcard reads it"));
+        let emails = values(&fields.emails);
+        let phones = values(&fields.phones);
+        assert_eq!(emails, ["Ada,Home@Example.com"], "{fields:?}");
+        assert_eq!(phones, ["555;0100"]);
+        let same = update_card_text(
+            card,
+            &draft(
+                "Ada Lovelace",
+                &emails.iter().map(String::as_str).collect::<Vec<_>>(),
+                &phones.iter().map(String::as_str).collect::<Vec<_>>(),
+            ),
+        )
+        .expect("update applies");
+        assert_eq!(same, card);
     }
 
     #[test]

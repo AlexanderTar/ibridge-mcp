@@ -75,6 +75,12 @@ impl SmtpClient {
         })
     }
 
+    /// Address used for `AUTH`. This is the full Apple ID, not [`OutgoingMail::from`].
+    #[must_use]
+    pub(crate) fn login_address(&self) -> &str {
+        self.credentials.apple_id.as_str()
+    }
+
     /// Sends `mail`.
     ///
     /// The login name is the full Apple ID. `MAIL FROM` and the `From` header
@@ -88,6 +94,15 @@ impl SmtpClient {
     /// [`CoreError::Protocol`] for any other SMTP failure. Protocol text from
     /// the server is not copied into the error.
     pub async fn send(&self, mail: &OutgoingMail) -> Result<(), CoreError> {
+        self.transmit(mail).await.map(|_| ())
+    }
+
+    /// Sends `mail` and returns the exact bytes that were transmitted.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::send`].
+    pub(crate) async fn transmit(&self, mail: &OutgoingMail) -> Result<Vec<u8>, CoreError> {
         let message = build_message(mail)?;
         let envelope = build_envelope(mail)?;
         let transport = self.transport()?;
@@ -102,7 +117,7 @@ impl SmtpClient {
             .instrument(span)
             .await
             .map_err(|error| map_smtp(&error))?;
-        Ok(())
+        Ok(message)
     }
 
     fn transport(&self) -> Result<AsyncSmtpTransport<Tokio1Executor>, CoreError> {
@@ -128,7 +143,7 @@ fn host_allowed(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1") || is_allowed_host(host)
 }
 
-fn build_message(mail: &OutgoingMail) -> Result<Vec<u8>, CoreError> {
+pub(crate) fn build_message(mail: &OutgoingMail) -> Result<Vec<u8>, CoreError> {
     check_headers(mail)?;
     let message_id = fresh_message_id();
     let mut builder = mail_builder::MessageBuilder::new()
@@ -136,17 +151,26 @@ fn build_message(mail: &OutgoingMail) -> Result<Vec<u8>, CoreError> {
         .to(mail.to.iter().map(String::as_str).collect::<Vec<_>>())
         .subject(mail.subject.as_str())
         .text_body(mail.body.as_str())
-        .message_id(message_id.as_str());
+        .message_id(bare_id(&message_id));
     if let Some(reply) = &mail.in_reply_to {
-        builder = builder.in_reply_to(reply.as_str());
+        builder = builder.in_reply_to(bare_id(reply));
     }
     let references = reference_ids(mail);
     if !references.is_empty() {
-        builder = builder.references(references);
+        let bare: Vec<&str> = references.iter().map(|id| bare_id(id)).collect();
+        builder = builder.references(bare);
     }
     builder
         .write_to_vec()
         .map_err(|_| CoreError::Protocol("smtp command failed".to_owned()))
+}
+
+/// `mail-builder` writes the angle brackets itself.
+fn bare_id(value: &str) -> &str {
+    value
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or(value)
 }
 
 fn reference_ids(mail: &OutgoingMail) -> Vec<String> {
@@ -161,7 +185,7 @@ fn fresh_message_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos());
-    format!("<{nanos}@ibridge>")
+    format!("{nanos}@ibridge")
 }
 
 fn build_envelope(mail: &OutgoingMail) -> Result<Envelope, CoreError> {
@@ -217,15 +241,23 @@ fn map_smtp(error: &lettre::transport::smtp::Error) -> CoreError {
     }
 }
 
+/// Bytes of `mail`, for the round-trip test.
 #[cfg(test)]
-mod tests {
+fn message_bytes(mail: &OutgoingMail) -> Vec<u8> {
+    build_message(mail).expect("message")
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use base64::Engine;
     use ibridge_core::AppleId;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{TcpListener, TcpStream};
+
+    use proptest::prelude::*;
 
     use super::{OutgoingMail, SmtpClient};
 
@@ -238,7 +270,7 @@ mod tests {
         data: String,
     }
 
-    struct SmtpCapture {
+    pub(crate) struct SmtpCapture {
         host: String,
         port: u16,
         seen: Arc<Mutex<Seen>>,
@@ -246,7 +278,7 @@ mod tests {
     }
 
     impl SmtpCapture {
-        async fn start() -> Self {
+        pub(crate) async fn start() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
             let port = listener.local_addr().expect("local addr").port();
             let seen = Arc::new(Mutex::new(Seen::default()));
@@ -267,6 +299,18 @@ mod tests {
 
         fn seen(&self) -> Seen {
             self.seen.lock().expect("seen").clone()
+        }
+
+        pub(crate) fn host(&self) -> &str {
+            &self.host
+        }
+
+        pub(crate) const fn port(&self) -> u16 {
+            self.port
+        }
+
+        pub(crate) fn message(&self) -> String {
+            self.seen.lock().expect("seen").data.clone()
         }
     }
 
@@ -333,17 +377,36 @@ mod tests {
     }
 
     async fn read_data(reader: &mut BufReader<TcpStream>) -> std::io::Result<String> {
-        let mut data = String::new();
+        // Keep the bytes the client sent. The terminating `\r\n.\r\n` is the
+        // SMTP end marker, not part of the message.
+        let mut raw = Vec::new();
+        let mut tmp = [0_u8; 1024];
         loop {
-            let line = read_line(reader).await?;
-            if line == "." {
+            let read = reader.read(&mut tmp).await?;
+            if read == 0 {
                 break;
             }
-            let line = line.strip_prefix('.').unwrap_or(&line);
-            data.push_str(line);
-            data.push_str("\r\n");
+            raw.extend_from_slice(&tmp[..read]);
+            if let Some(end) = raw.windows(5).position(|window| window == b"\r\n.\r\n") {
+                raw.truncate(end);
+                break;
+            }
         }
-        Ok(data)
+        Ok(String::from_utf8_lossy(&unstuff_dots(&raw)).into_owned())
+    }
+
+    fn unstuff_dots(raw: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(raw.len());
+        let mut at_line_start = true;
+        for &byte in raw {
+            if at_line_start && byte == b'.' {
+                at_line_start = false;
+                continue;
+            }
+            at_line_start = byte == b'\n';
+            out.push(byte);
+        }
+        out
     }
 
     async fn read_line(reader: &mut BufReader<TcpStream>) -> std::io::Result<String> {
@@ -530,5 +593,31 @@ mod tests {
             "References is missing the parent id, got {}",
             seen.data
         );
+    }
+
+    proptest! {
+        #[test]
+        fn mime_build_parse_roundtrip(
+            local in "[a-z]{1,8}",
+            subject in "[A-Za-z0-9][A-Za-z0-9 ]{0,24}",
+            body in "[A-Za-z0-9][A-Za-z0-9 ]{0,40}",
+        ) {
+            let from = format!("{local}@example.com");
+            let to = format!("bob@{local}.example");
+            let mail = OutgoingMail {
+                from: from.clone(),
+                to: vec![to.clone()],
+                subject: subject.clone(),
+                body: body.clone(),
+                in_reply_to: None,
+                references: Vec::new(),
+            };
+            let parsed = crate::mime::read_message(&super::message_bytes(&mail), 0);
+            let parsed = parsed.expect("built MIME should parse");
+            prop_assert_eq!(parsed.from, from);
+            prop_assert_eq!(parsed.to, vec![to]);
+            prop_assert_eq!(parsed.subject, subject);
+            prop_assert_eq!(parsed.body, body);
+        }
     }
 }

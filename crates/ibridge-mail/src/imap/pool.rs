@@ -279,7 +279,7 @@ where
     }
 }
 
-fn done_status(
+pub(super) fn done_status(
     status: &async_imap::imap_proto::Status,
     outcome: &async_imap::imap_proto::Outcome<'_>,
 ) -> Result<(), CoreError> {

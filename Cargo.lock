@@ -1440,6 +1440,7 @@ dependencies = [
  "lettre",
  "mail-builder",
  "mail-parser",
+ "proptest",
  "testcontainers",
  "tokio",
  "tracing",

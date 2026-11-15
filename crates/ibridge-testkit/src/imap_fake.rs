@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use imap_codec::decode::{CommandDecodeError, Decoder};
 use imap_codec::encode::Encoder;
 use imap_codec::imap_types::command::{Command, CommandBody};
-use imap_codec::imap_types::core::{Atom, QuotedChar, Tag};
+use imap_codec::imap_types::core::{Atom, LiteralMode, QuotedChar, Tag};
 use imap_codec::imap_types::flag::FlagNameAttribute;
 use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
@@ -56,8 +56,20 @@ struct Observed {
     logins: usize,
     commands: Vec<&'static str>,
     lines: Vec<String>,
+    appended: Vec<AppendedMessage>,
     /// Bytes of a command the decoder rejected. Successful `LOGIN` is never stored.
     inbound: Vec<u8>,
+}
+
+/// One message a client appended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppendedMessage {
+    /// Mailbox name from the `APPEND` command.
+    pub mailbox: String,
+    /// Flag atoms from the command, such as `\Draft`.
+    pub flags: String,
+    /// Literal bytes, without the IMAP framing.
+    pub bytes: Vec<u8>,
 }
 
 /// A scripted IMAP server on an in-memory duplex.
@@ -84,6 +96,7 @@ impl FakeImap {
                 logins: 0,
                 commands: Vec::new(),
                 lines: Vec::new(),
+                appended: Vec::new(),
                 inbound: Vec::new(),
             })),
         }
@@ -111,6 +124,12 @@ impl FakeImap {
     #[must_use]
     pub fn lines(&self) -> Vec<String> {
         self.observed().lines.clone()
+    }
+
+    /// Messages stored by `APPEND`, in arrival order.
+    #[must_use]
+    pub fn appended(&self) -> Vec<AppendedMessage> {
+        self.observed().appended.clone()
     }
 
     /// Whether a successfully parsed command, or a command the decoder rejected, contains `needle`.
@@ -156,9 +175,12 @@ async fn serve(
     let mut buf = Vec::new();
     let mut tmp = [0_u8; 1024];
     let mut selected = String::new();
+    let mut next_uid = 1_u32;
+    let mut literal_acked = false;
     loop {
         let reply = match commands.decode(&buf) {
             Ok((rest, command)) => {
+                literal_acked = false;
                 let consumed = buf.len() - rest.len();
                 if consumed == 0 {
                     break;
@@ -167,6 +189,8 @@ async fn serve(
                 if let CommandBody::Select { mailbox } = &command.body {
                     selected = mailbox_name(mailbox);
                 }
+                let stored = appended_from(&command, &mut next_uid);
+                let appended_uid = stored.as_ref().map(|(uid, _)| *uid);
                 {
                     let mut observed = observed.lock().expect("observed lock");
                     observed.commands.push(command.name());
@@ -174,12 +198,26 @@ async fn serve(
                     if matches!(command.body, CommandBody::Login { .. }) {
                         observed.logins += 1;
                     }
+                    if let Some((_, message)) = stored {
+                        observed.appended.push(message);
+                    }
                 }
-                let reply = encode_reply(&command, &script, &selected);
+                let reply = appended_uid.map_or_else(
+                    || encode_reply(&command, &script, &selected),
+                    |uid| append_ok(&command.tag, script.uid_validity.unwrap_or(1), uid),
+                );
                 buf.drain(..consumed);
                 Some(reply)
             }
             Err(CommandDecodeError::Incomplete) => None,
+            Err(CommandDecodeError::LiteralFound { mode, .. }) => {
+                if mode == LiteralMode::Sync && !literal_acked {
+                    stream.write_all(b"+ go\r\n").await?;
+                    stream.flush().await?;
+                    literal_acked = true;
+                }
+                None
+            }
             Err(_) => {
                 let mut observed = observed.lock().expect("observed lock");
                 observed.inbound.extend_from_slice(&buf);
@@ -198,6 +236,41 @@ async fn serve(
         buf.extend_from_slice(&tmp[..read]);
     }
     Ok(())
+}
+
+fn appended_from(command: &Command<'_>, next_uid: &mut u32) -> Option<(u32, AppendedMessage)> {
+    let CommandBody::Append {
+        mailbox,
+        flags,
+        message,
+        ..
+    } = &command.body
+    else {
+        return None;
+    };
+    let uid = *next_uid;
+    *next_uid = next_uid.saturating_add(1);
+    let flags = flags
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some((
+        uid,
+        AppendedMessage {
+            mailbox: mailbox_name(mailbox),
+            flags,
+            bytes: message.as_ref().to_vec(),
+        },
+    ))
+}
+
+fn append_ok(tag: &Tag<'_>, validity: u32, uid: u32) -> Vec<u8> {
+    format!(
+        "{} OK [APPENDUID {validity} {uid}] appended\r\n",
+        tag.inner()
+    )
+    .into_bytes()
 }
 
 fn recorded_line(command: &Command<'_>, raw: &str) -> String {

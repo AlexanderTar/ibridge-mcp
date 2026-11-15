@@ -276,6 +276,32 @@ impl Store {
         settle(tx, result).await
     }
 
+    /// Revokes the grant when `code` was already exchanged, and does nothing for any other code.
+    ///
+    /// For a caller that refused a code on its own grounds (it is no longer pending, or
+    /// its binding did not match). A live code is never exchanged here, so the caller's
+    /// checks cannot be skipped by presenting it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Internal`] when the database cannot be updated.
+    pub async fn revoke_if_code_spent(&self, code: &str) -> Result<(), StoreError> {
+        if !known_token(&self.pool, code).await? {
+            return Ok(());
+        }
+        let mut tx = begin(&self.pool).await?;
+        let hit = match load(&mut tx, code).await {
+            Ok(hit) => hit,
+            Err(StoreError::InvalidToken) => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        if hit.purpose != PURPOSE_CODE_SPENT {
+            return Ok(());
+        }
+        revoke(&mut tx, &hit.grant_id).await?;
+        tx.commit().await.map_err(internal)
+    }
+
     /// Opens the password for this call. The access or API-key seal stays in the database.
     ///
     /// # Errors
@@ -1230,6 +1256,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(from_refresh.secret.expose_secret(), ASP);
+    }
+
+    #[tokio::test]
+    async fn revoke_if_code_spent_leaves_a_live_code_alone() {
+        let store = Store::memory().await.unwrap();
+        let now = at(0);
+        let code = seal_code(&store, now).await;
+        let code_secret = code.code.expose_secret().to_owned();
+        store.revoke_if_code_spent(&code_secret).await.unwrap();
+        store.revoke_if_code_spent("ibc_unknown").await.unwrap();
+        let tokens = store.exchange_code(&code_secret, now).await;
+        assert!(tokens.is_ok(), "a live code still exchanges: {tokens:?}");
     }
 
     #[tokio::test]

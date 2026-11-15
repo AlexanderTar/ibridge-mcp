@@ -91,6 +91,11 @@ async fn exchange_code(shared: &Shared, request: &TokenRequest) -> Response {
     };
     // Taking the binding uses the code up, so a wrong guess cannot be retried.
     let Some(pending) = shared.codes.take(code, Instant::now()) else {
+        // A code that is no longer pending may have been exchanged already; if so, OAuth 2.1
+        // 4.1.3 has the replay revoke the grant. The store only revokes here, never issues.
+        if let Err(error) = shared.store.revoke_if_code_spent(code).await {
+            tracing::error!(%error, "token request failed");
+        }
         return invalid();
     };
     if pending.client_id != client_id
@@ -251,6 +256,44 @@ mod tests {
             .await;
         assert_eq!(again.status, StatusCode::BAD_REQUEST);
         assert_eq!(again.json()["error"], "invalid_grant", "a spent code");
+
+        // OAuth 2.1 4.1.3: presenting a spent code revokes what it issued.
+        let access = field(&reply, "access_token");
+        assert!(
+            h.store
+                .open_for_call(&access, SystemTime::now())
+                .await
+                .is_err(),
+            "the replay revoked the grant, so the first access token no longer opens"
+        );
+        let refreshed = h
+            .post_token(&[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", &field(&reply, "refresh_token")),
+            ])
+            .await;
+        assert_eq!(refreshed.status, StatusCode::BAD_REQUEST);
+        assert_eq!(refreshed.json()["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn failed_attempt_does_not_revoke_or_issue() {
+        // A wrong verifier burns the binding but never reaches the store: no tokens
+        // are issued, and a later try with the right verifier cannot succeed either.
+        let h = harness(Access::MultiTenant).await;
+        let code = h.sign_in_for_code("203.0.113.9").await;
+        let wrong = h
+            .post_token(&Harness::exchange_pairs(
+                &code,
+                "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+            ))
+            .await;
+        assert_eq!(wrong.json()["error"], "invalid_grant");
+        let retry = h
+            .post_token(&Harness::exchange_pairs(&code, VERIFIER))
+            .await;
+        assert_eq!(retry.status, StatusCode::BAD_REQUEST);
+        assert_eq!(retry.json()["error"], "invalid_grant");
     }
 
     #[tokio::test]

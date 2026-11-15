@@ -672,6 +672,15 @@ mod tests {
             "the client got a refresh token: {held}"
         );
 
+        // Signing in marks the registration as used, so the sweep of unused ones keeps it.
+        let used: Option<i64> =
+            sqlx::query_scalar("SELECT used_at FROM oauth_clients WHERE client_id = ?")
+                .bind(&client_id)
+                .fetch_one(h.store.pool())
+                .await
+                .expect("the registration exists");
+        assert!(used.is_some(), "a completed sign-in marks the client used");
+
         // The token it holds opens the account for a call.
         let call = h
             .store

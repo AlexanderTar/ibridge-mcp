@@ -189,6 +189,10 @@ async fn submit(
         };
         form_page(&valid, &fill, status)
     };
+    // ponytail: an address off the allowlist is refused at once, while an allowed one
+    // waits for the live iCloud check, so response time shows which addresses are allowed.
+    // Accepted for self-host, where the sign-in page is reached by the owner's own
+    // clients; a fixed minimum response time for refusals is the upgrade.
     let Some(apple_id) = apple_id.filter(|id| shared.config.may_sign_in(id)) else {
         return again(StatusCode::BAD_REQUEST);
     };
@@ -222,6 +226,10 @@ async fn submit(
             );
         }
     };
+    // A registration someone signed in through is kept; unused ones are swept.
+    if let Err(error) = shared.registry.mark_used(&valid.client.id).await {
+        tracing::error!(%error, "could not mark the client as used");
+    }
     let code = issued.code.expose_secret();
     shared.codes.insert(
         code,

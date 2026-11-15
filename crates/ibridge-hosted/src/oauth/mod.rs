@@ -168,7 +168,8 @@ fn budget_key(peer: &str) -> String {
     match peer.parse::<IpAddr>() {
         Ok(IpAddr::V6(ip)) if ip.to_ipv4_mapped().is_some() => {
             // A dual-stack socket reports an IPv4 client this way; it is one host, not a /64.
-            ip.to_ipv4_mapped().map_or_else(|| peer.to_owned(), |v4| v4.to_string())
+            ip.to_ipv4_mapped()
+                .map_or_else(|| peer.to_owned(), |v4| v4.to_string())
         }
         Ok(IpAddr::V6(ip)) => {
             let [a, b, c, d, ..] = ip.segments();
@@ -246,6 +247,8 @@ pub(crate) async fn router_with(
         registry,
         clients,
         checker,
+        // ponytail: built here, so /account cannot share it yet. The /account package
+        // takes this as a parameter of `router_with` and passes the same value to both pages.
         limits: SignInLimits::new(),
         lookups: Limiter::new(30, Duration::from_mins(1)),
         registrations: Limiter::new(10, Duration::from_hours(1)),

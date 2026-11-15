@@ -24,12 +24,15 @@ const MAX_CLIENTS: i64 = 10_000;
 /// Largest registration request.
 const MAX_REQUEST: usize = 16 * 1024;
 const MAX_REDIRECTS: usize = 10;
+/// A registration nobody signed in through is swept after a week.
+const UNUSED_TTL_SECS: i64 = 7 * 24 * 60 * 60;
 
 const TABLE: &str = "CREATE TABLE IF NOT EXISTS oauth_clients (
     client_id TEXT NOT NULL PRIMARY KEY,
     client_name TEXT NOT NULL,
     redirect_uris TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    used_at INTEGER
 )";
 
 /// Clients that registered themselves. Lives in the credential database.
@@ -78,27 +81,60 @@ impl ClientRegistry {
         }))
     }
 
+    /// Drops registrations nobody signed in through after a week, and when the table is
+    /// still full, the oldest unused one. Registrations that were used are never dropped,
+    /// so a flood of fake ones cannot lock real clients out of registering.
+    async fn make_room(&self, now: i64, max: i64) -> Result<(), RegisterError> {
+        let store = |err| RegisterError::Store(internal(err));
+        sqlx::query("DELETE FROM oauth_clients WHERE used_at IS NULL AND created_at < ?")
+            .bind(now.saturating_sub(UNUSED_TTL_SECS))
+            .execute(&self.pool)
+            .await
+            .map_err(store)?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_clients")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(store)?;
+        if count < max {
+            return Ok(());
+        }
+        let evicted = sqlx::query(
+            "DELETE FROM oauth_clients WHERE rowid =
+             (SELECT rowid FROM oauth_clients WHERE used_at IS NULL ORDER BY created_at, rowid LIMIT 1)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(store)?;
+        if evicted.rows_affected() == 0 {
+            return Err(RegisterError::Full);
+        }
+        Ok(())
+    }
+
+    /// Notes that someone signed in through this client, which keeps it from being swept.
+    pub(crate) async fn mark_used(&self, client_id: &str) -> Result<(), StoreError> {
+        sqlx::query("UPDATE oauth_clients SET used_at = ? WHERE client_id = ?")
+            .bind(now_secs())
+            .bind(client_id)
+            .execute(&self.pool)
+            .await
+            .map_err(internal)?;
+        Ok(())
+    }
+
     async fn register(
         &self,
         name: &str,
         redirect_uris: Vec<String>,
     ) -> Result<ClientInfo, RegisterError> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_clients")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|err| RegisterError::Store(internal(err)))?;
-        if count >= MAX_CLIENTS {
-            return Err(RegisterError::Full);
-        }
+        let created = now_secs();
+        self.make_room(created, MAX_CLIENTS).await?;
         let mut random = [0_u8; 16];
         getrandom::fill(&mut random).map_err(|err| RegisterError::Store(internal(err)))?;
         let id = format!(
             "dcr_{}",
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random)
         );
-        let created = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0));
         let uris = serde_json::to_string(&redirect_uris)
             .map_err(|err| RegisterError::Store(internal(err)))?;
         sqlx::query(
@@ -117,6 +153,12 @@ impl ClientRegistry {
             redirect_uris,
         })
     }
+}
+
+fn now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0))
 }
 
 impl From<getrandom::Error> for RegisterError {
@@ -293,6 +335,81 @@ mod tests {
             registry.get("dcr_unknown").await.expect("lookup").is_none(),
             "an unknown id finds nothing"
         );
+    }
+
+    /// Fills the table with `count` registrations that never signed anyone in.
+    async fn fill(harness: &Harness, count: i64) {
+        sqlx::query(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+             INSERT INTO oauth_clients (client_id, client_name, redirect_uris, created_at)
+             SELECT 'dcr_old' || i, 'old', '[\"https://old.example/cb\"]', CAST(strftime('%s', 'now') AS INTEGER) - 100000 + i FROM n",
+        )
+        .bind(count)
+        .execute(harness.store.pool())
+        .await
+        .expect("seed registrations");
+    }
+
+    #[tokio::test]
+    async fn a_full_table_evicts_unused_registrations_instead_of_refusing_for_good() {
+        let harness = harness(Access::MultiTenant).await;
+        fill(&harness, super::MAX_CLIENTS).await;
+        let (status, reply) = register(
+            &harness,
+            &json!({"redirect_uris": ["https://app.example/cb"]}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "a flood of unused registrations must not disable DCR: {reply}"
+        );
+        let registry = ClientRegistry::open(&harness.store)
+            .await
+            .expect("registry");
+        assert!(
+            registry.get("dcr_old1").await.expect("lookup").is_none(),
+            "the oldest unused registration made room"
+        );
+        assert!(
+            registry.get("dcr_old2").await.expect("lookup").is_some(),
+            "only one was evicted"
+        );
+    }
+
+    #[tokio::test]
+    async fn unused_registrations_expire_but_used_ones_stay() {
+        let harness = harness(Access::MultiTenant).await;
+        let registry = ClientRegistry::open(&harness.store)
+            .await
+            .expect("registry");
+        let week = 7 * 24 * 60 * 60;
+        for id in ["dcr_stale", "dcr_used", "dcr_fresh"] {
+            let age = if id == "dcr_fresh" { 60 } else { week + 60 };
+            sqlx::query(
+                "INSERT INTO oauth_clients (client_id, client_name, redirect_uris, created_at)
+                 VALUES (?, 'c', '[\"https://c.example/cb\"]', CAST(strftime('%s', 'now') AS INTEGER) - ?)",
+            )
+            .bind(id)
+            .bind(age)
+            .execute(harness.store.pool())
+            .await
+            .expect("seed");
+        }
+        registry.mark_used("dcr_used").await.expect("mark used");
+        let (status, _) = register(
+            &harness,
+            &json!({"redirect_uris": ["https://app.example/cb"]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let present = |id: &'static str| {
+            let registry = &registry;
+            async move { registry.get(id).await.expect("lookup").is_some() }
+        };
+        assert!(!present("dcr_stale").await, "unused for over a week");
+        assert!(present("dcr_used").await, "someone signed in through it");
+        assert!(present("dcr_fresh").await, "still young");
     }
 
     #[tokio::test]

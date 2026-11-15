@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Errors from parsing domain newtypes.
+//! Errors from parsing domain values and from provider calls.
+
+use std::time::Duration;
 
 /// A domain value failed validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -32,4 +34,59 @@ pub enum IdError {
     /// The token is not a versioned, length-prefixed id, or its payload is not allowed.
     #[error("id could not be decoded")]
     Decode,
+}
+
+/// Failure from a mail, calendar, reminders or contacts provider.
+///
+/// [`Display`] never includes protocol detail. Callers must not put a secret in
+/// any variant. [`CoreError::protocol_detail`] is the only way to read a protocol
+/// string, and it is for diagnostics after the caller has checked it is safe.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CoreError {
+    /// The service rejected the credentials.
+    #[error("authentication failed")]
+    Auth,
+    /// The network failed before a protocol result arrived.
+    #[error("network error")]
+    Network,
+    /// A protocol failure. The string is not part of [`Display`].
+    #[error("protocol error")]
+    Protocol(String),
+    /// The mailbox, message or resource does not exist.
+    #[error("not found")]
+    NotFound,
+    /// A conditional write lost a race with another client.
+    #[error("conflict")]
+    Conflict,
+    /// The service asked us to slow down.
+    #[error("rate limited")]
+    RateLimited {
+        /// When the caller may retry. `None` when the server did not say.
+        retry_after: Option<Duration>,
+    },
+    /// The service cannot do this operation.
+    #[error("unsupported: {0}")]
+    Unsupported(&'static str),
+    /// The host is not on the iCloud allowlist.
+    #[error("host not allowed")]
+    HostNotAllowed,
+    /// A tool or caller passed a value the provider cannot use.
+    ///
+    /// The string is a safe message for the user, never a secret or raw server text.
+    #[error("{0}")]
+    InvalidInput(String),
+}
+
+impl CoreError {
+    /// Protocol detail, when this is [`CoreError::Protocol`].
+    ///
+    /// This is not included in [`Display`].
+    #[must_use]
+    pub fn protocol_detail(&self) -> Option<&str> {
+        match self {
+            Self::Protocol(detail) => Some(detail),
+            _ => None,
+        }
+    }
 }

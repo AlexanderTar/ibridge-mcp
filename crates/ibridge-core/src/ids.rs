@@ -8,23 +8,10 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use crate::error::{IdError, ParseError};
-use crate::mail::{MailboxPath, Uid, UidValidity};
+use crate::mail::{MailboxPath, MessageId, Uid, UidValidity};
 
 const VERSION: u8 = 1;
 const KIND_MESSAGE: u8 = 1;
-
-/// A mail id: mailbox path, UIDVALIDITY and UID.
-///
-/// The wire form is an opaque base64url token from [`encode`]. It carries no host.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct MessageId {
-    /// Mailbox the message lives in.
-    pub mailbox: MailboxPath,
-    /// UIDVALIDITY of that mailbox at the time the id was issued.
-    pub validity: UidValidity,
-    /// IMAP UID.
-    pub uid: Uid,
-}
 
 /// Encodes a [`MessageId`] as an opaque token.
 ///

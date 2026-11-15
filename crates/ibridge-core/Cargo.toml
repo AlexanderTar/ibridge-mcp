@@ -10,6 +10,7 @@ description = "Domain newtypes, provider traits and the core error type."
 [dependencies]
 base64.workspace = true
 thiserror.workspace = true
+trait-variant.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

@@ -7,5 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Credentials, credential sources and the iCloud host allowlist."
 
+[dependencies]
+thiserror.workspace = true
+trait-variant.workspace = true
+
 [lints]
 workspace = true

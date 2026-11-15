@@ -77,8 +77,10 @@ fn unselectable(attributes: &[NameAttribute<'_>]) -> bool {
     })
 }
 
-/// `\Sent` and the other RFC 6154 attributes win. iCloud's Notes mailbox has no
-/// special-use attribute, so the name `Notes` is the signal. `INBOX` is always inbox.
+/// `\Sent` and the other RFC 6154 attributes win. Without those attributes,
+/// iCloud's folder names and the short names `GreenMail` uses (`Sent`, `Trash`,
+/// `Drafts`, `Junk`, `Archive`) still map. `Notes` has no special-use attribute.
+/// `INBOX` is always inbox.
 fn role_of(name: &str, attributes: &[NameAttribute<'_>]) -> MailboxRole {
     for attribute in attributes {
         let role = match attribute {
@@ -97,6 +99,16 @@ fn role_of(name: &str, attributes: &[NameAttribute<'_>]) -> MailboxRole {
         MailboxRole::Inbox
     } else if name.eq_ignore_ascii_case("Notes") {
         MailboxRole::Notes
+    } else if name.eq_ignore_ascii_case("Sent") || name.eq_ignore_ascii_case("Sent Messages") {
+        MailboxRole::Sent
+    } else if name.eq_ignore_ascii_case("Trash") || name.eq_ignore_ascii_case("Deleted Messages") {
+        MailboxRole::Trash
+    } else if name.eq_ignore_ascii_case("Drafts") {
+        MailboxRole::Drafts
+    } else if name.eq_ignore_ascii_case("Junk") {
+        MailboxRole::Junk
+    } else if name.eq_ignore_ascii_case("Archive") {
+        MailboxRole::Archive
     } else {
         MailboxRole::Other
     }

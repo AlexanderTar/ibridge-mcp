@@ -231,6 +231,42 @@ impl Store {
         let result = refresh_in(&mut tx, refresh_token, now).await;
         settle(tx, result).await
     }
+
+    /// Records one failed login for `grant`.
+    ///
+    /// Three failures whose first and last are at least 15 minutes apart revoke the grant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::InvalidGrant`] when the grant does not exist, and
+    /// [`StoreError::Internal`] when the row cannot be updated.
+    pub async fn note_auth_failure(
+        &self,
+        grant: GrantId,
+        now: SystemTime,
+    ) -> Result<(), StoreError> {
+        let now = unix(now)?;
+        let mut tx = begin(&self.pool).await?;
+        let result = record_failure(&mut tx, &grant.0, now).await;
+        settle(tx, result).await
+    }
+
+    /// Clears the failure streak after a login succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::InvalidGrant`] when the grant does not exist, and
+    /// [`StoreError::Internal`] when the row cannot be updated.
+    pub async fn note_auth_success(
+        &self,
+        grant: GrantId,
+        now: SystemTime,
+    ) -> Result<(), StoreError> {
+        let _ = unix(now)?;
+        let mut tx = begin(&self.pool).await?;
+        let result = record_success(&mut tx, &grant.0).await;
+        settle(tx, result).await
+    }
 }
 
 async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
@@ -266,6 +302,8 @@ const PURPOSE_SPENT: &str = "refresh_spent";
 const STATUS_ACTIVE: &str = "active";
 const STATUS_REVOKED: &str = "revoked";
 const KIND_OAUTH: &str = "oauth";
+const FAILURES_TO_REVOKE: i64 = 3;
+const FAILURE_WINDOW: i64 = 15 * 60;
 
 type WriteTx = sqlx::Transaction<'static, sqlx::Sqlite>;
 
@@ -625,6 +663,62 @@ async fn revoke(tx: &mut WriteTx, grant_id: &[u8]) -> Result<(), StoreError> {
     Ok(())
 }
 
+async fn record_failure(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<(), StoreError> {
+    let row =
+        sqlx::query("SELECT status, failure_count, first_failure_at FROM grants WHERE id = ?")
+            .bind(grant_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(internal)?;
+    let Some(row) = row else {
+        return Err(StoreError::InvalidGrant);
+    };
+    let status: String = row.try_get("status").map_err(internal)?;
+    if status == STATUS_REVOKED {
+        return Ok(());
+    }
+    let count: i64 = row.try_get("failure_count").map_err(internal)?;
+    let first: Option<i64> = row.try_get("first_failure_at").map_err(internal)?;
+    let (count, first) = match first {
+        Some(first) if count > 0 => (count.saturating_add(1), first),
+        _ => (1, now),
+    };
+    if count >= FAILURES_TO_REVOKE && now.saturating_sub(first) >= FAILURE_WINDOW {
+        return revoke(tx, grant_id).await;
+    }
+    sqlx::query("UPDATE grants SET failure_count = ?, first_failure_at = ? WHERE id = ?")
+        .bind(count)
+        .bind(first)
+        .bind(grant_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    Ok(())
+}
+
+async fn record_success(tx: &mut WriteTx, grant_id: &[u8]) -> Result<(), StoreError> {
+    let updated = sqlx::query(
+        "UPDATE grants SET failure_count = 0, first_failure_at = NULL WHERE id = ? AND status = ?",
+    )
+    .bind(grant_id)
+    .bind(STATUS_ACTIVE)
+    .execute(&mut **tx)
+    .await
+    .map_err(internal)?;
+    if updated.rows_affected() > 0 {
+        return Ok(());
+    }
+    let exists = sqlx::query("SELECT id FROM grants WHERE id = ?")
+        .bind(grant_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(internal)?;
+    if exists.is_none() {
+        return Err(StoreError::InvalidGrant);
+    }
+    Ok(())
+}
+
 fn unseal(hit: &Hit, token: &str) -> Result<SecretString, StoreError> {
     let grant = grant_bytes(&hit.grant_id)?;
     let nonce = nonce_bytes(hit.nonce.as_deref())?;
@@ -972,5 +1066,134 @@ mod tests {
             .await
             .expect("second refresh token rotates");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const FIFTEEN_MIN: u64 = 15 * 60;
+
+    #[tokio::test]
+    async fn three_auth_failures_over_15min_revoke_grant() {
+        let store = Store::memory().await.unwrap();
+        let tokens = exchange(&store, at(0)).await;
+        let other = exchange(&store, at(0)).await;
+        store
+            .note_auth_failure(tokens.grant_id, at(0))
+            .await
+            .unwrap();
+        store
+            .note_auth_failure(tokens.grant_id, at(60))
+            .await
+            .unwrap();
+        let still = store
+            .refresh(tokens.refresh.expose_secret(), at(FIFTEEN_MIN - 1))
+            .await;
+        assert!(
+            still.is_ok(),
+            "two failures do not revoke the grant, got {still:?}"
+        );
+        let still = still.unwrap();
+        store
+            .note_auth_failure(tokens.grant_id, at(FIFTEEN_MIN))
+            .await
+            .unwrap();
+        let revoked = store
+            .refresh(still.refresh.expose_secret(), at(FIFTEEN_MIN))
+            .await;
+        assert!(
+            matches!(revoked, Err(StoreError::InvalidGrant)),
+            "the third failure at 15 minutes revokes the grant, got {revoked:?}"
+        );
+        let opened = store
+            .open_for_call(still.access.expose_secret(), at(FIFTEEN_MIN))
+            .await;
+        assert!(
+            matches!(opened, Err(StoreError::InvalidGrant)),
+            "revocation kills the access token too, got {opened:?}"
+        );
+        store
+            .refresh(other.refresh.expose_secret(), at(FIFTEEN_MIN))
+            .await
+            .expect("another grant is unaffected");
+    }
+
+    #[tokio::test]
+    async fn failures_within_15min_do_not_revoke() {
+        let store = Store::memory().await.unwrap();
+        let tokens = exchange(&store, at(0)).await;
+        store
+            .note_auth_failure(tokens.grant_id, at(0))
+            .await
+            .unwrap();
+        store
+            .note_auth_failure(tokens.grant_id, at(1))
+            .await
+            .unwrap();
+        store
+            .note_auth_failure(tokens.grant_id, at(FIFTEEN_MIN - 1))
+            .await
+            .unwrap();
+        store
+            .refresh(tokens.refresh.expose_secret(), at(FIFTEEN_MIN - 1))
+            .await
+            .expect("three failures inside 15 minutes do not revoke");
+    }
+
+    #[tokio::test]
+    async fn success_resets_failure_count() {
+        let store = Store::memory().await.unwrap();
+        let tokens = exchange(&store, at(0)).await;
+        store
+            .note_auth_failure(tokens.grant_id, at(0))
+            .await
+            .unwrap();
+        store
+            .note_auth_failure(tokens.grant_id, at(60))
+            .await
+            .unwrap();
+        store
+            .note_auth_success(tokens.grant_id, at(120))
+            .await
+            .unwrap();
+        store
+            .note_auth_failure(tokens.grant_id, at(120))
+            .await
+            .unwrap();
+        store
+            .note_auth_failure(tokens.grant_id, at(180))
+            .await
+            .unwrap();
+        store
+            .note_auth_failure(tokens.grant_id, at(120 + FIFTEEN_MIN - 1))
+            .await
+            .unwrap();
+        store
+            .refresh(tokens.refresh.expose_secret(), at(120 + FIFTEEN_MIN - 1))
+            .await
+            .expect("a success starts the 15 minute span over");
+    }
+
+    #[tokio::test]
+    async fn revoked_grant_refresh_invalid_grant() {
+        let store = Store::memory().await.unwrap();
+        let tokens = exchange(&store, at(0)).await;
+        for at_secs in [0, 60, FIFTEEN_MIN] {
+            store
+                .note_auth_failure(tokens.grant_id, at(at_secs))
+                .await
+                .unwrap();
+        }
+        let refreshed = store
+            .refresh(tokens.refresh.expose_secret(), at(FIFTEEN_MIN))
+            .await;
+        assert!(
+            matches!(refreshed, Err(StoreError::InvalidGrant)),
+            "a revoked grant's refresh token is invalid_grant, got {refreshed:?}"
+        );
+        let again = store
+            .refresh(tokens.refresh.expose_secret(), at(FIFTEEN_MIN + 1))
+            .await;
+        assert!(
+            matches!(again, Err(StoreError::InvalidGrant)),
+            "the revoked grant stays revoked, got {again:?}"
+        );
     }
 }

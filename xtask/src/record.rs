@@ -4,14 +4,15 @@
 
 use std::fmt;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_imap::Session;
 use async_imap::types::NameAttribute;
 use futures::StreamExt;
-use ibridge_auth::Credentials;
-use ibridge_mail::Connect;
+use ibridge_auth::{CredentialSource, Credentials, FileSource};
+use ibridge_mail::{Connect, OutgoingMail, SmtpClient};
 use mail_parser::MessageParser;
 use tokio::io::{AsyncRead, AsyncWrite};
 use zeroize::Zeroizing;
@@ -24,6 +25,9 @@ pub(crate) const MARKER: &str = "[ibridge-fixture]";
 /// Why a recording failed. Text never carries the password or server replies.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RecordError {
+    /// The account file is missing, not mode `0600`, or lacks a valid Apple ID and password.
+    #[error("the test account file is missing, not mode 0600, or incomplete")]
+    Account,
     /// The connection could not be opened or dropped.
     #[error("could not reach the mail server")]
     Connect,
@@ -95,6 +99,58 @@ pub(crate) async fn record_mail<C: Connect, S: MarkerSender>(
     result
 }
 
+/// Loads the account file, records mail, and reports what it did on `log`.
+/// `log` and the returned error never carry the password.
+pub(crate) async fn run_mail<C: Connect, S: MarkerSender>(
+    account: &Path,
+    connector: &C,
+    make_sender: impl FnOnce(&Credentials) -> S,
+    out_dir: &Path,
+    wait: Wait,
+    log: &mut impl io::Write,
+) -> Result<(), RecordError> {
+    let credentials = FileSource::new(account)
+        .credentials()
+        .await
+        .map_err(|_| RecordError::Account)?;
+    let sender = make_sender(&credentials);
+    let recorded = record_mail(connector, &credentials, &sender, out_dir, wait).await?;
+    writeln!(
+        log,
+        "recorded {} fixtures, moved {} markers to Trash",
+        recorded.files.len(),
+        recorded.trashed
+    )?;
+    Ok(())
+}
+
+/// Sends the marker mails over iCloud SMTP.
+#[derive(Debug)]
+pub(crate) struct SmtpSender(SmtpClient);
+
+impl SmtpSender {
+    /// Builds a sender that signs in with a copy of `credentials`.
+    pub(crate) fn new(credentials: &Credentials) -> Self {
+        let copy = credentials
+            .with_secret(|secret| Credentials::new(credentials.apple_id.clone(), secret));
+        Self(SmtpClient::icloud(copy))
+    }
+}
+
+impl MarkerSender for SmtpSender {
+    async fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), RecordError> {
+        let mail = OutgoingMail {
+            from: to.to_owned(),
+            to: vec![to.to_owned()],
+            subject: subject.to_owned(),
+            body: body.to_owned(),
+            in_reply_to: None,
+            references: Vec::new(),
+        };
+        self.0.send(&mail).await.map_err(|_| RecordError::Send)
+    }
+}
+
 async fn record_inbox<S>(
     session: &mut Session<S>,
     address: &str,
@@ -131,9 +187,9 @@ where
         });
         fs::create_dir_all(out_dir)?;
         for (index, marker) in markers.iter().enumerate() {
-            let scrubbed = scrubber.scrub(&String::from_utf8_lossy(&marker.raw));
+            let clean = scrubber.scrub(&String::from_utf8_lossy(&marker.raw));
             let file = out_dir.join(format!("mail-{}.eml", index + 1));
-            fs::write(&file, scrubbed)?;
+            fs::write(&file, clean)?;
             recorded.files.push(file);
         }
         let trash = trash_path(session).await?;
@@ -294,7 +350,7 @@ mod tests {
     use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
     use tokio::io::DuplexStream;
 
-    use super::{MARKER, MarkerSender, RecordError, Wait, record_mail};
+    use super::{MARKER, MarkerSender, RecordError, Wait, record_mail, run_mail};
 
     struct Fake(FakeImap);
 
@@ -309,6 +365,10 @@ mod tests {
     #[derive(Default)]
     struct Outbox(Mutex<Vec<(String, String)>>);
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the test outbox only records the mail"
+    )]
     impl MarkerSender for Outbox {
         async fn send(&self, to: &str, subject: &str, _body: &str) -> Result<(), RecordError> {
             self.0
@@ -451,5 +511,133 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(&out);
+    }
+
+    const PASSWORD: &str = "hunter2-never-print";
+
+    #[cfg(unix)]
+    fn account_file(name: &str, mode: u32, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path =
+            std::env::temp_dir().join(format!("ibridge-account-{name}-{}", std::process::id()));
+        fs::write(&path, body).expect("write account file");
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).expect("set mode");
+        path
+    }
+
+    fn account_body(apple_id: &str) -> String {
+        format!("IBRIDGE_TEST_APPLE_ID={apple_id}\nIBRIDGE_TEST_APP_PASSWORD={PASSWORD}\n")
+    }
+
+    fn visible(error: &RecordError, log: &[u8]) -> String {
+        format!("{error} {error:?} {}", String::from_utf8_lossy(log))
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recorder_never_prints_password() {
+        let out = scratch("secret");
+        let good = account_file("good", 0o600, &account_body("ada@icloud.com"));
+        let bad_id = account_file("badid", 0o600, &account_body("not-an-apple-id"));
+        let mut everything = String::new();
+
+        // A run that works: it must say what it did, without the password.
+        let fake = FakeImap::spawn(markers_script());
+        let mut log = Vec::new();
+        run_mail(
+            &good,
+            &Fake(fake),
+            |_| Outbox::default(),
+            &out,
+            ONCE,
+            &mut log,
+        )
+        .await
+        .expect("recording succeeds");
+        let summary = String::from_utf8_lossy(&log).into_owned();
+        assert!(
+            summary.contains("2 fixtures") && summary.contains("Trash"),
+            "summary: {summary}"
+        );
+        everything.push_str(&summary);
+
+        // A rejected login.
+        let fake = FakeImap::spawn(FakeScript {
+            reject_login: true,
+            ..markers_script()
+        });
+        let mut log = Vec::new();
+        let error = run_mail(
+            &good,
+            &Fake(fake),
+            |_| Outbox::default(),
+            &out,
+            ONCE,
+            &mut log,
+        )
+        .await
+        .expect_err("the server refuses the login");
+        assert!(matches!(error, RecordError::Login), "got {error:?}");
+        everything.push_str(&visible(&error, &log));
+
+        // A file with a bad Apple ID next to the password.
+        let fake = FakeImap::spawn(markers_script());
+        let mut log = Vec::new();
+        let error = run_mail(
+            &bad_id,
+            &Fake(fake),
+            |_| Outbox::default(),
+            &out,
+            ONCE,
+            &mut log,
+        )
+        .await
+        .expect_err("the Apple ID is invalid");
+        assert!(matches!(error, RecordError::Account), "got {error:?}");
+        everything.push_str(&visible(&error, &log));
+
+        assert!(
+            !everything.contains(PASSWORD),
+            "the password was printed:\n{everything}"
+        );
+        for file in fs::read_dir(&out).expect("out dir") {
+            let text = fs::read_to_string(file.expect("entry").path()).expect("fixture");
+            assert!(!text.contains(PASSWORD), "the password reached a fixture");
+        }
+        for path in [good, bad_id] {
+            let _ = fs::remove_file(path);
+        }
+        let _ = fs::remove_dir_all(&out);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recorder_refuses_non_0600_account_file() {
+        let out = scratch("loose");
+        let loose = account_file("loose", 0o644, &account_body("ada@icloud.com"));
+        let fake = FakeImap::spawn(markers_script());
+        let mut log = Vec::new();
+
+        let error = run_mail(
+            &loose,
+            &Fake(fake.clone()),
+            |_| Outbox::default(),
+            &out,
+            ONCE,
+            &mut log,
+        )
+        .await
+        .expect_err("a group-readable account file is refused");
+
+        assert!(matches!(error, RecordError::Account), "got {error:?}");
+        assert_eq!(
+            fake.connection_count(),
+            0,
+            "the password must not reach a server"
+        );
+        assert!(!out.exists(), "nothing is recorded");
+        assert!(!visible(&error, &log).contains(PASSWORD));
+        let _ = fs::remove_file(loose);
     }
 }

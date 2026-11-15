@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 const SPDX_HEADER: &str = "// SPDX-License-Identifier: Apache-2.0";
 
@@ -17,9 +18,61 @@ fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("check-headers") => report(check_headers(&headers_root())),
-        Some("record-fixtures" | "schema-snapshot" | "mcpb") => ExitCode::from(2),
+        Some("record-fixtures") => record_fixtures(args),
+        Some("schema-snapshot" | "mcpb") => ExitCode::from(2),
         Some(command) => fail(&format!("unknown command: {command}")),
         None => fail("usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb>"),
+    }
+}
+
+/// `record-fixtures mail [--account FILE] [--out DIR]`.
+///
+/// The account file defaults to `~/.config/ibridge/test-account.env`. Output goes
+/// to `tests/fixtures/imap`, where the user reviews the diff before committing.
+fn record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
+    const USAGE: &str = "usage: cargo xtask record-fixtures mail [--account FILE] [--out DIR]";
+    if args.next().as_deref() != Some("mail") {
+        return fail(USAGE);
+    }
+    let mut account = env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".config/ibridge/test-account.env"));
+    let mut out = headers_root().join("tests/fixtures/imap");
+    while let Some(flag) = args.next() {
+        match (flag.as_str(), args.next()) {
+            ("--account", Some(path)) => account = Some(PathBuf::from(path)),
+            ("--out", Some(path)) => out = PathBuf::from(path),
+            _ => return fail(USAGE),
+        }
+    }
+    let Some(account) = account else {
+        return fail("record-fixtures: HOME is not set; pass --account FILE");
+    };
+    let connector = match ibridge_mail::IcloudConnect::new() {
+        Ok(connector) => connector,
+        Err(error) => return fail(&format!("record-fixtures: {error}")),
+    };
+    let wait = record::Wait {
+        attempts: 12,
+        delay: Duration::from_secs(5),
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => return fail(&format!("record-fixtures: {error}")),
+    };
+    let result = runtime.block_on(record::run_mail(
+        &account,
+        &connector,
+        record::SmtpSender::new,
+        &out,
+        wait,
+        &mut io::stdout(),
+    ));
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => fail(&format!("record-fixtures: {error}")),
     }
 }
 

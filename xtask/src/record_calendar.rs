@@ -142,8 +142,8 @@ async fn record(
     let home = raw.calendar_home().await.map_err(dav)?;
     let mut scrubber = Scrubber::new(Identity {
         apple_id: credentials.apple_id.as_str().to_owned(),
-        dsid: None,
-        names: Vec::new(),
+        dsid: dsid_of(&home.url),
+        names: private_names(provider).await?,
     });
     let mut fixtures: Vec<(&str, String)> = Vec::new();
     let listing = send(raw, "PROPFIND", &home.url, Some("1"), PROPFIND_BODY).await?;
@@ -233,6 +233,26 @@ async fn record(
         fs::write(out_dir.join(name), scrubber.scrub(&body))?;
     }
     Ok(count)
+}
+
+/// The numeric account id in a calendar home URL such as
+/// `https://p12-caldav.icloud.com/184573921/calendars/`.
+fn dsid_of(url: &str) -> Option<String> {
+    let path = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let segment = path.split('/').nth(1)?;
+    (segment.len() >= 6 && segment.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| segment.to_owned())
+}
+
+/// Display names of the account's other calendars and lists: private, and part
+/// of the home listing the recorder saves.
+async fn private_names(provider: &CalDavProvider) -> Result<Vec<String>, RecordError> {
+    let calendars = provider.list_calendars().await.map_err(core)?;
+    Ok(calendars
+        .into_iter()
+        .map(|calendar| calendar.name)
+        .filter(|name| name != TEST_NAME)
+        .collect())
 }
 
 fn query(component: &str, range: &str) -> String {
@@ -456,6 +476,10 @@ mod tests {
                 !text.contains("ada@icloud.com") && !text.contains("never-print-me"),
                 "{file} is scrubbed: {text}"
             );
+            assert!(
+                !text.contains("Work"),
+                "{file} names a calendar that is not ibridge-test: {text}"
+            );
         }
         let event = fs::read_to_string(out.join("event.ics")).expect("event fixture");
         assert!(
@@ -463,6 +487,15 @@ mod tests {
             "the marker is recorded: {event}"
         );
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn dsid_is_read_from_the_home_url() {
+        assert_eq!(
+            super::dsid_of("https://p12-caldav.icloud.com:443/184573921/calendars/").as_deref(),
+            Some("184573921")
+        );
+        assert_eq!(super::dsid_of("http://127.0.0.1:9/ada/calendars/"), None);
     }
 
     #[tokio::test]

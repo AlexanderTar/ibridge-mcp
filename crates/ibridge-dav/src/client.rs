@@ -102,6 +102,26 @@ impl DavClient {
         })
     }
 
+    /// A loopback server, for Radicale. Discovery starts at `/.well-known` on `base_url`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::HostNotAllowed`] when `base_url` is not loopback, and
+    /// [`DavError::Network`] when the TLS roots cannot be loaded.
+    #[cfg(any(test, feature = "test-hosts"))]
+    pub fn for_test_server(credentials: Credentials, base_url: &str) -> Result<Self, DavError> {
+        let origin = loopback_origin(base_url)?;
+        Ok(Self {
+            credentials: Arc::new(credentials),
+            wire: Wire::Http(Box::new(http_client()?)),
+            cache: discovery::ShardCache::new(),
+            caldav_base: origin.clone(),
+            caldav_path: "/.well-known/caldav".to_owned(),
+            carddav_base: origin,
+            carddav_path: "/.well-known/carddav".to_owned(),
+        })
+    }
+
     /// Scripted transport for unit tests. Discovery still starts at the iCloud roots.
     #[cfg(test)]
     pub(crate) fn from_script(
@@ -472,6 +492,22 @@ async fn exchange_from(response: Response<Full<Bytes>>, url: Uri) -> Result<Exch
         body,
         url,
     })
+}
+
+#[cfg(any(test, feature = "test-hosts"))]
+fn loopback_origin(url: &str) -> Result<Uri, DavError> {
+    let uri: Uri = url
+        .parse()
+        .map_err(|_| DavError::InvalidInput("base url is not a URI".to_owned()))?;
+    let loopback = matches!(uri.host(), Some("127.0.0.1" | "localhost"));
+    if !loopback || !matches!(uri.scheme_str(), Some("http" | "https")) {
+        return Err(DavError::HostNotAllowed);
+    }
+    let scheme = uri.scheme_str().ok_or(DavError::Protocol)?;
+    let authority = uri.authority().ok_or(DavError::Protocol)?;
+    format!("{scheme}://{authority}/")
+        .parse()
+        .map_err(|_| DavError::Protocol)
 }
 
 type Connector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;

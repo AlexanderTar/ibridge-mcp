@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 async-imap.workspace = true
 futures.workspace = true
+getrandom.workspace = true
 ibridge-auth.workspace = true
 ibridge-mail.workspace = true
 mail-parser.workspace = true

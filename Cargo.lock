@@ -4263,6 +4263,7 @@ version = "0.1.0"
 dependencies = [
  "async-imap",
  "futures",
+ "getrandom 0.4.3",
  "ibridge-auth",
  "ibridge-core",
  "ibridge-mail",

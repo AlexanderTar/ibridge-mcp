@@ -59,6 +59,11 @@ pub struct FakeScript {
     /// Inbox UIDs 60 and 61 are fixture-recorder markers: their subjects start with `[ibridge-fixture]`.
     /// `UID SEARCH` still answers every inbox UID, as a loose server could, so a client must filter.
     pub marker_messages: bool,
+    /// Per-run token in the marker subjects: `[ibridge-fixture] <nonce> seed one`. `None` means `unset`.
+    pub marker_nonce: Option<String>,
+    /// Inbox UID 62 is a marker left over from another run: `[ibridge-fixture] stale seed old`.
+    /// It needs `marker_messages`.
+    pub stale_marker: bool,
 }
 
 #[derive(Debug)]
@@ -571,6 +576,9 @@ fn inbox_uids(script: &FakeScript) -> Vec<u32> {
     }
     if script.marker_messages {
         uids.extend([60, 61]);
+        if script.stale_marker {
+            uids.push(62);
+        }
     }
     uids
 }
@@ -657,7 +665,14 @@ fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
         ));
     }
     if script.marker_messages {
-        messages.extend([marker_message(60, "one"), marker_message(61, "two")]);
+        let nonce = script.marker_nonce.as_deref().unwrap_or("unset");
+        messages.extend([
+            marker_message(60, nonce, "one"),
+            marker_message(61, nonce, "two"),
+        ]);
+        if script.stale_marker {
+            messages.push(marker_message(62, "stale", "old"));
+        }
     }
     for (seq, (uid, head, body)) in messages.into_iter().enumerate() {
         let seq = u32::try_from(seq.saturating_add(1)).unwrap_or(1);
@@ -667,8 +682,8 @@ fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
     bytes
 }
 
-fn marker_message(uid: u32, word: &str) -> (u32, String, Vec<u8>) {
-    let subject = format!("[ibridge-fixture] seed {word}");
+fn marker_message(uid: u32, nonce: &str, word: &str) -> (u32, String, Vec<u8>) {
+    let subject = format!("[ibridge-fixture] {nonce} seed {word}");
     let head = format!(
         r#"INTERNALDATE "04-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "{subject}" (("Ada Lovelace" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#
     );

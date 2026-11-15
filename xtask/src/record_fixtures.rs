@@ -19,7 +19,7 @@ use zeroize::Zeroizing;
 
 use crate::scrub::{Identity, Scrubber};
 
-/// Subject prefix of every message the recorder seeds and keeps.
+/// Subject prefix of every message the recorder seeds. A per-run nonce follows it.
 pub(crate) const MARKER: &str = "[ibridge-fixture]";
 
 /// Why a recording failed. Text never carries the password or server replies.
@@ -82,19 +82,21 @@ pub(crate) async fn record_mail<C: Connect, S: MarkerSender>(
     sender: &S,
     out_dir: &Path,
     wait: Wait,
+    nonce: &str,
 ) -> Result<Recorded, RecordError> {
     let address = credentials.apple_id.as_str();
+    let prefix = format!("{MARKER} {nonce} seed");
     for word in SEEDS {
         sender
             .send(
                 address,
-                &format!("{MARKER} seed {word}"),
+                &format!("{prefix} {word}"),
                 &format!("marker body {word}"),
             )
             .await?;
     }
     let mut session = login(connector, credentials).await?;
-    let result = record_inbox(&mut session, address, out_dir, wait, SEEDS.len()).await;
+    let result = record_inbox(&mut session, address, out_dir, wait, &prefix, SEEDS.len()).await;
     let _ = session.logout().await;
     result
 }
@@ -107,6 +109,7 @@ pub(crate) async fn run_mail<C: Connect, S: MarkerSender>(
     make_sender: impl FnOnce(&Credentials) -> S,
     out_dir: &Path,
     wait: Wait,
+    nonce: &str,
     log: &mut impl io::Write,
 ) -> Result<(), RecordError> {
     let credentials = FileSource::new(account)
@@ -114,7 +117,7 @@ pub(crate) async fn run_mail<C: Connect, S: MarkerSender>(
         .await
         .map_err(|_| RecordError::Account)?;
     let sender = make_sender(&credentials);
-    let recorded = record_mail(connector, &credentials, &sender, out_dir, wait).await?;
+    let recorded = record_mail(connector, &credentials, &sender, out_dir, wait, nonce).await?;
     writeln!(
         log,
         "recorded {} fixtures, moved {} markers to Trash",
@@ -156,6 +159,7 @@ async fn record_inbox<S>(
     address: &str,
     out_dir: &Path,
     wait: Wait,
+    prefix: &str,
     sent: usize,
 ) -> Result<Recorded, RecordError>
 where
@@ -170,7 +174,7 @@ where
         if attempt > 0 {
             tokio::time::sleep(wait.delay).await;
         }
-        markers = fetch_markers(session).await?;
+        markers = fetch_markers(session, prefix).await?;
         if markers.len() >= sent {
             break;
         }
@@ -213,14 +217,18 @@ struct Marker {
 }
 
 /// Searches the inbox by subject, fetches what came back, and keeps only
-/// messages whose own `Subject` header starts with the marker. The server's
-/// search is a hint: a loose one may answer with every message.
-async fn fetch_markers<S>(session: &mut Session<S>) -> Result<Vec<Marker>, RecordError>
+/// messages whose own `Subject` header starts with this run's `prefix`. The
+/// server's search is a hint: a loose one may answer with every message. Markers
+/// from an earlier run, or from anyone else, never match.
+async fn fetch_markers<S>(
+    session: &mut Session<S>,
+    prefix: &str,
+) -> Result<Vec<Marker>, RecordError>
 where
     S: AsyncRead + AsyncWrite + Unpin + fmt::Debug + Send,
 {
     let found = session
-        .uid_search(format!("SUBJECT \"{MARKER}\""))
+        .uid_search(format!("SUBJECT \"{prefix}\""))
         .await
         .map_err(|_| RecordError::Imap("UID SEARCH"))?;
     if found.is_empty() {
@@ -244,7 +252,7 @@ where
         let (Some(uid), Some(raw)) = (fetch.uid, fetch.body()) else {
             continue;
         };
-        if uids.contains(&uid) && is_marker(raw) {
+        if uids.contains(&uid) && is_marker(raw, prefix) {
             markers.push(Marker {
                 uid,
                 raw: raw.to_vec(),
@@ -255,10 +263,10 @@ where
     Ok(markers)
 }
 
-fn is_marker(raw: &[u8]) -> bool {
+fn is_marker(raw: &[u8], prefix: &str) -> bool {
     MessageParser::default()
         .parse(raw)
-        .and_then(|message| message.subject().map(|subject| subject.starts_with(MARKER)))
+        .and_then(|message| message.subject().map(|subject| subject.starts_with(prefix)))
         .unwrap_or(false)
 }
 
@@ -396,9 +404,12 @@ mod tests {
         dir
     }
 
+    const NONCE: &str = "n0nce42";
+
     fn markers_script() -> FakeScript {
         FakeScript {
             marker_messages: true,
+            marker_nonce: Some(NONCE.to_owned()),
             ..FakeScript::default()
         }
     }
@@ -409,7 +420,7 @@ mod tests {
         let out = scratch("filter");
         let outbox = Outbox::default();
 
-        let recorded = record_mail(&Fake(fake), &credentials(), &outbox, &out, ONCE)
+        let recorded = record_mail(&Fake(fake), &credentials(), &outbox, &out, ONCE, NONCE)
             .await
             .expect("recording succeeds");
 
@@ -442,8 +453,48 @@ mod tests {
                 to, "ada@icloud.com",
                 "markers go to the account's own address"
             );
-            assert!(subject.starts_with(MARKER), "{subject} lacks the marker");
+            assert!(
+                subject.starts_with(&format!("{MARKER} {NONCE} ")),
+                "{subject} lacks the marker and this run's nonce"
+            );
         }
+        let _ = fs::remove_dir_all(&out);
+    }
+
+    #[tokio::test]
+    async fn recorder_ignores_markers_from_other_runs() {
+        let fake = FakeImap::spawn(FakeScript {
+            stale_marker: true,
+            ..markers_script()
+        });
+        let out = scratch("stale");
+
+        let recorded = record_mail(
+            &Fake(fake.clone()),
+            &credentials(),
+            &Outbox::default(),
+            &out,
+            ONCE,
+            NONCE,
+        )
+        .await
+        .expect("recording succeeds");
+
+        assert_eq!(recorded.files.len(), 2, "only this run's markers are kept");
+        assert_eq!(recorded.trashed, 2);
+        for file in &recorded.files {
+            let text = fs::read_to_string(file).expect("fixture file");
+            assert!(
+                text.contains(&format!("{MARKER} {NONCE} seed")) && !text.contains("stale"),
+                "{} is not from this run:\n{text}",
+                file.display()
+            );
+        }
+        let lines = fake.lines();
+        assert!(
+            !lines.iter().any(|line| line.contains(" 62 ")),
+            "the stale marker must not be moved or flagged, saw {lines:?}"
+        );
         let _ = fs::remove_dir_all(&out);
     }
 
@@ -458,6 +509,7 @@ mod tests {
             &Outbox::default(),
             &out,
             ONCE,
+            NONCE,
         )
         .await
         .expect("recording succeeds");
@@ -498,6 +550,7 @@ mod tests {
             &Outbox::default(),
             &out,
             ONCE,
+            NONCE,
         )
         .await
         .expect("recording succeeds");
@@ -551,6 +604,7 @@ mod tests {
             |_| Outbox::default(),
             &out,
             ONCE,
+            NONCE,
             &mut log,
         )
         .await
@@ -574,6 +628,7 @@ mod tests {
             |_| Outbox::default(),
             &out,
             ONCE,
+            NONCE,
             &mut log,
         )
         .await
@@ -590,6 +645,7 @@ mod tests {
             |_| Outbox::default(),
             &out,
             ONCE,
+            NONCE,
             &mut log,
         )
         .await
@@ -625,6 +681,7 @@ mod tests {
             |_| Outbox::default(),
             &out,
             ONCE,
+            NONCE,
             &mut log,
         )
         .await

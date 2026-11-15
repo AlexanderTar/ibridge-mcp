@@ -2,7 +2,7 @@
 
 //! Workspace maintenance tasks.
 
-mod record;
+mod record_fixtures;
 mod scrub;
 
 use std::env;
@@ -18,7 +18,7 @@ fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("check-headers") => report(check_headers(&headers_root())),
-        Some("record-fixtures") => record_fixtures(args),
+        Some("record-fixtures") => run_record_fixtures(args),
         Some("schema-snapshot" | "mcpb") => ExitCode::from(2),
         Some(command) => fail(&format!("unknown command: {command}")),
         None => fail("usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb>"),
@@ -29,7 +29,7 @@ fn main() -> ExitCode {
 ///
 /// The account file defaults to `~/.config/ibridge/test-account.env`. Output goes
 /// to `tests/fixtures/imap`, where the user reviews the diff before committing.
-fn record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
+fn run_record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
     const USAGE: &str = "usage: cargo xtask record-fixtures mail [--account FILE] [--out DIR]";
     if args.next().as_deref() != Some("mail") {
         return fail(USAGE);
@@ -51,10 +51,15 @@ fn record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
         Ok(connector) => connector,
         Err(error) => return fail(&format!("record-fixtures: {error}")),
     };
-    let wait = record::Wait {
+    let wait = record_fixtures::Wait {
         attempts: 12,
         delay: Duration::from_secs(5),
     };
+    let mut random = [0_u8; 8];
+    if let Err(error) = getrandom::fill(&mut random) {
+        return fail(&format!("record-fixtures: no random bytes: {error}"));
+    }
+    let nonce = format!("{:016x}", u64::from_le_bytes(random));
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -62,12 +67,13 @@ fn record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
         Ok(runtime) => runtime,
         Err(error) => return fail(&format!("record-fixtures: {error}")),
     };
-    let result = runtime.block_on(record::run_mail(
+    let result = runtime.block_on(record_fixtures::run_mail(
         &account,
         &connector,
-        record::SmtpSender::new,
+        record_fixtures::SmtpSender::new,
         &out,
         wait,
+        &nonce,
         &mut io::stdout(),
     ));
     match result {

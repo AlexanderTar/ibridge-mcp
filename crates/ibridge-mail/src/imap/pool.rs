@@ -219,8 +219,18 @@ impl<C: Connect> ImapPool<C> {
             client.login(apple_id.as_str(), (*password).as_str()).await
         };
         let mut session = match logged_in {
-            Ok(session) => session,
-            Err((error, _)) => return Err(map_login(&error)),
+            Ok(session) => {
+                ibridge_auth::report_login(ibridge_auth::LoginVerdict::Accepted);
+                session
+            }
+            Err((error, _)) => {
+                let mapped = map_login(&error);
+                // Throttling and dropped connections say nothing about the password.
+                if matches!(mapped, CoreError::Auth) {
+                    ibridge_auth::report_login(ibridge_auth::LoginVerdict::Rejected);
+                }
+                return Err(mapped);
+            }
         };
         let capabilities = session
             .capabilities()

@@ -9,16 +9,16 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-use ibridge_auth::with_call_credentials;
+use ibridge_auth::{LoginLog, with_call_credentials};
 use ibridge_core::{AppleId, CalendarProvider, ContactsProvider, RemindersProvider};
 use ibridge_server::{AccountSnapshot, IbridgeServer, MailApi, ServiceStatus};
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, ErrorData, ListToolsResult, PaginatedRequestParams,
-    ServerConfig,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
+    ListToolsResult, PaginatedRequestParams, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use tokio::sync::Semaphore;
@@ -27,6 +27,7 @@ use tokio::time::Instant;
 use crate::middleware::CallAuth;
 use crate::oauth::address_key;
 use crate::server::{ScopedServers, ServerSource, call_auth};
+use crate::store::{GrantId, Store};
 
 /// Tool calls one account may have in flight at once.
 const CALLS_PER_ACCOUNT: usize = 4;
@@ -66,13 +67,16 @@ pub type AccountServer<B> = Account<
 struct Gate {
     permits: Semaphore,
     last_used: Mutex<Instant>,
+    /// Forgets the account's cache entry, which closes its pooled sessions.
+    evict: Box<dyn Fn() + Send + Sync>,
 }
 
 impl Gate {
-    fn new() -> Self {
+    fn new(evict: Box<dyn Fn() + Send + Sync>) -> Self {
         Self {
             permits: Semaphore::new(CALLS_PER_ACCOUNT),
             last_used: Mutex::new(Instant::now()),
+            evict,
         }
     }
 
@@ -95,6 +99,14 @@ impl Gate {
     }
 }
 
+/// What a call needs to know to count an auth failure: where failures are counted,
+/// where a user reconnects, and what time it is.
+struct Watch {
+    store: Store,
+    account_url: String,
+    clock: Box<dyn Fn() -> SystemTime + Send + Sync>,
+}
+
 struct Entry<S> {
     servers: Arc<ScopedServers<S>>,
     gate: Arc<Gate>,
@@ -105,6 +117,44 @@ struct Entry<S> {
 pub struct Account<S> {
     inner: S,
     gate: Arc<Gate>,
+    watch: Arc<Watch>,
+}
+
+impl Watch {
+    /// A call's login was refused. Counts it against the grant, and tells the user where to reconnect.
+    async fn rejected(
+        &self,
+        gate: &Gate,
+        grant: GrantId,
+        result: Result<CallToolResponse, ErrorData>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        // A store fault must not hide the auth error the caller needs to see.
+        if self
+            .store
+            .note_auth_failure(grant, (self.clock)())
+            .await
+            .unwrap_or(false)
+        {
+            (gate.evict)();
+        }
+        match result {
+            Ok(CallToolResponse::Complete(done)) if done.is_error == Some(true) => {
+                Ok(CallToolResponse::Complete(CallToolResult::error(vec![
+                    ContentBlock::text(format!(
+                        "authentication failed; iCloud refused the app-specific password. Reconnect at {}",
+                        self.account_url
+                    )),
+                ])))
+            }
+            other => other,
+        }
+    }
+}
+
+impl std::fmt::Debug for Watch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Watch").finish_non_exhaustive()
+    }
 }
 
 impl std::fmt::Debug for Gate {
@@ -131,7 +181,8 @@ impl<S: ServerHandler> ServerHandler for Account<S> {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let credentials = Arc::clone(call_auth(&context)?.credentials());
+        let call = call_auth(&context)?;
+        let (credentials, grant) = (Arc::clone(call.credentials()), call.grant());
         let _permit = self
             .gate
             .permits
@@ -139,9 +190,20 @@ impl<S: ServerHandler> ServerHandler for Account<S> {
             .await
             .map_err(|_| ErrorData::internal_error("internal error", None))?;
         // The password is visible to the providers for this call, and to nothing after it.
-        let result =
-            with_call_credentials(credentials, self.inner.call_tool(request, context)).await;
+        let log = Arc::new(LoginLog::new());
+        let mut result = with_call_credentials(
+            credentials,
+            Arc::clone(&log),
+            self.inner.call_tool(request, context),
+        )
+        .await;
         self.gate.touch();
+        if log.rejected() && !log.accepted() {
+            result = self.watch.rejected(&self.gate, grant, result).await;
+        } else if log.accepted() {
+            // A store fault must not fail a call that worked.
+            let _ = self.watch.store.note_auth_success(grant).await;
+        }
         result
     }
 }
@@ -159,24 +221,46 @@ impl<B: Backend> std::fmt::Debug for AccountCache<B> {
 pub struct AccountCache<B: Backend> {
     backend: B,
     idle: Duration,
-    entries: Mutex<HashMap<String, Entry<AccountServer<B>>>>,
+    watch: Arc<Watch>,
+    entries: Arc<Mutex<HashMap<String, Entry<AccountServer<B>>>>>,
 }
 
 impl<B: Backend> AccountCache<B> {
     /// A cache that drops an account's providers after five idle minutes.
+    ///
+    /// Auth failures are counted in `store`. `account_url` is the account page a failed
+    /// call tells the user to visit.
     #[must_use]
-    pub fn new(backend: B) -> Self {
-        Self::with_idle(backend, IDLE)
-    }
-
-    /// A cache that drops an account's providers after `idle` with no calls.
-    #[must_use]
-    pub fn with_idle(backend: B, idle: Duration) -> Self {
+    pub fn new(backend: B, store: Store, account_url: String) -> Self {
         Self {
             backend,
-            idle,
-            entries: Mutex::new(HashMap::new()),
+            idle: IDLE,
+            watch: Arc::new(Watch {
+                store,
+                account_url,
+                clock: Box::new(SystemTime::now),
+            }),
+            entries: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Drops an account's providers after `idle` with no calls.
+    #[must_use]
+    pub fn idle(mut self, idle: Duration) -> Self {
+        self.idle = idle;
+        self
+    }
+
+    /// Reads the time from `clock`, so a test can let 15 minutes pass.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn clock(mut self, clock: impl Fn() -> SystemTime + Send + Sync + 'static) -> Self {
+        self.watch = Arc::new(Watch {
+            store: self.watch.store.clone(),
+            account_url: self.watch.account_url.clone(),
+            clock: Box::new(clock),
+        });
+        self
     }
 
     /// How many accounts are cached.
@@ -212,7 +296,16 @@ impl<B: Backend> AccountCache<B> {
             calendar: ServiceStatus::On,
             contacts: ServiceStatus::On,
         };
-        let gate = Arc::new(Gate::new());
+        let entries = Arc::downgrade(&self.entries);
+        let key = address_key(apple_id);
+        let gate = Arc::new(Gate::new(Box::new(move || {
+            if let Some(entries) = entries.upgrade() {
+                entries
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&key);
+            }
+        })));
         let server = |read_write: bool| {
             let base = if read_write {
                 IbridgeServer::read_write(account.clone(), Arc::clone(&providers.mail))
@@ -224,6 +317,7 @@ impl<B: Backend> AccountCache<B> {
                     .with_calendar(Arc::clone(&providers.calendar))
                     .with_contacts(Arc::clone(&providers.contacts)),
                 gate: Arc::clone(&gate),
+                watch: Arc::clone(&self.watch),
             }
         };
         Entry {
@@ -258,7 +352,7 @@ mod tests {
     use std::io;
     use std::pin::Pin;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::task::{Context, Poll};
     use std::time::{Duration, SystemTime};
 
@@ -284,6 +378,7 @@ mod tests {
     use crate::server::mcp_router;
     use crate::store::{Scope, Store};
 
+    const ACCOUNT_URL: &str = "https://ibridge.example/account";
     const METADATA: &str = "https://ibridge.example/.well-known/oauth-protected-resource/mcp";
 
     /// A fake IMAP connection that counts how many are open.
@@ -327,8 +422,10 @@ mod tests {
         }
     }
 
+    /// Connects to the next fake server in `fakes`, and keeps using the last one.
     struct TrackedConnect {
-        fake: FakeImap,
+        fakes: Arc<[FakeImap]>,
+        next: Arc<AtomicUsize>,
         live: Arc<AtomicUsize>,
     }
 
@@ -337,8 +434,12 @@ mod tests {
 
         fn connect(&self) -> impl Future<Output = io::Result<Self::Stream>> + Send {
             self.live.fetch_add(1, Ordering::SeqCst);
+            let index = self
+                .next
+                .fetch_add(1, Ordering::SeqCst)
+                .min(self.fakes.len() - 1);
             ready(Ok(Tracked {
-                inner: self.fake.connect(),
+                inner: self.fakes[index].connect(),
                 live: Arc::clone(&self.live),
             }))
         }
@@ -421,7 +522,8 @@ mod tests {
     }
 
     struct TestBackend {
-        fake: FakeImap,
+        fakes: Arc<[FakeImap]>,
+        next: Arc<AtomicUsize>,
         live: Arc<AtomicUsize>,
         hold: Option<Arc<Hold>>,
     }
@@ -433,7 +535,8 @@ mod tests {
 
         fn open(&self, apple_id: &AppleId) -> Providers<ImapMail, NoCalendar, NoContacts> {
             let connector = TrackedConnect {
-                fake: self.fake.clone(),
+                fakes: Arc::clone(&self.fakes),
+                next: Arc::clone(&self.next),
                 live: Arc::clone(&self.live),
             };
             Providers {
@@ -453,18 +556,41 @@ mod tests {
         live: Arc<AtomicUsize>,
         cache: Arc<AccountCache<TestBackend>>,
         app: Router,
+        /// Seconds the cache's clock runs ahead of the real one.
+        skew: Arc<AtomicU64>,
+    }
+
+    impl Rig {
+        fn advance(&self, minutes: u64) {
+            self.skew.fetch_add(minutes * 60, Ordering::SeqCst);
+        }
     }
 
     async fn rig(script: FakeScript, hold: Option<Arc<Hold>>, idle: Duration) -> Rig {
+        rig_with(vec![script], hold, idle).await
+    }
+
+    /// A rig whose IMAP connections go to `scripts` in turn, the last one for good.
+    async fn rig_with(scripts: Vec<FakeScript>, hold: Option<Arc<Hold>>, idle: Duration) -> Rig {
         let store = Store::memory().await.expect("store");
-        let fake = FakeImap::spawn(script);
+        let fakes: Arc<[FakeImap]> = scripts.into_iter().map(FakeImap::spawn).collect();
+        let fake = fakes[0].clone();
         let live = Arc::new(AtomicUsize::new(0));
         let backend = TestBackend {
-            fake: fake.clone(),
+            fakes,
+            next: Arc::new(AtomicUsize::new(0)),
             live: Arc::clone(&live),
             hold,
         };
-        let cache = Arc::new(AccountCache::with_idle(backend, idle));
+        let skew = Arc::new(AtomicU64::new(0));
+        let ahead = Arc::clone(&skew);
+        let cache = Arc::new(
+            AccountCache::new(backend, store.clone(), ACCOUNT_URL.to_owned())
+                .idle(idle)
+                .clock(move || {
+                    SystemTime::now() + Duration::from_secs(ahead.load(Ordering::SeqCst))
+                }),
+        );
         let config =
             OAuthConfig::new("https://ibridge.example", Access::MultiTenant).expect("public url");
         let info = ibridge_server::IbridgeServer::read_only(
@@ -488,6 +614,7 @@ mod tests {
             live,
             cache,
             app,
+            skew,
         }
     }
 
@@ -508,6 +635,16 @@ mod tests {
 
     /// Calls `mail_list_mailboxes` and returns the JSON-RPC message.
     async fn list_mailboxes(app: &Router, bearer: &str) -> Value {
+        let response = raw_list_mailboxes(app, bearer).await;
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("body");
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("a JSON reply, got {bytes:?}: {error}"))
+    }
+
+    /// Calls `mail_list_mailboxes` and returns the HTTP response unread.
+    async fn raw_list_mailboxes(app: &Router, bearer: &str) -> axum::response::Response {
         let body = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -532,12 +669,7 @@ mod tests {
             .header("mcp-name", "mail_list_mailboxes")
             .body(Body::from(body.to_string()))
             .expect("request");
-        let response = app.clone().oneshot(request).await.expect("response");
-        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
-            .await
-            .expect("body");
-        serde_json::from_slice(&bytes)
-            .unwrap_or_else(|error| panic!("a JSON reply, got {bytes:?}: {error}"))
+        app.clone().oneshot(request).await.expect("response")
     }
 
     fn succeeded(message: &Value) -> bool {
@@ -710,6 +842,164 @@ mod tests {
             rig.fake.connection_count(),
             2,
             "the next call opens a fresh connection"
+        );
+    }
+
+    /// A server that accepts only `pw-current`, and an account with a stale and a current grant.
+    async fn stale_rig() -> (Rig, String, String) {
+        let script = FakeScript {
+            accepts_password: Some("pw-current".to_owned()),
+            ..FakeScript::default()
+        };
+        let rig = rig(script, None, Duration::from_mins(5)).await;
+        let stale = token(&rig.store, "ada@icloud.com", "pw-stale", Scope::ReadWrite).await;
+        let current = token(&rig.store, "ada@icloud.com", "pw-current", Scope::ReadWrite).await;
+        (rig, stale, current)
+    }
+
+    async fn still_open(rig: &Rig, bearer: &str) -> bool {
+        rig.store
+            .open_for_call(bearer, SystemTime::now())
+            .await
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn auth_failure_counts_toward_revocation() {
+        let (rig, stale, _current) = stale_rig().await;
+
+        let first = list_mailboxes(&rig.app, &stale).await;
+        assert!(
+            !succeeded(&first),
+            "a rejected password is a tool error: {first}"
+        );
+        rig.advance(10);
+        let second = list_mailboxes(&rig.app, &stale).await;
+        assert!(
+            !succeeded(&second),
+            "still a tool error, not a 401: {second}"
+        );
+        assert!(
+            still_open(&rig, &stale).await,
+            "two failures do not revoke the grant"
+        );
+
+        rig.advance(10);
+        let third = list_mailboxes(&rig.app, &stale).await;
+        assert!(
+            !succeeded(&third),
+            "the third failure is still reported: {third}"
+        );
+        assert!(
+            !still_open(&rig, &stale).await,
+            "three failures over 20 minutes revoke the grant"
+        );
+        assert!(
+            rig.cache.is_empty(),
+            "revoking a grant drops the account's providers and pooled sessions"
+        );
+    }
+
+    #[tokio::test]
+    async fn revoked_grant_next_call_401_invalid_token() {
+        let (rig, stale, current) = stale_rig().await;
+        for _ in 0..3 {
+            let _ = list_mailboxes(&rig.app, &stale).await;
+            rig.advance(10);
+        }
+
+        let response = raw_list_mailboxes(&rig.app, &stale).await;
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "a revoked grant's token is refused"
+        );
+        let challenge = response.headers()[header::WWW_AUTHENTICATE]
+            .to_str()
+            .expect("ascii");
+        assert!(
+            challenge.contains(r#"error="invalid_token""#),
+            "the client is told to sign in again, got {challenge}"
+        );
+
+        let other = list_mailboxes(&rig.app, &current).await;
+        assert!(
+            succeeded(&other),
+            "revocation is per grant: another grant of the account still works: {other}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_error_links_account_page() {
+        let (rig, stale, _current) = stale_rig().await;
+
+        let message = list_mailboxes(&rig.app, &stale).await;
+
+        assert_eq!(
+            message["result"]["isError"],
+            json!(true),
+            "a tool error: {message}"
+        );
+        let text = message["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a text error, got {message}"));
+        assert!(
+            text.contains(ACCOUNT_URL),
+            "the error links the account page, got {text:?}"
+        );
+        assert!(
+            !text.contains("ibridge login"),
+            "a hosted user has no `ibridge login`, got {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn accepted_login_resets_the_failure_streak() {
+        let reject = FakeScript {
+            reject_login: true,
+            ..FakeScript::default()
+        };
+        let rig = rig_with(
+            vec![
+                reject.clone(),
+                reject,
+                FakeScript::default(),
+                FakeScript {
+                    reject_login: true,
+                    ..FakeScript::default()
+                },
+            ],
+            None,
+            Duration::from_mins(5),
+        )
+        .await;
+        let ada = token(&rig.store, "ada@icloud.com", "pw-1", Scope::ReadWrite).await;
+        let ada_id = AppleId::try_from("ada@icloud.com").expect("apple id");
+
+        assert!(
+            !succeeded(&list_mailboxes(&rig.app, &ada).await),
+            "failure 1"
+        );
+        rig.advance(10);
+        assert!(
+            !succeeded(&list_mailboxes(&rig.app, &ada).await),
+            "failure 2"
+        );
+        rig.advance(1);
+        assert!(
+            succeeded(&list_mailboxes(&rig.app, &ada).await),
+            "the third connection is accepted"
+        );
+        rig.cache.drop_account(&ada_id);
+        rig.advance(9);
+        assert!(
+            !succeeded(&list_mailboxes(&rig.app, &ada).await),
+            "a failure 20 minutes after the first"
+        );
+
+        assert!(
+            still_open(&rig, &ada).await,
+            "an accepted login started the count over, so this is only the first failure"
         );
     }
 }

@@ -346,6 +346,7 @@ impl Store {
     /// Records one failed login for `grant`.
     ///
     /// Three failures whose first and last are at least 15 minutes apart revoke the grant.
+    /// Returns whether the grant is revoked now, so the caller can drop what it holds for it.
     ///
     /// # Errors
     ///
@@ -355,7 +356,7 @@ impl Store {
         &self,
         grant: GrantId,
         now: SystemTime,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let now = unix(now)?;
         let mut tx = begin(&self.pool).await?;
         let result = record_failure(&mut tx, &grant.0, now).await;
@@ -958,7 +959,7 @@ async fn revoke(tx: &mut WriteTx, grant_id: &[u8]) -> Result<(), StoreError> {
     Ok(())
 }
 
-async fn record_failure(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<(), StoreError> {
+async fn record_failure(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<bool, StoreError> {
     let row =
         sqlx::query("SELECT status, failure_count, first_failure_at FROM grants WHERE id = ?")
             .bind(grant_id)
@@ -970,7 +971,7 @@ async fn record_failure(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<(
     };
     let status: String = row.try_get("status").map_err(internal)?;
     if status == STATUS_REVOKED {
-        return Ok(());
+        return Ok(true);
     }
     let count: i64 = row.try_get("failure_count").map_err(internal)?;
     let first: Option<i64> = row.try_get("first_failure_at").map_err(internal)?;
@@ -979,7 +980,8 @@ async fn record_failure(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<(
         _ => (1, now),
     };
     if count >= FAILURES_TO_REVOKE && now.saturating_sub(first) >= FAILURE_WINDOW {
-        return revoke(tx, grant_id).await;
+        revoke(tx, grant_id).await?;
+        return Ok(true);
     }
     sqlx::query("UPDATE grants SET failure_count = ?, first_failure_at = ? WHERE id = ?")
         .bind(count)
@@ -988,7 +990,7 @@ async fn record_failure(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<(
         .execute(&mut **tx)
         .await
         .map_err(internal)?;
-    Ok(())
+    Ok(false)
 }
 
 async fn record_success(tx: &mut WriteTx, grant_id: &[u8]) -> Result<(), StoreError> {

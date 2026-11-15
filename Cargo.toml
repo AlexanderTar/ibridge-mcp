@@ -40,7 +40,14 @@ ibridge-core = { path = "crates/ibridge-core" }
 ibridge-testkit = { path = "crates/ibridge-testkit" }
 imap-codec = "1.0.0"
 keyring-core = "1"
+lettre = { version = "0.11.23", default-features = false, features = [
+    "ring",
+    "rustls-native-certs",
+    "smtp-transport",
+    "tokio1-rustls",
+] }
 libdav = "0.11.2"
+mail-builder = { version = "2.0.1", default-features = false }
 mail-parser = "1.0"
 proptest = "1"
 roxmltree = "0.21"

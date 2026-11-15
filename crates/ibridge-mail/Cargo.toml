@@ -10,12 +10,16 @@ description = "IMAP and SMTP mail provider."
 [dependencies]
 async-imap.workspace = true
 ibridge-auth.workspace = true
-mail-parser.workspace = true
 ibridge-core.workspace = true
+lettre.workspace = true
+mail-builder.workspace = true
+mail-parser.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 ibridge-testkit.workspace = true
 testcontainers.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

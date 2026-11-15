@@ -4,5 +4,7 @@
 
 mod imap;
 mod mime;
+mod smtp;
 
 pub use imap::ImapPool;
+pub use smtp::{OutgoingMail, SmtpClient};

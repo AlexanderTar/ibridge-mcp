@@ -34,6 +34,8 @@ pub(crate) async fn store_if_valid<V: Validator>(
         Entry::new(KEYCHAIN_SERVICE, credentials.apple_id.as_str())?.set_password(secret)
     })?;
     State::from_report(&credentials.apple_id, &report).save()?;
+    #[cfg(feature = "http")]
+    crate::token::DaemonToken::get_or_create()?;
     Ok(report)
 }
 
@@ -103,31 +105,17 @@ pub(crate) async fn run() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
-
     use ibridge_auth::{
         AuthError, CredentialSource as _, Credentials, KeyringSource, ServiceCheck,
         ValidationReport, Validator,
     };
     use ibridge_core::AppleId;
     use ibridge_server::ServiceStatus;
-    use tokio::sync::Mutex;
 
     use super::store_if_valid;
     use crate::account::{Services, State, snapshot};
+    use crate::testing::{KEYCHAIN, mock_keychain};
     use crate::validate::Combined;
-
-    /// Tests share the keychain's `state` entry, so they take turns.
-    static KEYCHAIN: Mutex<()> = Mutex::const_new(());
-
-    fn mock_keychain() {
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            keyring_core::set_default_store(
-                keyring_core::mock::Store::new().expect("mock keychain"),
-            );
-        });
-    }
 
     fn credentials(address: &str) -> Credentials {
         Credentials::new(AppleId::try_from(address).expect("apple id"), "app-secret")
@@ -182,6 +170,40 @@ mod tests {
             .credentials()
             .await
             .expect("an accepted login stores the password");
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn login_creates_daemon_token() {
+        let _turn = KEYCHAIN.lock().await;
+        mock_keychain();
+        let _ = keyring_core::Entry::new(crate::account::KEYCHAIN_SERVICE, "daemon-token")
+            .expect("entry")
+            .delete_credential();
+        let none = Fixed(ValidationReport {
+            mail: failed("mail rejected"),
+            calendar: failed("calendar rejected"),
+            contacts: failed("contacts rejected"),
+        });
+        store_if_valid(&none, &credentials("no-token@icloud.com"))
+            .await
+            .expect_err("a rejected login fails");
+        keyring_core::Entry::new(crate::account::KEYCHAIN_SERVICE, "daemon-token")
+            .expect("entry")
+            .get_password()
+            .expect_err("a rejected login makes no daemon token");
+        let ok = Fixed(ValidationReport {
+            mail: ServiceCheck::Ok,
+            calendar: ServiceCheck::Ok,
+            contacts: ServiceCheck::Ok,
+        });
+        store_if_valid(&ok, &credentials("token@icloud.com"))
+            .await
+            .expect("login succeeds");
+        keyring_core::Entry::new(crate::account::KEYCHAIN_SERVICE, "daemon-token")
+            .expect("entry")
+            .get_password()
+            .expect("a successful login leaves a daemon token in the keychain");
     }
 
     #[tokio::test]

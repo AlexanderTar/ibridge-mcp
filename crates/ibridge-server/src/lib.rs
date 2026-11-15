@@ -10,6 +10,7 @@ mod contacts_tools;
 mod dto;
 mod error_map;
 mod handler;
+pub mod http;
 mod mail_api;
 mod untrusted;
 

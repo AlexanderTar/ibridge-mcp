@@ -42,3 +42,20 @@ pub(crate) fn open_url(url: &str) {
         tracing::debug!(%error, "could not open the browser");
     }
 }
+
+/// Finishes when the process is asked to stop: Ctrl-C, or SIGTERM from launchd and systemd.
+#[cfg(feature = "http")]
+pub(crate) async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}

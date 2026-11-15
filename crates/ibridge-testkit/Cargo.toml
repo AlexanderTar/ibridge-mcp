@@ -9,6 +9,10 @@ description = "Scripted protocol fakes, fixtures and test containers."
 publish = false
 
 [dependencies]
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper-util.workspace = true
 imap-codec.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true

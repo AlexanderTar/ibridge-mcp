@@ -1824,7 +1824,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
+ "base64 0.22.1",
  "clap",
+ "getrandom 0.4.3",
  "ibridge-auth",
  "ibridge-calendar",
  "ibridge-contacts",
@@ -1832,12 +1834,15 @@ dependencies = [
  "ibridge-dav",
  "ibridge-mail",
  "ibridge-server",
+ "ibridge-testkit",
  "keyring-core",
  "rmcp",
  "rpassword",
+ "secrecy",
  "secret-service",
  "serde",
  "serde_json",
+ "subtle",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1981,13 +1986,17 @@ dependencies = [
 name = "ibridge-server"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
+ "http",
  "ibridge-core",
+ "ibridge-testkit",
  "insta",
  "rmcp",
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
  "tokio",
  "trait-variant",
 ]
@@ -1997,7 +2006,11 @@ name = "ibridge-testkit"
 version = "0.1.0"
 dependencies = [
  "async-imap",
+ "bytes",
  "futures",
+ "http",
+ "http-body-util",
+ "hyper-util",
  "imap-codec",
  "testcontainers",
  "tokio",
@@ -3111,23 +3124,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5949e504d5ab9944a168259afc0c39ac0230627b6ec5367ace194c59bcbe163"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
+ "bytes",
  "chrono",
  "futures",
+ "http",
+ "http-body",
+ "http-body-util",
  "indexmap 2.14.2",
  "libc",
  "oauth2",
  "pastey",
  "pin-project-lite",
+ "rand 0.10.4",
  "reqwest",
  "rmcp-macros",
  "schemars 1.2.3",
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "sse-stream",
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tower-service",
  "tracing",
  "url",
  "uuid",
@@ -3710,6 +3731,19 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "sse-stream"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c25ac7aff0abd1dbc474536e40416e1102c7dd9bfba0b9861c6d357f835dcfb4"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
 ]
 
 [[package]]

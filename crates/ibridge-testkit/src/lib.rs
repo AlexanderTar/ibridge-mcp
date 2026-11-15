@@ -5,6 +5,7 @@
 pub mod containers;
 pub mod dav_mock;
 pub mod fixtures;
+pub mod http;
 pub mod imap_fake;
 
 #[cfg(test)]

@@ -10,6 +10,10 @@ mod login;
 mod mail;
 mod platform;
 mod serve;
+#[cfg(test)]
+mod testing;
+#[cfg(feature = "http")]
+mod token;
 mod validate;
 
 #[tokio::main]

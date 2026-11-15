@@ -25,6 +25,10 @@ enum Command {
         /// Speak MCP over stdin and stdout. Logs go to stderr.
         #[arg(long)]
         stdio: bool,
+        /// Speak MCP over HTTP on a loopback address, for example 127.0.0.1:8765.
+        #[cfg(feature = "http")]
+        #[arg(long, value_name = "ADDR", conflicts_with = "stdio")]
+        http: Option<std::net::SocketAddr>,
         /// Hide and reject every tool that changes mail.
         #[arg(long)]
         read_only: bool,
@@ -39,15 +43,24 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             crate::platform::install_keychain()?;
             crate::login::logout()
         }
-        Command::Serve { stdio, read_only } => {
-            if !stdio {
-                anyhow::bail!("choose a transport: --stdio");
-            }
+        Command::Serve {
+            stdio,
+            #[cfg(feature = "http")]
+            http,
+            read_only,
+        } => {
             let access = if read_only {
                 Access::ReadOnly
             } else {
                 Access::ReadWrite
             };
+            #[cfg(feature = "http")]
+            if let Some(addr) = http {
+                return crate::serve::http(addr, access).await;
+            }
+            if !stdio {
+                anyhow::bail!("choose a transport: --stdio or --http <ADDR>");
+            }
             crate::serve::stdio(access).await
         }
     }

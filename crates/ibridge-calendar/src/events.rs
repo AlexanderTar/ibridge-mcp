@@ -46,16 +46,17 @@ impl CalendarProvider for CalDavProvider {
         let home = self.home().await?;
         let collections = self.collections(&home).await?;
         let chosen = choose_collections(&collections, &query.calendars)?;
-        let mut list = EventList {
-            events: Vec::new(),
-            warnings: 0,
-        };
+        let mut found = Found::default();
         for collection in chosen {
-            self.read_collection(&home, collection, window, &mut list)
+            self.read_collection(&home, collection, window, &mut found)
                 .await?;
         }
-        list.events.sort_by(|a, b| a.start.cmp(&b.start));
-        Ok(list)
+        // The text of an instant does not sort by time across offsets and dates.
+        found.events.sort_by_key(|(instant, _)| *instant);
+        Ok(EventList {
+            events: found.events.into_iter().map(|(_, event)| event).collect(),
+            warnings: found.warnings,
+        })
     }
 
     async fn get_event(&self, path: &ResourcePath) -> Result<Event, CoreError> {
@@ -121,6 +122,13 @@ impl CalendarProvider for CalDavProvider {
     }
 }
 
+/// Events read so far, each with the instant it starts at, and the items skipped.
+#[derive(Default)]
+struct Found {
+    events: Vec<(i64, Event)>,
+    warnings: u32,
+}
+
 /// A resource as the server holds it.
 pub(crate) struct Fetched {
     pub(crate) etag: ETag,
@@ -163,13 +171,13 @@ impl CalDavProvider {
         Ok(Fetched { etag, text })
     }
 
-    /// Runs one `calendar-query` and adds the expanded events to `list`.
+    /// Runs one `calendar-query` and adds the expanded events to `found`.
     async fn read_collection(
         &self,
         home: &Home,
         collection: &Collection,
         window: Window,
-        list: &mut EventList,
+        found: &mut Found,
     ) -> Result<(), CoreError> {
         let entries = self
             .query(home, collection, time_range_query(window))
@@ -186,19 +194,21 @@ impl CalDavProvider {
                 ical::parse(text),
             );
             let (Some(path), Some(etag), Some(ical)) = parsed else {
-                list.warnings += 1;
+                found.warnings += 1;
                 continue;
             };
             let expansion = recurrence::expand(&ical, Some(window));
             if expansion.had_errors {
-                list.warnings += 1;
+                found.warnings += 1;
             }
-            list.events.extend(
-                expansion
-                    .occurrences
-                    .iter()
-                    .map(|occurrence| to_event(&ical, occurrence, path.clone(), etag.clone())),
-            );
+            found
+                .events
+                .extend(expansion.occurrences.iter().map(|occurrence| {
+                    (
+                        occurrence.start.timestamp(),
+                        to_event(&ical, occurrence, path.clone(), etag.clone()),
+                    )
+                }));
         }
         Ok(())
     }
@@ -271,7 +281,13 @@ fn to_event(ical: &ICalendar, occurrence: &Occurrence, path: ResourcePath, etag:
         time_zone: zone_name(&occurrence.start),
         all_day: granularity == Granularity::Date,
         recurring,
-        recurrence_id: recurring.then(|| format_instant(&occurrence.start, granularity)),
+        recurrence_id: recurring.then(|| {
+            let instance = occurrence
+                .recurrence_id
+                .as_ref()
+                .unwrap_or(&occurrence.start);
+            format_instant(instance, granularity)
+        }),
         attendees: ical::attendees(component),
         alarms: ical::alarms(ical, component),
     }
@@ -438,6 +454,162 @@ mod tests {
             );
         }
         let _ = ResourcePath::try_from("work/one.ics").expect("path shape");
+    }
+
+    #[tokio::test]
+    async fn list_events_sorts_by_instant_not_text() {
+        let (fake, provider) = setup().await;
+        fake.put(
+            "work",
+            "berlin.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:berlin-1\nDTSTAMP:20261101T000000Z\n\
+                 DTSTART;TZID=Europe/Berlin:20261116T090000\n\
+                 DTEND;TZID=Europe/Berlin:20261116T100000\nSUMMARY:Berlin\nEND:VEVENT",
+            ),
+        );
+        fake.put(
+            "work",
+            "utc.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:utc-1\nDTSTAMP:20261101T000000Z\n\
+                 DTSTART:20261116T083000Z\nDTEND:20261116T093000Z\nSUMMARY:Utc\nEND:VEVENT",
+            ),
+        );
+        let list = provider
+            .list_events(&query("2026-11-16T00:00:00Z", "2026-11-17T00:00:00Z"))
+            .await
+            .expect("list events");
+        let uids: Vec<&str> = list.events.iter().map(|e| e.uid.as_str()).collect();
+        assert_eq!(
+            uids,
+            ["berlin-1", "utc-1"],
+            "09:00+01:00 is 08:00Z, before 08:30Z"
+        );
+    }
+
+    #[tokio::test]
+    async fn moved_occurrence_lists_its_original_recurrence_id() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put(
+            "work",
+            "daily.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:daily-1\nDTSTAMP:20261101T000000Z\n\
+                 DTSTART:20261116T090000Z\nDTEND:20261116T100000Z\n\
+                 RRULE:FREQ=DAILY;COUNT=3\nSUMMARY:Standup\nEND:VEVENT\n\
+                 BEGIN:VEVENT\nUID:daily-1\nDTSTAMP:20261101T000000Z\n\
+                 RECURRENCE-ID:20261117T090000Z\n\
+                 DTSTART:20261117T100000Z\nDTEND:20261117T110000Z\nSUMMARY:Moved\nEND:VEVENT",
+            ),
+        );
+        let range = query("2026-11-16T00:00:00Z", "2026-11-20T00:00:00Z");
+        let list = provider.list_events(&range).await.expect("list");
+        let moved = list
+            .events
+            .iter()
+            .find(|e| e.summary == "Moved")
+            .expect("moved occurrence");
+        assert_eq!(moved.start, "2026-11-17T10:00:00Z");
+        assert_eq!(
+            moved.recurrence_id.as_deref(),
+            Some("2026-11-17T09:00:00Z"),
+            "the id names the instance it replaces, not its new start"
+        );
+
+        let path = ResourcePath::try_from("work/daily.ics").expect("path");
+        provider
+            .update_event(
+                &path,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &draft("Renamed", "2026-11-17T10:00:00Z", "2026-11-17T11:00:00Z"),
+                &UpdateScope::Occurrence {
+                    recurrence_id: moved.recurrence_id.clone().expect("recurrence id"),
+                },
+            )
+            .await
+            .expect("update the moved occurrence by its listed id");
+        let body = fake.body("work", "daily.ics").expect("stored");
+        assert_eq!(
+            body.matches("RECURRENCE-ID").count(),
+            1,
+            "the existing override is edited, none is added: {body}"
+        );
+        let list = provider.list_events(&range).await.expect("list again");
+        let summaries: Vec<&str> = list.events.iter().map(|e| e.summary.as_str()).collect();
+        assert_eq!(summaries, ["Standup", "Renamed", "Standup"]);
+    }
+
+    #[tokio::test]
+    async fn list_events_reaches_a_window_far_after_the_series_start() {
+        let (fake, provider) = setup().await;
+        fake.put(
+            "work",
+            "old.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:old-1\nDTSTAMP:20150101T000000Z\n\
+                 DTSTART:20150101T090000Z\nDTEND:20150101T100000Z\n\
+                 RRULE:FREQ=DAILY\nSUMMARY:Old\nEND:VEVENT",
+            ),
+        );
+        fake.put(
+            "work",
+            "floating.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:floating-1\nDTSTAMP:20150101T000000Z\n\
+                 DTSTART:20150101T180000\nDTEND:20150101T190000\n\
+                 RRULE:FREQ=DAILY\nSUMMARY:Floating\nEND:VEVENT",
+            ),
+        );
+        fake.put(
+            "work",
+            "allday.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:allday-1\nDTSTAMP:20150101T000000Z\n\
+                 DTSTART;VALUE=DATE:20150101\nDTEND;VALUE=DATE:20150102\n\
+                 RRULE:FREQ=DAILY\nSUMMARY:All day\nEND:VEVENT",
+            ),
+        );
+        let list = provider
+            .list_events(&query("2026-11-16T00:00:00Z", "2026-11-18T00:00:00Z"))
+            .await
+            .expect("list events");
+        let starts: Vec<(&str, &str)> = list
+            .events
+            .iter()
+            .map(|e| (e.uid.as_str(), e.start.as_str()))
+            .collect();
+        assert_eq!(
+            starts,
+            [
+                ("allday-1", "2026-11-16"),
+                ("old-1", "2026-11-16T09:00:00Z"),
+                ("floating-1", "2026-11-16T18:00:00"),
+                ("allday-1", "2026-11-17"),
+                ("old-1", "2026-11-17T09:00:00Z"),
+                ("floating-1", "2026-11-17T18:00:00"),
+            ]
+        );
+        assert_eq!(list.warnings, 0);
+    }
+
+    #[tokio::test]
+    async fn list_events_warns_when_a_series_is_too_long_to_expand() {
+        let (fake, provider) = setup().await;
+        fake.put(
+            "work",
+            "busy.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:busy-1\nDTSTAMP:20150101T000000Z\n\
+                 DTSTART:20150101T090000Z\nDTEND:20150101T090001Z\n\
+                 RRULE:FREQ=SECONDLY\nSUMMARY:Busy\nEND:VEVENT",
+            ),
+        );
+        let list = provider
+            .list_events(&query("2026-11-16T00:00:00Z", "2026-11-17T00:00:00Z"))
+            .await
+            .expect("list events");
+        assert_eq!(list.warnings, 1, "hitting the expansion limit is reported");
     }
 
     const ALARM_EVENT: &str = "BEGIN:VEVENT\nUID:alarm-1\nDTSTAMP:20261101T000000Z\n\

@@ -5,15 +5,27 @@
 //! iCloud's server-side `expand` is unreliable, so the provider asks for the
 //! master events that overlap the range and expands them here.
 
+use calcard::common::PartialDateTime;
 use calcard::common::timezone::Tz;
 use calcard::icalendar::dates::TimeOrDelta;
-use calcard::icalendar::{ICalendar, ICalendarComponentType};
+use calcard::icalendar::{ICalendar, ICalendarComponentType, ICalendarProperty, ICalendarValue};
 
 use crate::ical::Granularity;
-use chrono::{DateTime, Offset, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Offset, TimeZone, Timelike, Utc};
 
-/// Occurrences produced for one recurring event, and whether any rule failed.
-const EXPANSION_LIMIT: usize = 3000;
+/// The most occurrences expanded from one calendar object. calcard counts from
+/// the series' `DTSTART`, not from the window, so this has to cover every
+/// occurrence between the two: about 22 years of an hourly rule.
+// ponytail: a rule that fires more often than hourly for years passes the limit and is
+// reported as a warning; the rule is only clipped at the window's end, never windowed.
+const EXPANSION_LIMIT: usize = 200_000;
+
+/// The most occurrences expanded when there is no window: enough to find the first.
+const FIRST_EXPANSION_LIMIT: usize = 3000;
+
+/// Days added after the window's end when an open-ended rule is clipped, so that
+/// the difference between a series' zone and UTC never drops an occurrence.
+const CLIP_SLACK_DAYS: i64 = 2;
 
 /// A half-open range `[start, end)`.
 #[derive(Clone, Copy, Debug)]
@@ -29,22 +41,36 @@ pub(crate) struct Occurrence {
     pub(crate) component: usize,
     pub(crate) start: DateTime<Tz>,
     pub(crate) end: DateTime<Tz>,
+    /// The `RECURRENCE-ID` of an overridden occurrence: the instance it replaces.
+    pub(crate) recurrence_id: Option<DateTime<Tz>>,
 }
 
 /// Result of expanding one calendar object.
 #[derive(Debug, Default)]
 pub(crate) struct Expansion {
     pub(crate) occurrences: Vec<Occurrence>,
-    /// Some component could not be expanded.
+    /// Some component could not be expanded, or expansion stopped at the limit.
     pub(crate) had_errors: bool,
 }
 
 /// Expands every `VEVENT` in `ical` and keeps the occurrences that overlap `window`.
 pub(crate) fn expand(ical: &ICalendar, window: Option<Window>) -> Expansion {
-    let expanded = ical.expand_dates(Tz::Floating, EXPANSION_LIMIT);
+    let clipped = window.map(|window| clip_open_rules(ical, window));
+    let limit = if window.is_some() {
+        EXPANSION_LIMIT
+    } else {
+        FIRST_EXPANSION_LIMIT
+    };
+    let expanded = clipped
+        .as_ref()
+        .unwrap_or(ical)
+        .expand_dates(Tz::Floating, limit);
+    let resolver = ical.build_tz_resolver().with_default(Tz::Floating);
     let mut result = Expansion {
         occurrences: Vec::new(),
-        had_errors: !expanded.errors.is_empty(),
+        // Stopping at the limit may have missed occurrences.
+        had_errors: !expanded.errors.is_empty()
+            || expanded.events.len() >= limit && window.is_some(),
     };
     for event in expanded.events {
         let Some(component) = ical.components.get(usize_from(event.comp_id)) else {
@@ -70,12 +96,60 @@ pub(crate) fn expand(ical: &ICalendar, window: Option<Window>) -> Expansion {
             component: usize_from(event.comp_id),
             start,
             end,
+            recurrence_id: recurrence_id(component, &resolver),
         });
     }
     result
         .occurrences
         .sort_by_key(|occurrence| occurrence.start.timestamp());
     result
+}
+
+/// A copy of `ical` whose rules with no `COUNT` or `UNTIL` end just after the
+/// window, so an open-ended series is not expanded to the limit.
+fn clip_open_rules(ical: &ICalendar, window: Window) -> ICalendar {
+    let until = window.end + chrono::Duration::days(CLIP_SLACK_DAYS);
+    let mut clipped = ical.clone();
+    for component in &mut clipped.components {
+        for entry in &mut component.entries {
+            if entry.name != ICalendarProperty::Rrule {
+                continue;
+            }
+            for value in &mut entry.values {
+                if let ICalendarValue::RecurrenceRule(rule) = value
+                    && rule.until.is_none()
+                    && rule.count.is_none()
+                {
+                    rule.until = Some(PartialDateTime {
+                        year: u16::try_from(until.year()).ok(),
+                        month: u8::try_from(until.month()).ok(),
+                        day: u8::try_from(until.day()).ok(),
+                        hour: u8::try_from(until.hour()).ok(),
+                        minute: u8::try_from(until.minute()).ok(),
+                        second: u8::try_from(until.second()).ok(),
+                        tz_hour: Some(0),
+                        tz_minute: Some(0),
+                        tz_minus: false,
+                    });
+                }
+            }
+        }
+    }
+    clipped
+}
+
+/// The component's own `RECURRENCE-ID`, read in its zone.
+fn recurrence_id(
+    component: &calcard::icalendar::ICalendarComponent,
+    resolver: &calcard::icalendar::timezone::TzResolver<&str>,
+) -> Option<DateTime<Tz>> {
+    let entry = component.property(&calcard::icalendar::ICalendarProperty::RecurrenceId)?;
+    let moment = entry
+        .values
+        .first()?
+        .as_partial_date_time()?
+        .to_date_time_with_tz(resolver.resolve_or_default(entry.tz_id()))?;
+    Some(moment)
 }
 
 fn restore_zone(moment: DateTime<Tz>, zone: Option<Tz>) -> DateTime<Tz> {

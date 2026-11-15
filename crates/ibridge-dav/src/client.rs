@@ -20,6 +20,9 @@ use crate::redirect::{host_is_allowed, is_redirect, location_target, resolve_loc
 /// Attempts before a 429, 503 or transport failure becomes the caller's error.
 const MAX_ATTEMPTS: u32 = 3;
 
+/// Longest `Retry-After` this call will sleep for. A longer delay is the caller's.
+const MAX_IN_CALL_WAIT: Duration = Duration::from_secs(30);
+
 /// Redirects followed before the call fails. Discovery is only a few hops.
 const MAX_REDIRECTS: u32 = 5;
 
@@ -290,12 +293,17 @@ async fn send_with_retry(
         attempt += 1;
         let request = outgoing.to_request()?;
         match transport.dispatch(request).await {
-            Err(_) if attempt < MAX_ATTEMPTS => {
+            // A conditional PUT is not retried. If the response was lost, a second
+            // put_new is a 412 and the caller would see Conflict for its own create.
+            Err(_) if retries_transport(&outgoing.method) && attempt < MAX_ATTEMPTS => {
                 tokio::time::sleep(jitter(attempt)).await;
             }
             Err(_) => return Err(DavError::Network),
             Ok(response) if is_throttled(response.status()) => {
                 let retry_after = retry_after(response.headers());
+                if retry_after.is_some_and(|delay| delay > MAX_IN_CALL_WAIT) {
+                    return Err(DavError::RateLimited { retry_after });
+                }
                 if attempt < MAX_ATTEMPTS {
                     tokio::time::sleep(retry_after.unwrap_or_else(|| jitter(attempt))).await;
                     continue;
@@ -311,7 +319,17 @@ fn is_throttled(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE
 }
 
-/// Delta-seconds only.
+/// Transport failures are retried only when sending the request twice is safe.
+///
+/// `PUT` is not in the list: `If-None-Match: *` turns a lost response into 412.
+fn retries_transport(method: &Method) -> bool {
+    !matches!(
+        method.as_str(),
+        "PUT" | "POST" | "PATCH" | "PROPPATCH" | "MKCOL" | "MKCALENDAR"
+    )
+}
+
+/// Delta-seconds only. A delay above [`MAX_IN_CALL_WAIT`] is returned to the caller.
 ///
 /// ponytail: an HTTP-date `Retry-After` is treated as absent. iCloud sends a
 /// delay in seconds. Parse dates with the `httpdate` crate if a server sends one.
@@ -350,18 +368,22 @@ type Connector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connec
 fn http_client() -> Result<Client<Connector, Full<Bytes>>, DavError> {
     // HTTP/1.1 and HTTP/2 only. hyper-rustls has no HTTP/3 switch, and this
     // builder does not advertise or follow an `Alt-Svc: h3` upgrade.
-    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+    let builder = hyper_rustls::HttpsConnectorBuilder::new()
         .with_native_roots()
-        .map_err(|_| DavError::Network)?
-        .https_or_http()
-        .enable_http1()
-        .enable_http2()
-        .build();
+        .map_err(|_| DavError::Network)?;
+    // Cleartext is only for a loopback test server. iCloud is https.
+    let builder = if cfg!(any(test, feature = "test-hosts")) {
+        builder.https_or_http()
+    } else {
+        builder.https_only()
+    };
+    let connector = builder.enable_http1().enable_http2().build();
     Ok(Client::builder(TokioExecutor::new()).build(connector))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -471,6 +493,76 @@ mod tests {
                 },
                 "status {status}"
             );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_after_over_cap_is_not_waited() {
+        let script = Script::new(|_request| {
+            Response::builder()
+                .status(429)
+                .header("retry-after", "86400")
+                .body(Full::new(Bytes::new()))
+                .expect("response")
+        });
+        let error = execute(
+            &script,
+            &credentials(),
+            propfind("https://caldav.icloud.com/"),
+        )
+        .await
+        .expect_err("a day-long Retry-After must not be slept off inside the call");
+        assert_eq!(
+            error,
+            DavError::RateLimited {
+                retry_after: Some(Duration::from_hours(24)),
+            }
+        );
+        assert_eq!(
+            script.requests().len(),
+            1,
+            "the call returns as soon as Retry-After is above 30s"
+        );
+    }
+
+    #[tokio::test]
+    async fn put_is_not_retried_after_transport_error() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let transport = FailTransport {
+            calls: Arc::clone(&calls),
+        };
+        let request = Request::builder()
+            .method("PUT")
+            .uri("https://caldav.icloud.com/184573921/calendars/a.ics")
+            .body("BEGIN:VCALENDAR".to_owned())
+            .expect("request");
+        let error = execute(&transport, &credentials(), request)
+            .await
+            .expect_err("a lost PUT response must not be retried");
+        assert_eq!(error, DavError::Network);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "PUT is not idempotent once it may have been sent"
+        );
+    }
+
+    struct FailTransport {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl crate::client::Transport for FailTransport {
+        fn dispatch(
+            &self,
+            _request: Request<String>,
+        ) -> impl Future<Output = Result<Response<Full<Bytes>>, DavError>> + Send {
+            let seen = self.calls.fetch_add(1, Ordering::SeqCst);
+            let result = if seen == 0 {
+                Err(DavError::Network)
+            } else {
+                Ok(empty(201))
+            };
+            std::future::ready(result)
         }
     }
 

@@ -42,21 +42,25 @@ pub(crate) fn resolve_location(current: &Uri, location: &str) -> Result<Uri, Dav
 
 /// The URI host, including a non-default port, is on the iCloud allowlist.
 ///
-/// Tests may also use `127.0.0.1` or `localhost` on any port, so a Radicale
-/// container can run beside the suite. Production builds have no loopback
-/// exception.
+/// iCloud hosts must be `https`. Cleartext to those names is refused before
+/// any credentials are attached. `127.0.0.1` and `localhost` are allowed only
+/// for tests and the `test-hosts` feature, on `http` or `https`.
 pub(crate) fn host_is_allowed(uri: &Uri) -> bool {
-    // ponytail: loopback is test-only. A production build never reaches it.
-    icloud_host(uri) || loopback_for_tests(uri)
+    if test_loopback(uri) {
+        return matches!(uri.scheme_str(), Some("http" | "https"));
+    }
+    uri.scheme_str() == Some("https") && icloud_host(uri)
 }
 
-#[cfg(test)]
-fn loopback_for_tests(uri: &Uri) -> bool {
+/// ponytail: loopback is test-only. A production build never reaches it.
+/// Other crates turn it on with the `test-hosts` feature for Radicale.
+#[cfg(any(test, feature = "test-hosts"))]
+fn test_loopback(uri: &Uri) -> bool {
     matches!(uri.host(), Some("127.0.0.1" | "localhost"))
 }
 
-#[cfg(not(test))]
-fn loopback_for_tests(_uri: &Uri) -> bool {
+#[cfg(not(any(test, feature = "test-hosts")))]
+fn test_loopback(_uri: &Uri) -> bool {
     false
 }
 
@@ -154,5 +158,33 @@ mod tests {
             "shard request must keep Basic auth"
         );
         assert_eq!(seen[0].authorization, seen[1].authorization);
+    }
+
+    #[tokio::test]
+    async fn redirect_to_http_shard_sends_no_authorization() {
+        let script = Script::new(|request| {
+            if request.uri().scheme_str() != Some("https") {
+                return response(200, None);
+            }
+            response(302, Some("http://p15-caldav.icloud.com/42/calendars/"))
+        });
+        let result = execute(
+            &script,
+            &credentials(),
+            propfind("https://caldav.icloud.com/"),
+        )
+        .await;
+        let seen = script.requests();
+        assert!(
+            seen.iter().all(|request| {
+                request.uri.host() != Some("p15-caldav.icloud.com")
+                    || request.authorization.is_none()
+            }),
+            "an http shard must not receive credentials, saw {seen:?}"
+        );
+        assert!(
+            matches!(result, Err(DavError::HostNotAllowed)),
+            "a redirect onto cleartext http must fail, got {result:?}"
+        );
     }
 }

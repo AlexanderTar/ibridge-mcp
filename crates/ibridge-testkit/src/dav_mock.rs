@@ -74,6 +74,7 @@ struct State {
     collections: BTreeMap<String, Collection>,
     log: Vec<LoggedRequest>,
     counter: u64,
+    fail_next_put: Option<u16>,
 }
 
 /// An in-memory `CalDAV` server. Dropping it stops the listener.
@@ -168,6 +169,12 @@ impl FakeCalDav {
             );
         }
         etag
+    }
+
+    /// Makes the next `PUT` answer `status` and store nothing, as when another
+    /// client wins the race.
+    pub fn fail_next_put_with(&self, status: u16) {
+        self.lock().fail_next_put = Some(status);
     }
 
     /// Names of the resources stored in a collection.
@@ -347,6 +354,9 @@ fn report(state: &State, request: &LoggedRequest) -> ResponseTemplate {
 }
 
 fn put_item(state: &mut State, request: &LoggedRequest) -> ResponseTemplate {
+    if let Some(status) = state.fail_next_put.take() {
+        return ResponseTemplate::new(status);
+    }
     let Some((slug, Some(file))) = collection_slug(state, &request.path) else {
         return ResponseTemplate::new(404);
     };

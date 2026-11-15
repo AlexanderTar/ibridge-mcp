@@ -9,6 +9,7 @@ description = "Contacts provider."
 
 [dependencies]
 calcard.workspace = true
+getrandom.workspace = true
 http.workspace = true
 ibridge-core.workspace = true
 ibridge-dav.workspace = true

@@ -3,11 +3,15 @@
 //! Contacts provider over `CardDAV`.
 
 mod books;
+mod groups;
+#[cfg(test)]
+mod integration;
 mod provider;
 mod search;
 #[cfg(test)]
 mod test_support;
 mod vcard;
+mod writes;
 
 use ibridge_dav::DavClient;
 

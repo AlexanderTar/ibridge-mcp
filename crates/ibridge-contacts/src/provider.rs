@@ -18,29 +18,29 @@ impl ContactsProvider for CardDavProvider {
         self.get_contact(path).await
     }
 
-    async fn create(&self, _draft: &ContactDraft) -> Result<ResourcePath, CoreError> {
-        Err(CoreError::Unsupported("not yet"))
+    async fn create(&self, draft: &ContactDraft) -> Result<ResourcePath, CoreError> {
+        self.create_contact(draft).await
     }
 
     async fn update(
         &self,
-        _path: &ResourcePath,
-        _etag: &ETag,
-        _draft: &ContactDraft,
+        path: &ResourcePath,
+        etag: &ETag,
+        draft: &ContactDraft,
     ) -> Result<ETag, CoreError> {
-        Err(CoreError::Unsupported("not yet"))
+        self.update_contact(path, etag, draft).await
     }
 
-    async fn delete(&self, _path: &ResourcePath, _etag: &ETag) -> Result<(), CoreError> {
-        Err(CoreError::Unsupported("not yet"))
+    async fn delete(&self, path: &ResourcePath, etag: &ETag) -> Result<(), CoreError> {
+        self.delete_contact(path, etag).await
     }
 
     async fn set_group_membership(
         &self,
-        _group: &ResourcePath,
-        _contact: &ResourcePath,
-        _change: GroupChange,
+        group: &ResourcePath,
+        contact: &ResourcePath,
+        change: GroupChange,
     ) -> Result<(), CoreError> {
-        Err(CoreError::Unsupported("not yet"))
+        self.change_membership(group, contact, change).await
     }
 }

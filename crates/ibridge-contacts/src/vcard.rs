@@ -263,15 +263,17 @@ fn checked(draft: &ContactDraft) -> Result<Checked, CoreError> {
 }
 
 /// One property of the card: its lines exactly as sent, and what it is.
-struct Prop {
-    raw: String,
+pub(crate) struct Prop {
+    pub(crate) raw: String,
     group: Option<String>,
-    name: String,
-    value: String,
+    /// Upper case, without the group.
+    pub(crate) name: String,
+    /// Unfolded and not unescaped.
+    pub(crate) value: String,
 }
 
 /// Splits `text` into properties. A folded property keeps all its lines.
-fn split(text: &str) -> Vec<Prop> {
+pub(crate) fn split(text: &str) -> Vec<Prop> {
     let mut props: Vec<Prop> = Vec::new();
     for line in text.split_inclusive('\n') {
         let folded = line.starts_with([' ', '\t']);
@@ -287,7 +289,7 @@ fn split(text: &str) -> Vec<Prop> {
     props
 }
 
-fn prop_of(line: &str) -> Prop {
+pub(crate) fn prop_of(line: &str) -> Prop {
     let content = line.trim_end_matches(['\r', '\n']);
     let mut in_quotes = false;
     let colon = content.char_indices().find_map(|(index, ch)| {
@@ -311,6 +313,11 @@ fn prop_of(line: &str) -> Prop {
     }
 }
 
+/// The line ending `text` uses.
+pub(crate) fn eol_of(text: &str) -> &'static str {
+    if text.contains("\r\n") { "\r\n" } else { "\n" }
+}
+
 /// Swaps the first `name` property for `line`, or adds it before `END`.
 fn replace_or_insert(props: &mut Vec<Prop>, name: &str, line: String) {
     let fresh = prop_of(&line);
@@ -320,7 +327,7 @@ fn replace_or_insert(props: &mut Vec<Prop>, name: &str, line: String) {
     }
 }
 
-fn insert_before_end(props: &mut Vec<Prop>, fresh: Prop) {
+pub(crate) fn insert_before_end(props: &mut Vec<Prop>, fresh: Prop) {
     let end = props.iter().rposition(|prop| prop.name == "END");
     props.insert(end.unwrap_or(props.len()), fresh);
 }
@@ -405,7 +412,7 @@ fn escape(text: &str) -> String {
 }
 
 /// `line` folded at [`FOLD_AT`] bytes, ending in `eol`.
-fn fold(line: &str, eol: &str) -> String {
+pub(crate) fn fold(line: &str, eol: &str) -> String {
     let mut out = String::with_capacity(line.len() + eol.len());
     let mut width = 0;
     for ch in line.chars() {

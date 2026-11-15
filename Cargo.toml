@@ -13,9 +13,13 @@ repository = "https://github.com/AlexanderTar/icloud-mcp"
 # every crate resolves the same one.
 [workspace.dependencies]
 base64 = "0.22"
+ibridge-core = { path = "crates/ibridge-core" }
 proptest = "1"
+secrecy = "0.10"
+serde = "1"
 thiserror = "2"
 trait-variant = "0.1"
+trybuild = "1"
 
 # Lints pasted from BeautifulRust lints/lints.toml at
 # b9718436d77ee7bcf17cdcb6aa27628feb95d97a, plus unsafe_code = "forbid"

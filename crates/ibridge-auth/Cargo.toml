@@ -8,8 +8,14 @@ repository.workspace = true
 description = "Credentials, credential sources and the iCloud host allowlist."
 
 [dependencies]
+ibridge-core.workspace = true
+secrecy.workspace = true
 thiserror.workspace = true
 trait-variant.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+trybuild.workspace = true
 
 [lints]
 workspace = true

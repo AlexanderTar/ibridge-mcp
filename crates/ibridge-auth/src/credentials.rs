@@ -1,6 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Sign-in validation.
+//! Sign-in validation and the app-specific password.
+
+use ibridge_core::AppleId;
+use secrecy::{ExposeSecret, SecretString};
+
+/// An Apple ID and its app-specific password.
+///
+/// The password is a [`SecretString`]: it is not `Serialize`, and `Debug` prints
+/// a redaction instead of the characters.
+#[derive(Debug)]
+pub struct Credentials {
+    /// The primary iCloud address.
+    pub apple_id: AppleId,
+    secret: SecretString,
+}
+
+impl Credentials {
+    /// Builds credentials. The password is read back only through [`Self::with_secret`].
+    #[must_use]
+    pub fn new(apple_id: AppleId, secret: impl Into<SecretString>) -> Self {
+        Self {
+            apple_id,
+            secret: secret.into(),
+        }
+    }
+
+    /// Passes the password to `read` and ends the borrow before returning.
+    pub fn with_secret<T>(&self, read: impl FnOnce(&str) -> T) -> T {
+        read(self.secret.expose_secret())
+    }
+}
+
+/// How a caller proves it may use an iCloud account.
+///
+/// OAuth stays reserved: this enum is non-exhaustive and has no unused variant.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum AuthMethod {
+    /// An app-specific password for the primary address.
+    AppPassword(Credentials),
+}
 
 /// Why a service was not accepted.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

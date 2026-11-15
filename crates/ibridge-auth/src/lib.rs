@@ -3,8 +3,12 @@
 //! Credentials, credential sources and the iCloud host allowlist.
 
 mod credentials;
+mod hosts;
 
-pub use credentials::{AuthError, ServiceCheck, ValidationReport, Validator};
+pub use credentials::{
+    AuthError, AuthMethod, Credentials, ServiceCheck, ValidationReport, Validator,
+};
+pub use hosts::is_allowed_host;
 
 #[cfg(test)]
 mod tests {

@@ -20,7 +20,7 @@ pub(crate) type Backend = ibridge_server::NoCalendar;
 /// Returns an error when the system has no root certificates to check iCloud with.
 #[cfg(feature = "calendar")]
 pub(crate) fn backend(credentials: &Credentials) -> anyhow::Result<Arc<Backend>> {
-    let client = ibridge_dav::DavClient::new(crate::validate::duplicate(credentials))?;
+    let client = ibridge_dav::DavClient::new(credentials.duplicate())?;
     Ok(Arc::new(ibridge_calendar::CalDavProvider::new(client)))
 }
 

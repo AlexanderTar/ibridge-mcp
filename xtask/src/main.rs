@@ -121,10 +121,7 @@ fn record_mail(
 fn dav_client(
     credentials: &ibridge_auth::Credentials,
 ) -> Result<ibridge_dav::DavClient, ibridge_dav::DavError> {
-    let copy = credentials.with_secret(|secret| {
-        ibridge_auth::Credentials::new(credentials.apple_id.clone(), secret.to_owned())
-    });
-    ibridge_dav::DavClient::new(copy)
+    ibridge_dav::DavClient::new(credentials.duplicate())
 }
 
 fn record_calendar(

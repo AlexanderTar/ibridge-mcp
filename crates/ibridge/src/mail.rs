@@ -10,9 +10,6 @@ use ibridge_auth::{AuthError, Credentials, ValidationReport, Validator};
 use ibridge_core::{CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId};
 use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
 
-#[cfg(feature = "mail")]
-use crate::validate::duplicate;
-
 /// Mail backend for a build with mail off. Every call says so.
 #[cfg(any(not(feature = "mail"), test))]
 #[derive(Debug)]
@@ -85,8 +82,8 @@ pub(crate) type Backend = NoMail;
 pub(crate) fn backend(credentials: &Credentials) -> anyhow::Result<Arc<Backend>> {
     use ibridge_mail::{IcloudConnect, ImapPool, MailSession, SmtpClient};
 
-    let pool = ImapPool::new(duplicate(credentials), IcloudConnect::new()?);
-    let smtp = SmtpClient::icloud(duplicate(credentials));
+    let pool = ImapPool::new(credentials.duplicate(), IcloudConnect::new()?);
+    let smtp = SmtpClient::icloud(credentials.duplicate());
     Ok(Arc::new(SessionMail(MailSession::new(pool, smtp))))
 }
 
@@ -211,7 +208,7 @@ impl Validator for ImapValidator {
 pub(crate) fn imap_validator(credentials: &Credentials) -> anyhow::Result<ImapValidator> {
     Ok(ImapValidator {
         pool: ibridge_mail::ImapPool::new(
-            duplicate(credentials),
+            credentials.duplicate(),
             ibridge_mail::IcloudConnect::new()?,
         ),
     })

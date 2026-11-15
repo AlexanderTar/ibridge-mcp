@@ -88,15 +88,8 @@ pub(crate) fn validator(
     #[cfg(not(feature = "mail"))]
     let mail = Skipped;
     #[cfg(feature = "calendar")]
-    let dav = ibridge_dav::DavValidator::new(duplicate(credentials))?;
+    let dav = ibridge_dav::DavValidator::new(credentials.duplicate())?;
     #[cfg(not(feature = "calendar"))]
     let dav = Skipped;
     Ok(Combined { mail, dav })
-}
-
-/// A second copy of the credentials, for a second client.
-#[cfg(any(feature = "mail", feature = "calendar"))]
-pub(crate) fn duplicate(credentials: &Credentials) -> Credentials {
-    credentials
-        .with_secret(|secret| Credentials::new(credentials.apple_id.clone(), secret.to_owned()))
 }

@@ -14,7 +14,10 @@ ibridge-core.workspace = true
 lettre.workspace = true
 mail-builder.workspace = true
 mail-parser.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
 

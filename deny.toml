@@ -14,9 +14,18 @@
 #
 # RUSTSEC-2026-0441: pin-utils 0.1.1 is archived and comes in through
 # async-imap 0.12. Drop it when async-imap stops depending on pin-utils.
+#
+# RUSTSEC-2026-0370, RUSTSEC-2026-0371, RUSTSEC-2026-0372: zvariant,
+# zbus_names and zvariant_derive 5.x were merged into zbus 6 and are flagged
+# unmaintained. They come in through zbus 5 and secret-service 5, which
+# zbus-secret-service-keyring-store 1.0.1 (the Linux keychain) depends on. No
+# release of that store uses zbus 6. Drop them when it does.
 [advisories]
 ignore = [
     { id = "RUSTSEC-2026-0440", reason = "test-only testcontainers dependency with no safe upgrade" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant 5.x is unmaintained (merged into zbus 6); comes in through the Linux keychain store, which has no zbus 6 release" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names 4.x is unmaintained (merged into zbus 6); comes in through the Linux keychain store, which has no zbus 6 release" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5.x is unmaintained (merged into zbus 6); comes in through the Linux keychain store, which has no zbus 6 release" },
     { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.1 is archived and comes in through async-imap 0.12; no patched release" },
     { id = "RUSTSEC-2026-0459", reason = "sqlx 0.9.0 cannot select libsqlite3-sys >= 0.39; remove when sqlx publishes that bound" },
 ]

@@ -8,7 +8,7 @@ mod mime;
 mod session;
 mod smtp;
 
-pub use imap::ImapPool;
+pub use imap::{Connect, IcloudConnect, ImapPool};
 pub use limits::SendLimits;
 pub use session::{MailSession, SendOutcome};
 pub use smtp::{OutgoingMail, SmtpClient};

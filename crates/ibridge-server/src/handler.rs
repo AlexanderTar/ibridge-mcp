@@ -29,6 +29,16 @@ const MAX_IN_FLIGHT: usize = 4;
 const DEFAULT_LIMIT: u32 = 25;
 const MAX_LIMIT: u32 = 100;
 const SENT_COPY_WARNING: &str = "sent, but the copy was not saved to Sent Messages";
+const MAIL_TOOLS: &[&str] = &[
+    "mail_create_draft",
+    "mail_get_attachment",
+    "mail_get_message",
+    "mail_list_mailboxes",
+    "mail_move",
+    "mail_search",
+    "mail_send",
+    "mail_set_flags",
+];
 const WRITE_TOOLS: &[&str] = &[
     "mail_create_draft",
     "mail_move",
@@ -102,6 +112,15 @@ where
     #[must_use]
     pub fn read_write(account: AccountSnapshot, mail: Arc<M>) -> Self {
         Self::build(Access::ReadWrite, account, mail)
+    }
+
+    /// Hides every mail tool. `account_status` stays.
+    #[must_use]
+    pub fn without_mail(mut self) -> Self {
+        for name in MAIL_TOOLS {
+            self.router.disable_route(*name);
+        }
+        self
     }
 
     /// Whether write tools are hidden.

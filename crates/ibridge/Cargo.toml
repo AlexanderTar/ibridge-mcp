@@ -9,12 +9,40 @@ description = "iCloud Mail, Calendar, Reminders and Contacts MCP server."
 
 [features]
 default = ["mail", "calendar", "contacts", "stdio", "http"]
-mail = []
+mail = ["dep:ibridge-mail"]
 calendar = []
 contacts = []
-stdio = []
+stdio = ["rmcp/transport-io"]
 http = []
 hosted = []
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ibridge-auth.workspace = true
+ibridge-core.workspace = true
+ibridge-mail = { workspace = true, optional = true }
+ibridge-server.workspace = true
+keyring-core.workspace = true
+rmcp = { workspace = true, features = ["server"] }
+rpassword.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", default-features = false, features = ["keychain"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store = "1"
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

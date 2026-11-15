@@ -2,4 +2,14 @@
 
 //! iCloud Mail, Calendar, Reminders and Contacts MCP server.
 
-fn main() {}
+mod account;
+mod cli;
+mod login;
+mod mail;
+mod platform;
+mod serve;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    cli::run().await
+}

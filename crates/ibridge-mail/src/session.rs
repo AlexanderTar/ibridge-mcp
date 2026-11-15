@@ -44,6 +44,12 @@ impl<C: Connect> MailSession<C> {
         }
     }
 
+    /// The IMAP pool, for reads.
+    #[must_use]
+    pub const fn imap(&self) -> &ImapPool<C> {
+        &self.imap
+    }
+
     /// Sends `draft` and appends the same MIME to Sent Messages.
     ///
     /// SMTP acceptance is success. A failed Sent append is logged and returned

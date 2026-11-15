@@ -137,8 +137,8 @@ pub struct ApiKey {
 
 /// Password that has passed a live sign-in check.
 ///
-/// The only constructor runs that check on these credentials, so a caller cannot
-/// validate one password and seal another.
+/// The constructor builds the validator from these credentials and, when the
+/// check accepts them, seals the secret they carry.
 #[derive(Debug)]
 pub struct ValidatedCredentials {
     apple_id: AppleId,
@@ -365,16 +365,7 @@ async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
         .await
         .map_err(internal)?;
     match version {
-        0 => {
-            sqlx::raw_sql(include_str!("schema.sql"))
-                .execute(pool)
-                .await
-                .map_err(internal)?;
-            sqlx::raw_sql("PRAGMA user_version = 1")
-                .execute(pool)
-                .await
-                .map_err(internal)?;
-        }
+        0 => apply_schema_script(pool, include_str!("schema.sql"), SCHEMA_VERSION).await?,
         SCHEMA_VERSION => {}
         _ => {
             return Err(internal(StoreFault(
@@ -383,6 +374,38 @@ async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
         }
     }
     Ok(())
+}
+
+async fn apply_schema_script(
+    pool: &SqlitePool,
+    script: &str,
+    version: i64,
+) -> Result<(), StoreError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.map_err(internal)?;
+    let applied = sqlx::raw_sql(sqlx::AssertSqlSafe(script.to_owned()))
+        .execute(&mut *tx)
+        .await;
+    if let Err(err) = applied {
+        return Err(rollback(tx, err).await);
+    }
+    // `version` is an i64 this function formats itself, never a caller string.
+    let bumped = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "PRAGMA user_version = {version}"
+    )))
+    .execute(&mut *tx)
+    .await;
+    if let Err(err) = bumped {
+        return Err(rollback(tx, err).await);
+    }
+    tx.commit().await.map_err(internal)?;
+    Ok(())
+}
+
+async fn rollback(tx: WriteTx, err: sqlx::Error) -> StoreError {
+    match tx.rollback().await {
+        Ok(()) => internal(err),
+        Err(rollback) => internal(rollback),
+    }
 }
 
 fn internal(err: impl Error + Send + Sync + 'static) -> StoreError {
@@ -513,6 +536,7 @@ async fn seal_in(
         },
     )
     .await?;
+    sweep_expired(tx, now).await?;
     Ok(IssuedCode {
         grant_id: GrantId(grant),
         code,
@@ -557,6 +581,7 @@ async fn mint_key_in(
         },
     )
     .await?;
+    sweep_expired(tx, now).await?;
     Ok(ApiKey {
         grant_id: GrantId(grant),
         key,
@@ -576,7 +601,7 @@ async fn exchange_in(tx: &mut WriteTx, code: &str, now: i64) -> Result<IssuedTok
     let plain = unseal(&hit, code)?;
     mark_code_spent(tx, hit.seal_id).await?;
     let issued = issue_pair(tx, &hit, &grant, plain.expose_secret(), now).await?;
-    sweep_grant(tx, &grant, now).await?;
+    sweep_expired(tx, now).await?;
     Ok(issued)
 }
 
@@ -590,7 +615,7 @@ async fn open_in(tx: &mut WriteTx, access: &str, now: i64) -> Result<CallSecret,
     }
     let grant = grant_bytes(&hit.grant_id)?;
     let secret = unseal(&hit, access)?;
-    sweep_grant(tx, &grant, now).await?;
+    sweep_expired(tx, now).await?;
     Ok(CallSecret {
         grant_id: GrantId(grant),
         apple_id: AppleId::try_from(hit.apple_id.as_str()).map_err(internal)?,
@@ -617,7 +642,7 @@ async fn refresh_in(
         mark_grace(tx, hit.seal_id, later(now, GRACE_TTL)?).await?;
     }
     let issued = issue_pair(tx, &hit, &grant, plain.expose_secret(), now).await?;
-    sweep_grant(tx, &grant, now).await?;
+    sweep_expired(tx, now).await?;
     Ok(issued)
 }
 
@@ -700,13 +725,14 @@ async fn known_token(pool: &SqlitePool, token: &str) -> Result<bool, StoreError>
     Ok(found.map_err(internal)?.is_some())
 }
 
-async fn sweep_grant(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<(), StoreError> {
+async fn sweep_expired(tx: &mut WriteTx, now: i64) -> Result<(), StoreError> {
+    // Every successful write sweeps every grant. Expired ciphertext must not wait
+    // for its own client. There is no background task.
     sqlx::query(
         "DELETE FROM seals
-         WHERE grant_id = ? AND purpose IN (?, ?, ?)
+         WHERE purpose IN (?, ?, ?)
            AND expires_at IS NOT NULL AND expires_at <= ?",
     )
-    .bind(grant_id)
     .bind(PURPOSE_CODE)
     .bind(PURPOSE_ACCESS)
     .bind(PURPOSE_REFRESH)
@@ -716,15 +742,24 @@ async fn sweep_grant(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<(), 
     .map_err(internal)?;
     sqlx::query(
         "UPDATE seals SET purpose = ?, ciphertext = NULL, nonce = NULL
-         WHERE grant_id = ? AND purpose = ? AND expires_at IS NOT NULL AND expires_at <= ?",
+         WHERE purpose = ? AND expires_at IS NOT NULL AND expires_at <= ?",
     )
     .bind(PURPOSE_SPENT)
-    .bind(grant_id)
     .bind(PURPOSE_GRACE)
     .bind(now)
     .execute(&mut **tx)
     .await
     .map_err(internal)?;
+    // A spent refresh older than its original lifetime cannot revoke anymore.
+    // Dropping it bounds the lookup index; presenting it returns InvalidToken.
+    if let Some(cutoff) = now.checked_sub(REFRESH_TTL) {
+        sqlx::query("DELETE FROM seals WHERE purpose = ? AND created_at <= ?")
+            .bind(PURPOSE_SPENT)
+            .bind(cutoff)
+            .execute(&mut **tx)
+            .await
+            .map_err(internal)?;
+    }
     Ok(())
 }
 
@@ -1006,12 +1041,15 @@ fn later(now: i64, ttl: i64) -> Result<i64, StoreError> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use ibridge_auth::{AuthError, Credentials, ServiceCheck, ValidationReport, Validator};
     use ibridge_core::AppleId;
     use secrecy::{ExposeSecret, SecretString};
     use sqlx::Row;
+    use sqlx::SqlitePool;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
     use super::{IssuedTokens, Scope, Store, StoreError};
 
@@ -1081,6 +1119,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again, 1, "opening an existing database keeps user_version");
+    }
+
+    async fn empty_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(true);
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn schema_indexes_expiry_for_the_global_sweep() {
+        let store = Store::memory().await.unwrap();
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'seals_by_expiry'",
+        )
+        .fetch_all(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            names,
+            vec!["seals_by_expiry".to_owned()],
+            "sweeps filter on expires_at and need an index"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_schema_script_leaves_no_tables_and_version_zero() {
+        let pool = empty_pool().await;
+        let script = "CREATE TABLE kept (id INTEGER PRIMARY KEY);\nNOT SQL;\n";
+        let failed = super::apply_schema_script(&pool, script, 7).await;
+        assert!(
+            failed.is_err(),
+            "a script with a bad statement must fail, got {failed:?}"
+        );
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            names.is_empty(),
+            "a failed migration must not leave tables, got {names:?}"
+        );
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(version, 0, "a failed migration must not bump user_version");
     }
 
     #[tokio::test]
@@ -1876,5 +1967,82 @@ mod tests {
             left, 0,
             "expired grants must delete ciphertext so the old token cannot open them"
         );
+    }
+
+    #[tokio::test]
+    async fn other_grant_write_drops_untouched_expired_ciphertext() {
+        let store = Store::memory().await.unwrap();
+        let grant_a = exchange(&store, at(0)).await;
+        let rotated = store
+            .refresh(grant_a.refresh.expose_secret(), at(10))
+            .await
+            .unwrap();
+        let ninety_days = 90 * 24 * 60 * 60;
+        let when = 10 + ninety_days;
+        let before: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM seals WHERE grant_id = ? AND ciphertext IS NOT NULL",
+        )
+        .bind(rotated.grant_id.0.as_slice())
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            before, 4,
+            "the untouched grant still holds its access, refresh and grace ciphertext"
+        );
+        let grant_b = seal_code(&store, at(when)).await;
+        let after: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM seals WHERE grant_id = ? AND ciphertext IS NOT NULL",
+        )
+        .bind(rotated.grant_id.0.as_slice())
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            after, 0,
+            "another grant's write must drop this grant's expired ciphertext"
+        );
+        store
+            .exchange_code(grant_b.code.expose_secret(), at(when))
+            .await
+            .expect("the write that sweeps expired rows still leaves its own code");
+    }
+
+    #[tokio::test]
+    async fn refresh_spent_tombstones_drop_after_refresh_ttl() {
+        let store = Store::memory().await.unwrap();
+        let tokens = exchange(&store, at(0)).await;
+        let old_refresh = tokens.refresh.expose_secret().to_owned();
+        let rotated = store.refresh(&old_refresh, at(10)).await.unwrap();
+        store
+            .open_for_call(rotated.access.expose_secret(), at(10 + 120))
+            .await
+            .expect("access still opens when the grace copy expires");
+        let spent: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM seals WHERE purpose = 'refresh_spent'")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(spent, 1, "an expired grace copy becomes a tombstone");
+        let later = 10 + 120 + 90 * 24 * 60 * 60;
+        let other = seal_code(&store, at(later)).await;
+        let spent: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM seals WHERE purpose = 'refresh_spent'")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            spent, 0,
+            "a refresh tombstone older than the refresh lifetime is deleted"
+        );
+        let replay = store.refresh(&old_refresh, at(later)).await;
+        assert!(
+            matches!(replay, Err(StoreError::InvalidToken)),
+            "a tombstone past the refresh lifetime is gone, so the token is unknown, got {replay:?}"
+        );
+        store
+            .exchange_code(other.code.expose_secret(), at(later))
+            .await
+            .expect("deleting old tombstones must not consume the new code");
     }
 }

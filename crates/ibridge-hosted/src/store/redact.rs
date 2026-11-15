@@ -127,9 +127,9 @@ fn param_len(text: &str, index: usize) -> Option<usize> {
     }
     let bytes = text.as_bytes();
     let mut cursor = index;
-    let quoted_name = bytes.get(cursor) == Some(&b'"');
-    if quoted_name {
-        cursor += 1;
+    let quoted_name = quote_at(bytes, cursor);
+    if let Some((_, len)) = quoted_name {
+        cursor += len;
     }
     let name_start = cursor;
     while cursor < bytes.len() && is_name_byte(bytes[cursor]) {
@@ -138,11 +138,12 @@ fn param_len(text: &str, index: usize) -> Option<usize> {
     if cursor == name_start || !is_secret_name(&text[name_start..cursor]) {
         return None;
     }
-    if quoted_name {
-        if bytes.get(cursor) != Some(&b'"') {
+    if let Some((quote, _)) = quoted_name {
+        let (closing, len) = quote_at(bytes, cursor)?;
+        if closing != quote {
             return None;
         }
-        cursor += 1;
+        cursor += len;
     }
     cursor = skip_ws(bytes, cursor);
     let sep = *bytes.get(cursor)?;
@@ -151,26 +152,40 @@ fn param_len(text: &str, index: usize) -> Option<usize> {
     }
     cursor += 1;
     cursor = skip_ws(bytes, cursor);
-    let quote = bytes
-        .get(cursor)
-        .copied()
-        .filter(|byte| matches!(byte, b'"' | b'\''));
-    if quote.is_some() {
-        cursor += 1;
+    let value_quote = quote_at(bytes, cursor);
+    if let Some((_, len)) = value_quote {
+        cursor += len;
     }
     let value_start = cursor;
-    while cursor < bytes.len() && !value_ends(bytes[cursor], quote) {
+    while cursor < bytes.len() && !value_ends(bytes, cursor, value_quote.map(|(quote, _)| quote)) {
         cursor += 1;
     }
     if cursor == value_start {
         return None;
     }
-    if let Some(quote) = quote
-        && bytes.get(cursor) == Some(&quote)
+    if let Some((quote, _)) = value_quote
+        && let Some((closing, len)) = quote_at(bytes, cursor)
+        && closing == quote
     {
-        cursor += 1;
+        cursor += len;
     }
     Some(cursor - index)
+}
+
+/// A raw quote, or the two-byte `\"` / `\'` a `Debug` string uses.
+fn quote_at(bytes: &[u8], index: usize) -> Option<(u8, usize)> {
+    if bytes.get(index) == Some(&b'\\') {
+        let escaped = *bytes.get(index + 1)?;
+        if matches!(escaped, b'"' | b'\'') {
+            return Some((escaped, 2));
+        }
+        return None;
+    }
+    let byte = *bytes.get(index)?;
+    if matches!(byte, b'"' | b'\'') && (index == 0 || bytes[index - 1] != b'\\') {
+        return Some((byte, 1));
+    }
+    None
 }
 
 fn is_secret_name(name: &str) -> bool {
@@ -184,11 +199,11 @@ fn ends_with_ignore_ascii_case(text: &str, suffix: &str) -> bool {
     text.len() >= suffix.len() && text[text.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
 }
 
-fn value_ends(byte: u8, quote: Option<u8>) -> bool {
+fn value_ends(bytes: &[u8], index: usize, quote: Option<u8>) -> bool {
     match quote {
-        Some(quote) => byte == quote,
+        Some(quote) => quote_at(bytes, index).is_some_and(|(found, _)| found == quote),
         None => matches!(
-            byte,
+            bytes[index],
             b'&' | b'#' | b' ' | b'\n' | b'\r' | b'\t' | b'"' | b'\'' | b',' | b'}'
         ),
     }
@@ -377,6 +392,31 @@ calendar stays";
         assert!(
             text.contains("[REDACTED]"),
             "the field value must be scrubbed, got {text}"
+        );
+    }
+
+    #[test]
+    fn tracing_debug_field_redacts_string_json() {
+        let buf = Arc::new(Mutex::new(String::new()));
+        let capture = Capture {
+            buf: Arc::clone(&buf),
+        };
+        let body = r#"{"password":"hunter2"}"#.to_string();
+        tracing::subscriber::with_default(capture, || {
+            tracing::info!(body = ?body, note = "libc_start", "posted");
+        });
+        let text = buf.lock().expect("redaction buffer").clone();
+        assert!(
+            !text.contains("hunter2"),
+            "a String logged with Debug must not keep the password, got {text}"
+        );
+        assert!(
+            text.contains("libc_start"),
+            "a non-secret field must stay, got {text}"
+        );
+        assert!(
+            text.contains("[REDACTED]"),
+            "the debug-formatted password must be scrubbed, got {text}"
         );
     }
 }

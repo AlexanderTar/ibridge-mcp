@@ -28,3 +28,5 @@ CREATE TABLE IF NOT EXISTS seals (
 );
 
 CREATE INDEX IF NOT EXISTS seals_by_grant ON seals (grant_id);
+
+CREATE INDEX IF NOT EXISTS seals_by_expiry ON seals (expires_at);

@@ -78,7 +78,7 @@ pub(crate) async fn run() -> anyhow::Result<()> {
     let apple_id = AppleId::try_from(line.trim())?;
     let password = rpassword::prompt_password("App-specific password: ")?;
     let credentials = Credentials::new(apple_id, password);
-    let validator = crate::mail::validator(&credentials)?;
+    let validator = crate::validate::validator(&credentials)?;
     let report = store_if_valid(&validator, &credentials)
         .await
         .context("login failed; nothing was stored")?;
@@ -115,6 +115,7 @@ mod tests {
 
     use super::store_if_valid;
     use crate::account::{Services, State, snapshot};
+    use crate::validate::Combined;
 
     /// Tests share the keychain's `state` entry, so they take turns.
     static KEYCHAIN: Mutex<()> = Mutex::const_new(());
@@ -207,5 +208,46 @@ mod tests {
             },
             "the failed service is off with its reason"
         );
+    }
+
+    #[tokio::test]
+    async fn login_succeeds_with_caldav_only() {
+        let _turn = KEYCHAIN.lock().await;
+        mock_keychain();
+        let imap = Fixed(ValidationReport {
+            mail: failed("iCloud Mail rejected the sign-in"),
+            calendar: failed("the mail check does not look at calendar"),
+            contacts: failed("the mail check does not look at contacts"),
+        });
+        let dav = Fixed(ValidationReport {
+            mail: failed("the CalDAV check does not look at mail"),
+            calendar: ServiceCheck::Ok,
+            contacts: ServiceCheck::Ok,
+        });
+        let combined = Combined { mail: imap, dav };
+        let report = combined.validate().await.expect("the check runs");
+        assert_eq!(
+            report.calendar,
+            ServiceCheck::Ok,
+            "calendar comes from CalDAV"
+        );
+        assert_eq!(
+            report.contacts,
+            ServiceCheck::Ok,
+            "contacts come from CalDAV"
+        );
+        assert_eq!(
+            report.mail,
+            failed("iCloud Mail rejected the sign-in"),
+            "mail comes from IMAP"
+        );
+        let account = credentials("caldav-only@icloud.com");
+        store_if_valid(&combined, &account)
+            .await
+            .expect("login succeeds with a CalDAV-only account");
+        KeyringSource::new(account.apple_id.clone())
+            .credentials()
+            .await
+            .expect("the password is stored");
     }
 }

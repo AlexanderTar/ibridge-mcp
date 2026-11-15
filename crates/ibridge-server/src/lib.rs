@@ -3,6 +3,8 @@
 //! MCP server, tool routers and error mapping.
 
 mod account;
+mod calendar_dto;
+mod calendar_tools;
 mod dto;
 mod error_map;
 mod handler;
@@ -13,6 +15,11 @@ mod untrusted;
 mod tests;
 
 pub use account::{AccountSnapshot, ServiceStatus};
+pub use calendar_dto::{
+    CreateEventParams, CreateReminderParams, DeleteParams, GetByIdParams, ListEventsParams,
+    ListRemindersParams, UpdateEventParams, UpdateReminderParams,
+};
+pub use calendar_tools::NoCalendar;
 pub use dto::{
     FlagParams, GetAttachmentParams, GetMessageParams, MoveParams, SearchParams, SendParams,
 };

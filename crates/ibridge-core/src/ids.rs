@@ -12,6 +12,7 @@ use crate::mail::{MailboxPath, MessageId, Uid, UidValidity};
 
 const VERSION: u8 = 1;
 const KIND_MESSAGE: u8 = 1;
+const KIND_RESOURCE: u8 = 2;
 
 /// Encodes a [`MessageId`] as an opaque token.
 ///
@@ -62,6 +63,51 @@ pub fn decode(token: &str) -> Result<MessageId, IdError> {
         validity,
         uid,
     })
+}
+
+/// Encodes a DAV [`ResourcePath`] as an opaque token. Same framing as
+/// [`encode`], with its own kind byte so a message token never decodes as a path.
+#[must_use]
+pub fn encode_resource(path: &ResourcePath) -> String {
+    let bytes = path.as_str().as_bytes();
+    // A path is short; a longer one would not have been a useful id anyway.
+    let len = u16::try_from(bytes.len()).unwrap_or(u16::MAX);
+    let mut body = Vec::with_capacity(8 + bytes.len());
+    body.push(VERSION);
+    body.push(KIND_RESOURCE);
+    body.extend_from_slice(&len.to_be_bytes());
+    body.extend_from_slice(&bytes[..usize::from(len)]);
+    let sum = crc32(&body);
+    body.extend_from_slice(&sum.to_be_bytes());
+    URL_SAFE_NO_PAD.encode(body)
+}
+
+/// Decodes a token produced by [`encode_resource`].
+///
+/// # Errors
+///
+/// Returns [`IdError::Decode`] when the token is malformed, tampered, or not a resource token.
+pub fn decode_resource(token: &str) -> Result<ResourcePath, IdError> {
+    let bytes = URL_SAFE_NO_PAD.decode(token).map_err(|_| IdError::Decode)?;
+    if bytes.len() < 8 {
+        return Err(IdError::Decode);
+    }
+    let (body, sum_bytes) = bytes.split_at(bytes.len() - 4);
+    let mut sum = [0_u8; 4];
+    sum.copy_from_slice(sum_bytes);
+    if crc32(body) != u32::from_be_bytes(sum) {
+        return Err(IdError::Decode);
+    }
+    let mut rest = body;
+    if take_u8(&mut rest)? != VERSION || take_u8(&mut rest)? != KIND_RESOURCE {
+        return Err(IdError::Decode);
+    }
+    let len = usize::from(take_u16(&mut rest)?);
+    if rest.len() != len {
+        return Err(IdError::Decode);
+    }
+    let path = std::str::from_utf8(rest).map_err(|_| IdError::Decode)?;
+    ResourcePath::try_from(path).map_err(|_| IdError::Decode)
 }
 
 /// Builds a token from raw parts, skipping mailbox validation. Tests use this to

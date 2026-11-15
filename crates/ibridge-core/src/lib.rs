@@ -17,7 +17,7 @@ pub use calendar::{
 };
 pub use contacts::{Contact, ContactDraft, ContactQuery, ContactsProvider, GroupChange};
 pub use error::{CoreError, IdError, ParseError};
-pub use ids::{ETag, ResourcePath, decode, encode};
+pub use ids::{ETag, ResourcePath, decode, decode_resource, encode, encode_resource};
 pub use mail::{
     Attachment, AttachmentInfo, Draft, FlagChange, MailPage, MailProvider, MailSearch, Mailbox,
     MailboxPath, MailboxRole, Message, MessageId, MessageSummary, Uid, UidValidity,
@@ -366,6 +366,39 @@ mod tests {
             let decoded = decode(&encode(&id)).unwrap();
             prop_assert_eq!(decoded, id);
         }
+    }
+
+    #[test]
+    fn resource_id_roundtrips() {
+        let path = ResourcePath::try_from("calendars/home/event one.ics").expect("path");
+        let token = super::encode_resource(&path);
+        assert!(!token.is_empty(), "the token carries the path");
+        assert!(
+            !token.contains('/') && !token.contains("home"),
+            "the token is opaque base64url, got {token}"
+        );
+        assert_eq!(super::decode_resource(&token).expect("decodes"), path);
+    }
+
+    #[test]
+    fn resource_id_rejects_message_tokens_and_tampering() {
+        let message = MessageId {
+            mailbox: MailboxPath::try_from("INBOX").expect("mailbox"),
+            validity: UidValidity::try_from(9).expect("validity"),
+            uid: Uid::try_from(4).expect("uid"),
+        };
+        assert!(
+            super::decode_resource(&encode(&message)).is_err(),
+            "a message token is not a resource token"
+        );
+        let path = ResourcePath::try_from("calendars/home/a.ics").expect("path");
+        let mut bytes = super::encode_resource(&path).into_bytes();
+        assert!(!bytes.is_empty(), "the token carries the path");
+        let index = bytes.len() / 2;
+        bytes[index] = if bytes[index] == b'A' { b'B' } else { b'A' };
+        let tampered = String::from_utf8(bytes).expect("ascii token");
+        assert!(super::decode_resource(&tampered).is_err());
+        assert!(super::decode_resource("https://caldav.icloud.com/1/a.ics").is_err());
     }
 
     #[test]

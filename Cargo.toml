@@ -41,6 +41,7 @@ hyper-util = { version = "0.1", features = [
     "tokio",
 ] }
 ibridge-auth = { path = "crates/ibridge-auth" }
+ibridge-calendar = { path = "crates/ibridge-calendar" }
 ibridge-core = { path = "crates/ibridge-core" }
 ibridge-dav = { path = "crates/ibridge-dav" }
 ibridge-mail = { path = "crates/ibridge-mail" }

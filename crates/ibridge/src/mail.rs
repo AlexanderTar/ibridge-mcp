@@ -10,6 +10,9 @@ use ibridge_auth::{AuthError, Credentials, ValidationReport, Validator};
 use ibridge_core::{CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId};
 use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
 
+#[cfg(feature = "mail")]
+use crate::validate::duplicate;
+
 /// Mail backend for a build with mail off. Every call says so.
 #[cfg(any(not(feature = "mail"), test))]
 #[derive(Debug)]
@@ -101,13 +104,6 @@ pub(crate) fn backend(_credentials: &Credentials) -> anyhow::Result<Arc<Backend>
     Ok(Arc::new(NoMail))
 }
 
-/// A second copy of the credentials, for the SMTP client.
-#[cfg(feature = "mail")]
-fn duplicate(credentials: &Credentials) -> Credentials {
-    credentials
-        .with_secret(|secret| Credentials::new(credentials.apple_id.clone(), secret.to_owned()))
-}
-
 /// Adapts an iCloud mail session to the tool layer.
 #[cfg(feature = "mail")]
 #[derive(Debug)]
@@ -193,68 +189,30 @@ impl Validator for ImapValidator {
                 reason: "iCloud Mail could not be reached".to_owned(),
             },
         };
-        // ponytail: CalDAV and CardDAV checks arrive with the DAV validator.
+        // The DAV validator answers for calendar and contacts.
         Ok(ValidationReport {
             mail,
             calendar: ServiceCheck::Failed {
-                reason: "calendar sign-in is not checked in this release".to_owned(),
+                reason: "calendar is not checked over IMAP".to_owned(),
             },
             contacts: ServiceCheck::Failed {
-                reason: "contacts sign-in is not checked in this release".to_owned(),
+                reason: "contacts are not checked over IMAP".to_owned(),
             },
         })
     }
 }
 
-/// The validator `login` runs.
+/// The mail half of the sign-in check.
 ///
 /// # Errors
 ///
 /// Returns an error when the system has no root certificates to check iCloud with.
 #[cfg(feature = "mail")]
-pub(crate) fn validator(credentials: &Credentials) -> anyhow::Result<ImapValidator> {
+pub(crate) fn imap_validator(credentials: &Credentials) -> anyhow::Result<ImapValidator> {
     Ok(ImapValidator {
         pool: ibridge_mail::ImapPool::new(
             duplicate(credentials),
             ibridge_mail::IcloudConnect::new()?,
         ),
     })
-}
-
-/// Validator for a build without mail: nothing can be checked, so login fails.
-#[cfg(not(feature = "mail"))]
-pub(crate) struct Unavailable;
-
-#[cfg(not(feature = "mail"))]
-#[expect(
-    clippy::unused_async_trait_impl,
-    reason = "the stand-in answers without waiting"
-)]
-impl Validator for Unavailable {
-    async fn validate(&self) -> Result<ValidationReport, AuthError> {
-        use ibridge_auth::ServiceCheck;
-
-        let off = |name: &str| ServiceCheck::Failed {
-            reason: format!("{name} sign-in is not available in this build"),
-        };
-        Ok(ValidationReport {
-            mail: off("mail"),
-            calendar: off("calendar"),
-            contacts: off("contacts"),
-        })
-    }
-}
-
-/// The validator `login` runs.
-///
-/// # Errors
-///
-/// Never fails.
-#[cfg(not(feature = "mail"))]
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the mail build can fail, and both builds share one signature"
-)]
-pub(crate) fn validator(_credentials: &Credentials) -> anyhow::Result<Unavailable> {
-    Ok(Unavailable)
 }

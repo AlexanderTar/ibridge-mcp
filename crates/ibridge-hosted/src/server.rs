@@ -69,6 +69,15 @@ pub fn mcp_router<P: ServerSource>(
     Router::new().nest_service("/mcp", service)
 }
 
+/// Who is calling, as the middleware recorded it on the request.
+pub(crate) fn call_auth(context: &RequestContext<RoleServer>) -> Result<&CallAuth, ErrorData> {
+    context
+        .extensions
+        .get::<http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<CallAuth>())
+        .ok_or_else(|| ErrorData::internal_error("internal error", None))
+}
+
 /// An account's servers, and the scope of the call that asked.
 type Picked<S> = (Arc<ScopedServers<S>>, Scope);
 
@@ -99,11 +108,7 @@ impl<P: ServerSource> HostedHandler<P> {
         &self,
         context: &RequestContext<RoleServer>,
     ) -> Result<Picked<P::Server>, ErrorData> {
-        let call = context
-            .extensions
-            .get::<http::request::Parts>()
-            .and_then(|parts| parts.extensions.get::<CallAuth>())
-            .ok_or_else(|| ErrorData::internal_error("internal error", None))?;
+        let call = call_auth(context)?;
         Ok((self.source.servers(call), call.scope()))
     }
 }

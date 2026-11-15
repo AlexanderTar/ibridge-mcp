@@ -74,9 +74,46 @@ impl<C: Connect> Lease<'_, C> {
     }
 }
 
+/// Where a new connection gets its password.
+enum Login {
+    /// The pool owns the credentials.
+    Owned(Credentials),
+    /// The pool owns none. The call that needs a connection supplies them.
+    PerCall(ibridge_core::AppleId),
+}
+
+impl Login {
+    fn apple_id(&self) -> &ibridge_core::AppleId {
+        match self {
+            Self::Owned(credentials) => &credentials.apple_id,
+            Self::PerCall(apple_id) => apple_id,
+        }
+    }
+
+    /// The Apple ID and password for one `LOGIN`. The password is wiped when the pair drops.
+    fn for_login(&self) -> Result<(ibridge_core::AppleId, Zeroizing<String>), CoreError> {
+        let read = |credentials: &Credentials| {
+            (
+                credentials.apple_id.clone(),
+                credentials.with_secret(|secret| Zeroizing::new(secret.to_owned())),
+            )
+        };
+        match self {
+            Self::Owned(credentials) => Ok(read(credentials)),
+            Self::PerCall(apple_id) => match ibridge_auth::call_credentials(read) {
+                Some((id, password)) if id == *apple_id => Ok((id, password)),
+                // A call without credentials, or with another account's, is a bug in the caller.
+                _ => Err(CoreError::Protocol(
+                    "no credentials for this call".to_owned(),
+                )),
+            },
+        }
+    }
+}
+
 /// Two IMAP sessions for one account, reused after `NOOP` while they are fresh.
 pub struct ImapPool<C: Connect> {
-    credentials: Credentials,
+    login: Login,
     connector: C,
     slots: Arc<Semaphore>,
     idle: Mutex<Vec<IdleSession<C::Stream>>>,
@@ -86,7 +123,7 @@ impl<C: Connect> fmt::Debug for ImapPool<C> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ImapPool")
-            .field("apple_id", &self.credentials.apple_id)
+            .field("apple_id", self.login.apple_id())
             .finish_non_exhaustive()
     }
 }
@@ -96,7 +133,22 @@ impl<C: Connect> ImapPool<C> {
     #[must_use]
     pub fn new(credentials: Credentials, connector: C) -> Self {
         Self {
-            credentials,
+            login: Login::Owned(credentials),
+            connector,
+            slots: Arc::new(Semaphore::new(SESSION_LIMIT)),
+            idle: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Builds a pool for a server that must not keep the password between calls.
+    ///
+    /// A new connection logs in with the credentials of the call that needs it
+    /// (see `ibridge_auth::with_call_credentials`). Sessions that are already open
+    /// serve any later call, whatever credentials it carries.
+    #[must_use]
+    pub fn per_call(apple_id: ibridge_core::AppleId, connector: C) -> Self {
+        Self {
+            login: Login::PerCall(apple_id),
             connector,
             slots: Arc::new(Semaphore::new(SESSION_LIMIT)),
             idle: Mutex::new(Vec::new()),
@@ -163,12 +215,8 @@ impl<C: Connect> ImapPool<C> {
             .map_err(|_| CoreError::Network)?;
         let client = async_imap::Client::new(stream);
         let logged_in = {
-            let password = self
-                .credentials
-                .with_secret(|secret| Zeroizing::new(secret.to_owned()));
-            client
-                .login(self.credentials.apple_id.as_str(), (*password).as_str())
-                .await
+            let (apple_id, password) = self.login.for_login()?;
+            client.login(apple_id.as_str(), (*password).as_str()).await
         };
         let mut session = match logged_in {
             Ok(session) => session,

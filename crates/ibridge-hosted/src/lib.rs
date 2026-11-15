@@ -5,6 +5,7 @@
 mod limits;
 mod middleware;
 mod oauth;
+mod provider;
 mod server;
 mod store;
 
@@ -16,5 +17,6 @@ pub use oauth::{
 };
 
 pub use middleware::CallAuth;
+pub use provider::{Account, AccountCache, AccountServer, Backend, Providers};
 pub use server::{HostedHandler, ScopedServers, ServerSource, mcp_router};
 pub use store::{RedactingFields, Store, StoreError, ValidatedCredentials, redact};

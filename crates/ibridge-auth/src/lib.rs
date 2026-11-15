@@ -2,11 +2,13 @@
 
 //! Credentials, credential sources and the iCloud host allowlist.
 
+mod call;
 mod credentials;
 mod hosts;
 mod platform;
 mod source;
 
+pub use call::{call_credentials, with_call_credentials};
 pub use credentials::{
     AuthError, AuthMethod, Credentials, ServiceCheck, ValidationReport, Validator,
 };

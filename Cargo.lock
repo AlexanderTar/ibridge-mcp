@@ -1862,6 +1862,7 @@ dependencies = [
  "serde",
  "temp-env",
  "thiserror 2.0.21",
+ "tokio",
  "trait-variant",
  "trybuild",
 ]
@@ -1945,7 +1946,9 @@ dependencies = [
  "hyper-util",
  "ibridge-auth",
  "ibridge-core",
+ "ibridge-mail",
  "ibridge-server",
+ "ibridge-testkit",
  "rmcp",
  "secrecy",
  "serde",

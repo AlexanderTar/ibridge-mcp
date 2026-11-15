@@ -30,6 +30,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 pub struct FakeScript {
     /// `LOGIN` is rejected.
     pub reject_login: bool,
+    /// `LOGIN` with any other password is rejected. `None` accepts every password.
+    pub accepts_password: Option<String>,
     /// `LIST` answers `NO [THROTTLED]`.
     pub throttle_list: bool,
     /// `UID SEARCH` answers `NO [THROTTLED]`.
@@ -442,6 +444,14 @@ fn greeting() -> Vec<u8> {
 fn encode_reply(command: &Command<'_>, script: &FakeScript, selected: &str) -> Vec<u8> {
     let tag = &command.tag;
     match &command.body {
+        CommandBody::Login { password, .. }
+            if script
+                .accepts_password
+                .as_ref()
+                .is_some_and(|expected| password.declassify().as_ref() != expected.as_bytes()) =>
+        {
+            tagged(Status::no(Some(tag.clone()), None, "server-said-no").expect("no text"))
+        }
         CommandBody::Login { .. } if script.reject_login => {
             tagged(Status::no(Some(tag.clone()), None, "server-said-no").expect("no text"))
         }

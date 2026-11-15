@@ -467,6 +467,7 @@ name = "ibridge-mail"
 version = "0.1.0"
 dependencies = [
  "async-imap",
+ "futures",
  "ibridge-auth",
  "ibridge-core",
  "ibridge-testkit",

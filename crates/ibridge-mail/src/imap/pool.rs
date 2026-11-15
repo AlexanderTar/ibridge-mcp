@@ -69,6 +69,10 @@ impl<C: Connect> Lease<'_, C> {
         self.pool.push_idle(session);
     }
 
+    pub(super) fn session_mut(&mut self) -> Option<&mut async_imap::Session<C::Stream>> {
+        self.session.as_mut().map(|idle| &mut idle.session)
+    }
+
     async fn list(&mut self) -> Result<(), CoreError> {
         let Some(session) = self.session.as_mut() else {
             return Err(CoreError::Network);
@@ -231,7 +235,7 @@ fn map_login(error: &ImapError) -> CoreError {
     }
 }
 
-fn map_command(error: &ImapError) -> CoreError {
+pub(super) fn map_command(error: &ImapError) -> CoreError {
     if throttled(error) {
         return CoreError::RateLimited { retry_after: None };
     }
@@ -251,37 +255,12 @@ fn throttled(error: &ImapError) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::future::{Future, ready};
     use std::time::Duration;
 
-    use ibridge_auth::Credentials;
-    use ibridge_core::{AppleId, CoreError};
-    use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
-    use tokio::io::DuplexStream;
+    use ibridge_core::CoreError;
+    use ibridge_testkit::imap_fake::FakeScript;
 
-    use super::{Connect, ImapPool};
-
-    const PASSWORD: &str = "test-secret";
-
-    fn credentials() -> Credentials {
-        let apple_id = AppleId::try_from("ada@icloud.com").expect("apple id");
-        Credentials::new(apple_id, PASSWORD)
-    }
-
-    fn pool(script: FakeScript) -> (FakeImap, ImapPool<FakeImap>) {
-        let fake = FakeImap::spawn(script);
-        let pool = ImapPool::new(credentials(), fake.clone());
-        (fake, pool)
-    }
-
-    impl Connect for FakeImap {
-        type Stream = DuplexStream;
-
-        fn connect(&self) -> impl Future<Output = std::io::Result<Self::Stream>> + Send {
-            let stream = FakeImap::connect(self);
-            ready(Ok(stream))
-        }
-    }
+    use super::super::support::{PASSWORD, pool};
 
     #[tokio::test]
     async fn pool_requeries_capability_after_login() {

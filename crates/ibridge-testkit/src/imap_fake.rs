@@ -2,6 +2,7 @@
 
 //! Scripted IMAP server for contract tests.
 
+use std::borrow::Cow;
 use std::io;
 use std::sync::{Arc, Mutex};
 
@@ -14,6 +15,7 @@ use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
     Capability, Code, CodeOther, Data, Greeting, Response, Status,
 };
+use imap_codec::imap_types::status::StatusDataItem;
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 
@@ -31,14 +33,15 @@ struct Observed {
     connections: usize,
     logins: usize,
     commands: Vec<&'static str>,
+    lines: Vec<String>,
 }
 
 /// A scripted IMAP server on an in-memory duplex.
 ///
 /// The greeting advertises `IMAP4REV1` and `AUTH=PLAIN` only. After `LOGIN`,
 /// `CAPABILITY` adds `SPECIAL-USE` and `UIDPLUS`. `MOVE` and `IDLE` are never
-/// advertised. `LIST` returns `Sent Messages` with `\Sent`, unless
-/// [`FakeScript::throttle_list`] is set.
+/// advertised. `LIST` returns the iCloud special-use set, unless
+/// [`FakeScript::throttle_list`] is set. `INBOX` holds three messages.
 #[derive(Clone, Debug)]
 pub struct FakeImap {
     script: FakeScript,
@@ -55,6 +58,7 @@ impl FakeImap {
                 connections: 0,
                 logins: 0,
                 commands: Vec::new(),
+                lines: Vec::new(),
             })),
         }
     }
@@ -75,6 +79,12 @@ impl FakeImap {
     #[must_use]
     pub fn commands(&self) -> Vec<&'static str> {
         self.observed().commands.clone()
+    }
+
+    /// Command lines in arrival order. `LOGIN` is stored as the name only, so the password is not kept.
+    #[must_use]
+    pub fn lines(&self) -> Vec<String> {
+        self.observed().lines.clone()
     }
 
     fn observed(&self) -> std::sync::MutexGuard<'_, Observed> {
@@ -109,6 +119,7 @@ async fn serve(
     let commands = CommandCodec::new();
     let mut buf = Vec::new();
     let mut tmp = [0_u8; 1024];
+    let mut selected = String::new();
     loop {
         let reply = match commands.decode(&buf) {
             Ok((rest, command)) => {
@@ -116,14 +127,19 @@ async fn serve(
                 if consumed == 0 {
                     break;
                 }
+                let raw = String::from_utf8_lossy(&buf[..consumed]).into_owned();
+                if let CommandBody::Select { mailbox } = &command.body {
+                    selected = mailbox_name(mailbox);
+                }
                 {
                     let mut observed = observed.lock().expect("observed lock");
                     observed.commands.push(command.name());
+                    observed.lines.push(recorded_line(&command, &raw));
                     if matches!(command.body, CommandBody::Login { .. }) {
                         observed.logins += 1;
                     }
                 }
-                let reply = encode_reply(&command, &script);
+                let reply = encode_reply(&command, &script, &selected);
                 buf.drain(..consumed);
                 Some(reply)
             }
@@ -144,13 +160,27 @@ async fn serve(
     Ok(())
 }
 
+fn recorded_line(command: &Command<'_>, raw: &str) -> String {
+    if matches!(command.body, CommandBody::Login { .. }) {
+        return "LOGIN".to_owned();
+    }
+    raw.trim_end_matches(['\r', '\n']).to_owned()
+}
+
+fn mailbox_name(mailbox: &Mailbox<'_>) -> String {
+    match mailbox {
+        Mailbox::Inbox => "INBOX".to_owned(),
+        Mailbox::Other(other) => String::from_utf8_lossy(other.as_ref()).into_owned(),
+    }
+}
+
 fn greeting() -> Vec<u8> {
     let code = Code::capability(names(&["IMAP4REV1", "AUTH=PLAIN"])).expect("greeting caps");
     let greeting = Greeting::ok(Some(code), "ready").expect("greeting");
     GreetingCodec::new().encode(&greeting).dump()
 }
 
-fn encode_reply(command: &Command<'_>, script: &FakeScript) -> Vec<u8> {
+fn encode_reply(command: &Command<'_>, script: &FakeScript, selected: &str) -> Vec<u8> {
     let tag = &command.tag;
     match &command.body {
         CommandBody::Login { .. } if script.reject_login => {
@@ -178,11 +208,12 @@ fn encode_reply(command: &Command<'_>, script: &FakeScript) -> Vec<u8> {
             )
             .expect("throttle text"),
         ),
-        CommandBody::List { .. } => {
-            let mut bytes = untagged(sent_mailbox());
-            bytes.extend(tagged_ok(tag));
-            bytes
-        }
+        CommandBody::List { .. } => list_reply(tag),
+        CommandBody::Status { mailbox, .. } => status_reply(tag, mailbox),
+        CommandBody::Select { .. } => select_reply(tag, selected),
+        CommandBody::Search { .. } if selected == "INBOX" => search_reply(tag, &[4, 2, 50]),
+        CommandBody::Search { .. } => search_reply(tag, &[]),
+        CommandBody::Fetch { .. } if selected == "INBOX" => fetch_inbox(tag),
         _ => tagged(Status::bad(Some(tag.clone()), None, "unknown").expect("bad text")),
     }
 }
@@ -195,14 +226,91 @@ fn names(names: &[&'static str]) -> Vec<Capability<'static>> {
         .collect()
 }
 
-fn sent_mailbox() -> Data<'static> {
-    Data::List {
-        items: vec![FlagNameAttribute::from(
-            Atom::try_from("Sent").expect("Sent is an atom"),
-        )],
-        delimiter: Some(QuotedChar::try_from('/').expect("slash is a quoted char")),
-        mailbox: Mailbox::try_from("Sent Messages").expect("mailbox name"),
+const MAILBOXES: &[(&str, Option<&str>, u32, u32)] = &[
+    ("INBOX", None, 3, 1),
+    ("Sent Messages", Some("Sent"), 4, 2),
+    ("Deleted Messages", Some("Trash"), 0, 0),
+    ("Junk", Some("Junk"), 0, 0),
+    ("Drafts", Some("Drafts"), 0, 0),
+    ("Archive", Some("Archive"), 0, 0),
+    ("Notes", None, 0, 0),
+];
+
+fn list_reply(tag: &Tag<'_>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for (name, attribute, _, _) in MAILBOXES {
+        bytes.extend(untagged(list_data(name, *attribute)));
     }
+    bytes.extend(tagged_ok(tag));
+    bytes
+}
+
+fn list_data(name: &'static str, attribute: Option<&'static str>) -> Data<'static> {
+    let items = attribute.map_or(Vec::new(), |attribute| {
+        vec![FlagNameAttribute::from(
+            Atom::try_from(attribute).expect("attribute is an atom"),
+        )]
+    });
+    Data::List {
+        items,
+        delimiter: Some(QuotedChar::try_from('/').expect("slash is a quoted char")),
+        mailbox: Mailbox::try_from(name).expect("mailbox name"),
+    }
+}
+
+fn status_reply(tag: &Tag<'_>, mailbox: &Mailbox<'_>) -> Vec<u8> {
+    let name = mailbox_name(mailbox);
+    let (total, unread) = MAILBOXES
+        .iter()
+        .find(|(known, _, _, _)| *known == name)
+        .map_or((0, 0), |(_, _, total, unread)| (*total, *unread));
+    let mut bytes = untagged(Data::Status {
+        mailbox: mailbox.clone(),
+        items: Cow::Owned(vec![
+            StatusDataItem::Messages(total),
+            StatusDataItem::Unseen(unread),
+        ]),
+    });
+    bytes.extend(tagged_ok(tag));
+    bytes
+}
+
+fn select_reply(tag: &Tag<'_>, selected: &str) -> Vec<u8> {
+    let total = MAILBOXES
+        .iter()
+        .find(|(name, _, _, _)| *name == selected)
+        .map_or(0, |(_, _, total, _)| *total);
+    let mut bytes = format!(
+        "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n* {total} EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 1] uid\r\n* OK [UIDNEXT 51] uid\r\n"
+    )
+    .into_bytes();
+    bytes.extend(tagged_ok(tag));
+    bytes
+}
+
+fn search_reply(tag: &Tag<'_>, uids: &[u32]) -> Vec<u8> {
+    let numbers = uids
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut bytes = format!("* SEARCH {numbers}\r\n").into_bytes();
+    bytes.extend(tagged_ok(tag));
+    bytes
+}
+
+fn fetch_inbox(tag: &Tag<'_>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for line in [
+        r#"* 1 FETCH (UID 4 INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "newer" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL))"#,
+        r#"* 2 FETCH (UID 2 INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS (\Seen) ENVELOPE (NIL "older-same-day" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL))"#,
+        r#"* 3 FETCH (UID 50 INTERNALDATE "01-Nov-2026 00:00:00 +0000" FLAGS (\Seen \Flagged) ENVELOPE (NIL "oldest" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL))"#,
+    ] {
+        bytes.extend(line.as_bytes());
+        bytes.extend(b"\r\n");
+    }
+    bytes.extend(tagged_ok(tag));
+    bytes
 }
 
 fn tagged_ok(tag: &Tag<'_>) -> Vec<u8> {

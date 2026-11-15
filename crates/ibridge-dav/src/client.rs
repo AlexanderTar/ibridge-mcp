@@ -90,6 +90,58 @@ impl DavClient {
     pub async fn request(&self, request: Request<String>) -> Result<Exchange, DavError> {
         execute(self, &self.credentials, request).await
     }
+
+    /// Sync a collection. A caller-supplied limit is not sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::Protocol`] when the report cannot be read and
+    /// [`DavError::Network`] when the connection fails.
+    pub async fn sync_collection(
+        &self,
+        collection_url: &str,
+        token: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<crate::SyncReport, DavError> {
+        crate::sync::sync_collection(self, &self.credentials, collection_url, token, limit).await
+    }
+
+    /// Create a resource with `If-None-Match: *`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::Conflict`] when the server answers 412.
+    pub async fn put_new(
+        &self,
+        resource_url: &str,
+        body: &str,
+        content_type: &str,
+    ) -> Result<ibridge_core::ETag, DavError> {
+        crate::sync::put_new(self, &self.credentials, resource_url, body, content_type).await
+    }
+
+    /// Replace a resource with `If-Match`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::Conflict`] when the server answers 412.
+    pub async fn put_if_match(
+        &self,
+        resource_url: &str,
+        body: &str,
+        content_type: &str,
+        etag: &ibridge_core::ETag,
+    ) -> Result<ibridge_core::ETag, DavError> {
+        crate::sync::put_if_match(
+            self,
+            &self.credentials,
+            resource_url,
+            body,
+            content_type,
+            etag,
+        )
+        .await
+    }
 }
 
 impl Transport for DavClient {

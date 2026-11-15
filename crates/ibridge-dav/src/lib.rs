@@ -6,10 +6,12 @@ mod client;
 mod discovery;
 mod error;
 mod redirect;
+mod sync;
 
 pub use client::{DavClient, Exchange};
 pub use discovery::DavValidator;
 pub use error::DavError;
+pub use sync::{SyncReport, SyncedItem};
 
 #[cfg(test)]
 mod test_support;

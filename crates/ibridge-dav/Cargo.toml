@@ -18,6 +18,7 @@ hyper-util.workspace = true
 ibridge-auth.workspace = true
 ibridge-core.workspace = true
 libdav.workspace = true
+roxmltree.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

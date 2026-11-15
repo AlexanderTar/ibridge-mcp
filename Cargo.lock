@@ -472,6 +472,7 @@ dependencies = [
  "ibridge-auth",
  "ibridge-core",
  "libdav",
+ "roxmltree",
  "thiserror",
  "tokio",
  "tracing",

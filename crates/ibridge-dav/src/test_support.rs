@@ -25,6 +25,10 @@ pub(crate) struct Logged {
     pub at: tokio::time::Instant,
     /// Request body. Discovery tests read the property name from it.
     pub body: String,
+    /// `If-Match`, when the guard sent one.
+    pub if_match: Option<String>,
+    /// `If-None-Match`, when the guard sent one.
+    pub if_none_match: Option<String>,
 }
 
 type Handler = Arc<dyn Fn(&Request<String>) -> Response<Full<Bytes>> + Send + Sync>;
@@ -71,11 +75,21 @@ impl Transport for Script {
                 uri: request.uri().clone(),
                 authorization,
                 body: request.body().clone(),
+                if_match: header_string(&request, http::header::IF_MATCH),
+                if_none_match: header_string(&request, http::header::IF_NONE_MATCH),
                 at: tokio::time::Instant::now(),
             });
         let response = (self.handler)(&request);
         async move { Ok(response) }
     }
+}
+
+fn header_string(request: &Request<String>, name: http::HeaderName) -> Option<String> {
+    request
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
 }
 
 pub(crate) fn credentials() -> Credentials {

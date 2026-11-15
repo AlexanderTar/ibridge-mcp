@@ -6,8 +6,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use ibridge_core::{
-    CoreError, Draft, FlagChange, MailSearch, Mailbox, MailboxPath, MailboxRole, Message,
-    MessageId, MessageSummary, decode, encode,
+    CalendarProvider, CoreError, Draft, FlagChange, MailSearch, Mailbox, MailboxPath, MailboxRole,
+    Message, MessageId, MessageSummary, RemindersProvider, decode, encode,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -16,6 +16,7 @@ use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::account::{AccountSnapshot, ServiceStatus};
+use crate::calendar_tools::{CALENDAR_TOOLS, CALENDAR_WRITE_TOOLS, NoCalendar};
 use crate::dto::{
     AccountStatusOut, AttachmentInfoOut, AttachmentOut, FlagParams, FlagsOut, GetAttachmentParams,
     GetMessageParams, IdOut, MailboxListOut, MailboxOut, MessageOut, MoveOut, MoveParams,
@@ -55,6 +56,15 @@ macro_rules! try_mail {
     };
 }
 
+/// Whether a service's tools are in the tool list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tools {
+    /// The tools are listed.
+    Shown,
+    /// The tools are hidden.
+    Hidden,
+}
+
 /// Who may call write tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Access {
@@ -67,16 +77,20 @@ enum Access {
 /// MCP server for one account.
 ///
 /// At most four tool calls run at once. A read-only server omits write tools
-/// from the tool list and rejects a direct write call.
-pub struct IbridgeServer<M> {
+/// from the tool list and rejects a direct write call. Calendar and reminders
+/// tools appear once [`IbridgeServer::with_calendar`] gives the server a backend.
+pub struct IbridgeServer<M, C = NoCalendar> {
     access: Access,
     account: AccountSnapshot,
     mail: Arc<M>,
+    pub(crate) calendar: Arc<C>,
+    mail_tools: Tools,
+    calendar_tools: Tools,
     gate: Arc<Semaphore>,
     router: ToolRouter<Self>,
 }
 
-impl<M> fmt::Debug for IbridgeServer<M> {
+impl<M, C> fmt::Debug for IbridgeServer<M, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("IbridgeServer")
             .field("access", &self.access)
@@ -85,33 +99,67 @@ impl<M> fmt::Debug for IbridgeServer<M> {
     }
 }
 
-impl<M> Clone for IbridgeServer<M> {
+impl<M, C> Clone for IbridgeServer<M, C> {
     fn clone(&self) -> Self {
         Self {
             access: self.access,
             account: self.account.clone(),
             mail: Arc::clone(&self.mail),
+            calendar: Arc::clone(&self.calendar),
+            mail_tools: self.mail_tools,
+            calendar_tools: self.calendar_tools,
             gate: Arc::clone(&self.gate),
             router: self.router.clone(),
         }
     }
 }
 
-#[tool_router]
-impl<M> IbridgeServer<M>
+impl<M> IbridgeServer<M, NoCalendar>
 where
     M: MailApi + Send + Sync + 'static,
 {
     /// Hides write tools from the tool list and rejects write calls.
     #[must_use]
     pub fn read_only(account: AccountSnapshot, mail: Arc<M>) -> Self {
-        Self::build(Access::ReadOnly, account, mail)
+        Self::build(Access::ReadOnly, account, mail, Arc::new(NoCalendar))
     }
 
     /// Shows read and write tools.
     #[must_use]
     pub fn read_write(account: AccountSnapshot, mail: Arc<M>) -> Self {
-        Self::build(Access::ReadWrite, account, mail)
+        Self::build(Access::ReadWrite, account, mail, Arc::new(NoCalendar))
+    }
+}
+
+impl<M, C> IbridgeServer<M, C>
+where
+    M: MailApi + Send + Sync + 'static,
+    C: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+{
+    /// Shows the calendar and reminders tools, backed by `calendar`.
+    #[must_use]
+    pub fn with_calendar<C2>(self, calendar: Arc<C2>) -> IbridgeServer<M, C2>
+    where
+        C2: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+    {
+        IbridgeServer::<M, C2>::build_with(
+            self.access,
+            self.account,
+            self.mail,
+            calendar,
+            self.mail_tools,
+            Tools::Shown,
+        )
+    }
+
+    /// Hides every calendar and reminders tool.
+    #[must_use]
+    pub fn without_calendar(mut self) -> Self {
+        for name in CALENDAR_TOOLS {
+            self.router.disable_route(*name);
+        }
+        self.calendar_tools = Tools::Hidden;
+        self
     }
 
     /// Hides every mail tool. `account_status` stays.
@@ -120,6 +168,7 @@ where
         for name in MAIL_TOOLS {
             self.router.disable_route(*name);
         }
+        self.mail_tools = Tools::Hidden;
         self
     }
 
@@ -135,6 +184,52 @@ where
         self.router.list_all()
     }
 
+    fn build(access: Access, account: AccountSnapshot, mail: Arc<M>, calendar: Arc<C>) -> Self {
+        Self::build_with(access, account, mail, calendar, Tools::Shown, Tools::Hidden)
+    }
+
+    fn build_with(
+        access: Access,
+        account: AccountSnapshot,
+        mail: Arc<M>,
+        calendar: Arc<C>,
+        mail_tools: Tools,
+        calendar_tools: Tools,
+    ) -> Self {
+        let mut router = Self::tool_router() + Self::calendar_router();
+        let mut hidden: Vec<&str> = Vec::new();
+        if access == Access::ReadOnly {
+            hidden.extend(WRITE_TOOLS);
+            hidden.extend(CALENDAR_WRITE_TOOLS);
+        }
+        if mail_tools == Tools::Hidden {
+            hidden.extend(MAIL_TOOLS);
+        }
+        if calendar_tools == Tools::Hidden {
+            hidden.extend(CALENDAR_TOOLS);
+        }
+        for name in hidden {
+            router.disable_route(name);
+        }
+        IbridgeServer {
+            access,
+            account,
+            mail,
+            calendar,
+            mail_tools,
+            calendar_tools,
+            gate: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
+            router,
+        }
+    }
+}
+
+#[tool_router]
+impl<M, C> IbridgeServer<M, C>
+where
+    M: MailApi + Send + Sync + 'static,
+    C: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+{
     /// Lists mailboxes with their roles and counts.
     ///
     /// # Errors
@@ -385,30 +480,14 @@ where
         respond(&status, summary)
     }
 
-    fn build(access: Access, account: AccountSnapshot, mail: Arc<M>) -> Self {
-        let mut router = Self::tool_router();
-        if access == Access::ReadOnly {
-            for name in WRITE_TOOLS {
-                router.disable_route(*name);
-            }
-        }
-        Self {
-            access,
-            account,
-            mail,
-            gate: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
-            router,
-        }
-    }
-
-    fn reject_write(&self) -> Result<(), ErrorData> {
+    pub(crate) fn reject_write(&self) -> Result<(), ErrorData> {
         if self.access == Access::ReadOnly {
             return Err(ErrorData::invalid_params("tool not found", None));
         }
         Ok(())
     }
 
-    async fn permit(&self) -> Result<OwnedSemaphorePermit, ErrorData> {
+    pub(crate) async fn permit(&self) -> Result<OwnedSemaphorePermit, ErrorData> {
         Arc::clone(&self.gate)
             .acquire_owned()
             .await
@@ -416,7 +495,10 @@ where
     }
 }
 
-fn respond<T: serde::Serialize>(value: &T, summary: String) -> Result<CallToolResult, ErrorData> {
+pub(crate) fn respond<T: serde::Serialize>(
+    value: &T,
+    summary: String,
+) -> Result<CallToolResult, ErrorData> {
     let json = serde_json::to_value(value)
         .map_err(|_| ErrorData::internal_error("internal error", None))?;
     let mut result = CallToolResult::structured(json);
@@ -424,7 +506,7 @@ fn respond<T: serde::Serialize>(value: &T, summary: String) -> Result<CallToolRe
     Ok(result)
 }
 
-fn mapped(error: &CoreError) -> Result<CallToolResult, ErrorData> {
+pub(crate) fn mapped(error: &CoreError) -> Result<CallToolResult, ErrorData> {
     match map_core_error(error) {
         MappedError::Rpc(data) => Err(data),
         MappedError::Tool(message) => Ok(CallToolResult::error(vec![ContentBlock::text(
@@ -433,7 +515,7 @@ fn mapped(error: &CoreError) -> Result<CallToolResult, ErrorData> {
     }
 }
 
-fn page_limit(limit: u32) -> Result<u32, ErrorData> {
+pub(crate) fn page_limit(limit: u32) -> Result<u32, ErrorData> {
     if limit == 0 {
         return Ok(DEFAULT_LIMIT);
     }
@@ -602,4 +684,9 @@ fn status_summary(status: &AccountStatusOut) -> String {
     reason = "the generated tool listing returns without waiting"
 )]
 #[tool_handler(router = self.router)]
-impl<M> ServerHandler for IbridgeServer<M> where M: MailApi + Send + Sync + 'static {}
+impl<M, C> ServerHandler for IbridgeServer<M, C>
+where
+    M: MailApi + Send + Sync + 'static,
+    C: CalendarProvider + RemindersProvider + Send + Sync + 'static,
+{
+}

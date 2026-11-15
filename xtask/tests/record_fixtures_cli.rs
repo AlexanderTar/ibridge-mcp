@@ -20,8 +20,12 @@ fn account_file(name: &str, mode: u32, apple_id: &str) -> PathBuf {
 }
 
 fn run(account: &PathBuf, out: &PathBuf) -> Output {
+    run_kind("mail", account, out)
+}
+
+fn run_kind(kind: &str, account: &PathBuf, out: &PathBuf) -> Output {
     Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["record-fixtures", "mail", "--account"])
+        .args(["record-fixtures", kind, "--account"])
         .arg(account)
         .arg("--out")
         .arg(out)
@@ -40,6 +44,36 @@ fn recorder_never_prints_password_from_the_binary() {
 
     for account in [&bad_id, &loose, &missing] {
         let output = run(account, &out);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+        assert!(
+            stderr.contains("record-fixtures:"),
+            "the failure reaches stderr: {stderr}"
+        );
+        assert!(
+            !stdout.contains(PASSWORD) && !stderr.contains(PASSWORD),
+            "the password was printed for {}:\nstdout: {stdout}\nstderr: {stderr}",
+            account.display()
+        );
+    }
+    assert!(!out.exists(), "nothing is recorded");
+    for path in [bad_id, loose] {
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[test]
+fn calendar_recorder_refuses_bad_account_files_without_printing_the_password() {
+    let out = std::env::temp_dir().join(format!("ibridge-cal-cli-out-{}", std::process::id()));
+    let bad_id = account_file("cal-badid", 0o600, "not-an-apple-id");
+    let loose = account_file("cal-loose", 0o644, "ada@icloud.com");
+    let missing =
+        std::env::temp_dir().join(format!("ibridge-cal-cli-missing-{}", std::process::id()));
+
+    for account in [&bad_id, &loose, &missing] {
+        let output = run_kind("calendar", account, &out);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 

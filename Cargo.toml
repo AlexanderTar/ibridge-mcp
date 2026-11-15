@@ -19,6 +19,9 @@ async-imap = { version = "0.12.0", default-features = false, features = ["runtim
 axum = { version = "0.8", default-features = false, features = ["form", "http1", "json", "query", "tokio"] }
 base64 = "0.22"
 bytes = "1"
+calcard = { version = "0.3", default-features = false }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz = "0.10"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 getrandom = "0.4"
@@ -40,7 +43,9 @@ hyper-util = { version = "0.1", features = [
     "tokio",
 ] }
 ibridge-auth = { path = "crates/ibridge-auth" }
+ibridge-calendar = { path = "crates/ibridge-calendar" }
 ibridge-core = { path = "crates/ibridge-core" }
+ibridge-dav = { path = "crates/ibridge-dav" }
 ibridge-mail = { path = "crates/ibridge-mail" }
 ibridge-server = { path = "crates/ibridge-server" }
 ibridge-testkit = { path = "crates/ibridge-testkit" }
@@ -82,6 +87,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 trait-variant = "0.1"
 trybuild = "1"
 url = "2"
+wiremock = "0.6"
 zeroize = "1"
 
 # Lints pasted from BeautifulRust lints/lints.toml at

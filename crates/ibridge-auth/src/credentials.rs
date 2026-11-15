@@ -26,6 +26,12 @@ impl Credentials {
         }
     }
 
+    /// A second copy, for a second client.
+    #[must_use]
+    pub fn duplicate(&self) -> Self {
+        self.with_secret(|secret| Self::new(self.apple_id.clone(), secret.to_owned()))
+    }
+
     /// Passes the password to `read` and ends the borrow before returning.
     pub fn with_secret<T>(&self, read: impl FnOnce(&str) -> T) -> T {
         read(self.secret.expose_secret())
@@ -103,4 +109,26 @@ pub trait Validator {
     ///
     /// Returns [`AuthError`] when validation cannot be run at all.
     async fn validate(&self) -> Result<ValidationReport, AuthError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use ibridge_core::AppleId;
+
+    use super::Credentials;
+
+    #[test]
+    fn duplicate_carries_the_apple_id_and_password() {
+        let original = Credentials::new(
+            AppleId::try_from("ada@icloud.com").expect("primary address"),
+            "abcd-efgh-ijkl-mnop",
+        );
+        let copy = original.duplicate();
+        assert_eq!(copy.apple_id, original.apple_id);
+        assert_eq!(
+            copy.with_secret(str::to_owned),
+            "abcd-efgh-ijkl-mnop",
+            "the copy signs in as the original does"
+        );
+    }
 }

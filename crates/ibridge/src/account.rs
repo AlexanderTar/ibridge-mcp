@@ -94,8 +94,8 @@ fn reason(check: &ServiceCheck) -> Option<String> {
 
 /// What `account_status` reports.
 ///
-/// `recorded` is the sign-in result, when there is one. Calendar and contacts
-/// have no tools in this release, so they report off even when sign-in worked.
+/// `recorded` is the sign-in result, when there is one. Contacts have no tools
+/// in this release, so they report off even when sign-in worked.
 pub(crate) fn snapshot(
     apple_id: AppleId,
     services: Services,
@@ -115,7 +115,7 @@ pub(crate) fn snapshot(
         calendar: status([
             not_built(services.calendar, "calendar"),
             failed(|state| state.calendar.as_ref()),
-            no_tools("calendar"),
+            None,
         ]),
         contacts: status([
             not_built(services.contacts, "contacts"),
@@ -130,5 +130,75 @@ fn status(reasons: [Option<String>; 3]) -> ServiceStatus {
     match reasons.into_iter().flatten().next() {
         Some(reason) => ServiceStatus::Off { reason },
         None => ServiceStatus::On,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ibridge_auth::{ServiceCheck, ValidationReport};
+    use ibridge_core::AppleId;
+    use ibridge_server::ServiceStatus;
+
+    use super::{Services, State, snapshot};
+
+    fn apple_id() -> AppleId {
+        AppleId::try_from("ada@icloud.com").expect("apple id")
+    }
+
+    fn with_calendar() -> Services {
+        Services {
+            mail: true,
+            calendar: true,
+            contacts: true,
+        }
+    }
+
+    fn without_calendar() -> Services {
+        Services {
+            calendar: false,
+            ..with_calendar()
+        }
+    }
+
+    #[test]
+    fn account_status_reports_calendar() {
+        let signed_in = State::from_report(
+            &apple_id(),
+            &ValidationReport {
+                mail: ServiceCheck::Ok,
+                calendar: ServiceCheck::Ok,
+                contacts: ServiceCheck::Ok,
+            },
+        );
+        assert_eq!(
+            snapshot(apple_id(), with_calendar(), Some(&signed_in)).calendar,
+            ServiceStatus::On,
+            "calendar is on when sign-in worked and the build has it"
+        );
+
+        let rejected = State::from_report(
+            &apple_id(),
+            &ValidationReport {
+                mail: ServiceCheck::Ok,
+                calendar: ServiceCheck::Failed {
+                    reason: "calendar rejected".to_owned(),
+                },
+                contacts: ServiceCheck::Ok,
+            },
+        );
+        assert_eq!(
+            snapshot(apple_id(), with_calendar(), Some(&rejected)).calendar,
+            ServiceStatus::Off {
+                reason: "calendar rejected".to_owned()
+            },
+            "a failed sign-in check turns calendar off with its reason"
+        );
+        assert_eq!(
+            snapshot(apple_id(), without_calendar(), Some(&signed_in)).calendar,
+            ServiceStatus::Off {
+                reason: "calendar is not enabled in this build".to_owned()
+            },
+            "a build without calendar says so"
+        );
     }
 }

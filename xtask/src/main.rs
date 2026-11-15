@@ -2,6 +2,7 @@
 
 //! Workspace maintenance tasks.
 
+mod record_calendar;
 mod record_fixtures;
 mod scrub;
 
@@ -25,35 +26,42 @@ fn main() -> ExitCode {
     }
 }
 
-/// `record-fixtures mail [--account FILE] [--out DIR]`.
+/// `record-fixtures mail|calendar [--account FILE] [--out DIR] [--check]`.
 ///
 /// The account file defaults to `~/.config/ibridge/test-account.env`. Output goes
-/// to `tests/fixtures/imap`, where the user reviews the diff before committing.
+/// to `tests/fixtures/imap` or `tests/fixtures/caldav`, where the user reviews the
+/// diff before committing. `--check` is for `calendar` only: it lists the
+/// `ibridge-test` calendar and list and writes nothing.
 fn run_record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
-    const USAGE: &str = "usage: cargo xtask record-fixtures mail [--account FILE] [--out DIR]";
-    if args.next().as_deref() != Some("mail") {
-        return fail(USAGE);
-    }
+    const USAGE: &str =
+        "usage: cargo xtask record-fixtures <mail|calendar> [--account FILE] [--out DIR] [--check]";
+    let mut kind = match args.next().as_deref() {
+        Some("mail") => Kind::Mail,
+        Some("calendar") => Kind::Calendar,
+        _ => return fail(USAGE),
+    };
     let mut account = env::var_os("HOME")
         .map(|home| PathBuf::from(home).join(".config/ibridge/test-account.env"));
-    let mut out = headers_root().join("tests/fixtures/imap");
+    let mut out = headers_root().join(match kind {
+        Kind::Mail => "tests/fixtures/imap",
+        Kind::Calendar | Kind::CalendarCheck => "tests/fixtures/caldav",
+    });
     while let Some(flag) = args.next() {
-        match (flag.as_str(), args.next()) {
-            ("--account", Some(path)) => account = Some(PathBuf::from(path)),
-            ("--out", Some(path)) => out = PathBuf::from(path),
+        match flag.as_str() {
+            "--account" => match args.next() {
+                Some(path) => account = Some(PathBuf::from(path)),
+                None => return fail(USAGE),
+            },
+            "--out" => match args.next() {
+                Some(path) => out = PathBuf::from(path),
+                None => return fail(USAGE),
+            },
+            "--check" if kind == Kind::Calendar => kind = Kind::CalendarCheck,
             _ => return fail(USAGE),
         }
     }
     let Some(account) = account else {
         return fail("record-fixtures: HOME is not set; pass --account FILE");
-    };
-    let connector = match ibridge_mail::IcloudConnect::new() {
-        Ok(connector) => connector,
-        Err(error) => return fail(&format!("record-fixtures: {error}")),
-    };
-    let wait = record_fixtures::Wait {
-        attempts: 12,
-        delay: Duration::from_secs(5),
     };
     let mut random = [0_u8; 8];
     if let Err(error) = getrandom::fill(&mut random) {
@@ -67,19 +75,79 @@ fn run_record_fixtures(mut args: impl Iterator<Item = String>) -> ExitCode {
         Ok(runtime) => runtime,
         Err(error) => return fail(&format!("record-fixtures: {error}")),
     };
-    let result = runtime.block_on(record_fixtures::run_mail(
-        &account,
-        &connector,
-        record_fixtures::SmtpSender::new,
-        &out,
-        wait,
-        &nonce,
-        &mut io::stdout(),
-    ));
+    let result = match kind {
+        Kind::Mail => record_mail(&runtime, &account, &out, &nonce),
+        Kind::Calendar => record_calendar(&runtime, &account, &out, &nonce),
+        Kind::CalendarCheck => check_calendar(&runtime, &account),
+    };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => fail(&format!("record-fixtures: {error}")),
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Mail,
+    Calendar,
+    /// Lists the test calendar and list and writes nothing.
+    CalendarCheck,
+}
+
+fn record_mail(
+    runtime: &tokio::runtime::Runtime,
+    account: &Path,
+    out: &Path,
+    nonce: &str,
+) -> Result<(), record_fixtures::RecordError> {
+    let connector =
+        ibridge_mail::IcloudConnect::new().map_err(|_| record_fixtures::RecordError::Connect)?;
+    let wait = record_fixtures::Wait {
+        attempts: 12,
+        delay: Duration::from_secs(5),
+    };
+    runtime.block_on(record_fixtures::run_mail(
+        account,
+        &connector,
+        record_fixtures::SmtpSender::new,
+        out,
+        wait,
+        nonce,
+        &mut io::stdout(),
+    ))
+}
+
+/// A client for one account. `CalendarCheck` and `Calendar` each build their own.
+fn dav_client(
+    credentials: &ibridge_auth::Credentials,
+) -> Result<ibridge_dav::DavClient, ibridge_dav::DavError> {
+    ibridge_dav::DavClient::new(credentials.duplicate())
+}
+
+fn record_calendar(
+    runtime: &tokio::runtime::Runtime,
+    account: &Path,
+    out: &Path,
+    nonce: &str,
+) -> Result<(), record_fixtures::RecordError> {
+    runtime.block_on(record_calendar::run_calendar(
+        account,
+        dav_client,
+        out,
+        nonce,
+        &mut io::stdout(),
+    ))
+}
+
+fn check_calendar(
+    runtime: &tokio::runtime::Runtime,
+    account: &Path,
+) -> Result<(), record_fixtures::RecordError> {
+    runtime.block_on(record_calendar::check_calendar(
+        account,
+        dav_client,
+        &mut io::stdout(),
+    ))
 }
 
 #[expect(

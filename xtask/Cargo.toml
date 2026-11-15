@@ -12,7 +12,11 @@ publish = false
 async-imap.workspace = true
 futures.workspace = true
 getrandom.workspace = true
+http.workspace = true
 ibridge-auth.workspace = true
+ibridge-calendar.workspace = true
+ibridge-core.workspace = true
+ibridge-dav.workspace = true
 ibridge-mail.workspace = true
 mail-parser.workspace = true
 regex.workspace = true
@@ -21,7 +25,7 @@ tokio.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-ibridge-core.workspace = true
+ibridge-dav = { workspace = true, features = ["test-hosts"] }
 ibridge-testkit.workspace = true
 
 [lints]

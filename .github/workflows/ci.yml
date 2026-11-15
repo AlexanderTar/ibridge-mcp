@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.98.0 --profile minimal
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-hack,cargo-deny,cargo-shear,cargo-llvm-cov,cargo-dist
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo nextest run --workspace
+
+      - name: Integration tests
+        run: cargo nextest run --workspace --profile integration
+
+      - name: MSRV
+        run: cargo +1.98 check --workspace --all-features
+
+      - name: Feature powerset
+        run: cargo hack check --each-feature --no-dev-deps
+
+      - name: Deny
+        run: cargo deny check
+
+      - name: Shear
+        run: cargo shear
+
+      - name: SPDX headers
+        run: cargo xtask check-headers
+
+      - name: Coverage
+        run: cargo llvm-cov nextest --workspace
+
+      - name: Dist plan
+        if: hashFiles('dist-workspace.toml') != ''
+        run: dist plan

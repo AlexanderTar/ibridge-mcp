@@ -1,0 +1,31 @@
+name: Platform check
+
+on:
+  pull_request:
+    paths:
+      - "**/platform/**"
+      - "Cargo.lock"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check
+        run: cargo check --workspace
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check
+        run: cargo check --workspace --no-default-features --features stdio,mail,calendar,contacts

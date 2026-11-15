@@ -3,6 +3,7 @@
 //! Server handler. One server is one account, with at most four tool calls in flight.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ibridge_core::{
@@ -22,22 +23,26 @@ use crate::contacts_tools::{CONTACTS_TOOLS, CONTACTS_WRITE_TOOLS, NoContacts};
 use crate::dto::{
     AccountStatusOut, AttachmentInfoOut, AttachmentOut, FlagParams, FlagsOut, GetAttachmentParams,
     GetMessageParams, IdOut, MailboxListOut, MailboxOut, MessageOut, MoveOut, MoveParams,
-    SearchHitOut, SearchOut, SearchParams, SendOut, SendParams, ServiceOut, ServiceState,
+    SaveAttachmentParams, SavedAttachmentOut, SearchHitOut, SearchOut, SearchParams, SendOut,
+    SendParams, ServiceOut, ServiceState,
 };
 use crate::error_map::{MappedError, map_core_error};
 use crate::mail_api::{MailApi, MailDest};
+use crate::save::{safe_name, save_unique};
 use crate::untrusted::wrap_untrusted;
 
 const MAX_IN_FLIGHT: usize = 4;
 const DEFAULT_LIMIT: u32 = 25;
 const MAX_LIMIT: u32 = 100;
 const SENT_COPY_WARNING: &str = "sent, but the copy was not saved to Sent Messages";
+const SAVE_ATTACHMENT: &str = "mail_save_attachment";
 const MAIL_TOOLS: &[&str] = &[
     "mail_create_draft",
     "mail_get_attachment",
     "mail_get_message",
     "mail_list_mailboxes",
     "mail_move",
+    "mail_save_attachment",
     "mail_search",
     "mail_send",
     "mail_set_flags",
@@ -45,6 +50,7 @@ const MAIL_TOOLS: &[&str] = &[
 const WRITE_TOOLS: &[&str] = &[
     "mail_create_draft",
     "mail_move",
+    "mail_save_attachment",
     "mail_send",
     "mail_set_flags",
 ];
@@ -67,12 +73,13 @@ enum Tools {
     Hidden,
 }
 
-/// Which services' tools are listed.
-#[derive(Debug, Clone, Copy)]
+/// Which services' tools are listed, and where saved attachments go.
+#[derive(Debug, Clone)]
 struct Tools3 {
     mail: Tools,
     calendar: Tools,
     contacts: Tools,
+    downloads: Option<Arc<Path>>,
 }
 
 /// Who may call write tools.
@@ -99,6 +106,7 @@ pub struct IbridgeServer<M, C = NoCalendar, K = NoContacts> {
     mail_tools: Tools,
     calendar_tools: Tools,
     contacts_tools: Tools,
+    downloads: Option<Arc<Path>>,
     gate: Arc<Semaphore>,
     router: ToolRouter<Self>,
 }
@@ -123,6 +131,7 @@ impl<M, C, K> Clone for IbridgeServer<M, C, K> {
             mail_tools: self.mail_tools,
             calendar_tools: self.calendar_tools,
             contacts_tools: self.contacts_tools,
+            downloads: self.downloads.clone(),
             gate: Arc::clone(&self.gate),
             router: self.router.clone(),
         }
@@ -180,6 +189,7 @@ where
                 mail: self.mail_tools,
                 calendar: Tools::Shown,
                 contacts: self.contacts_tools,
+                downloads: self.downloads,
             },
         )
     }
@@ -200,8 +210,21 @@ where
                 mail: self.mail_tools,
                 calendar: self.calendar_tools,
                 contacts: Tools::Shown,
+                downloads: self.downloads,
             },
         )
+    }
+
+    /// Shows `mail_save_attachment`, which saves files into `dir`.
+    ///
+    /// Only the local run modes call this. A hosted server never writes to disk.
+    #[must_use]
+    pub fn with_downloads(mut self, dir: PathBuf) -> Self {
+        self.downloads = Some(Arc::from(dir));
+        if self.access == Access::ReadWrite && self.mail_tools == Tools::Shown {
+            self.router.enable_route(SAVE_ATTACHMENT);
+        }
+        self
     }
 
     /// Hides every contacts tool.
@@ -257,6 +280,7 @@ where
             mail: Tools::Shown,
             calendar: Tools::Hidden,
             contacts: Tools::Hidden,
+            downloads: None,
         };
         Self::build_with(access, account, mail, calendar, contacts, tools)
     }
@@ -273,6 +297,7 @@ where
             mail: mail_tools,
             calendar: calendar_tools,
             contacts: contacts_tools,
+            downloads,
         } = tools;
         let mut router = Self::tool_router() + Self::calendar_router() + Self::contacts_router();
         let mut hidden: Vec<&str> = Vec::new();
@@ -283,6 +308,9 @@ where
         }
         if mail_tools == Tools::Hidden {
             hidden.extend(MAIL_TOOLS);
+        }
+        if downloads.is_none() {
+            hidden.push(SAVE_ATTACHMENT);
         }
         if calendar_tools == Tools::Hidden {
             hidden.extend(CALENDAR_TOOLS);
@@ -302,6 +330,7 @@ where
             mail_tools,
             calendar_tools,
             contacts_tools,
+            downloads,
             gate: Arc::new(Semaphore::new(MAX_IN_FLIGHT)),
             router,
         }
@@ -428,6 +457,55 @@ where
                 next_offset: widen(fetched.next_offset),
             },
             "attachment".to_owned(),
+        )
+    }
+
+    /// Saves one attachment into the download folder and returns its path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorData::invalid_params`] when the id is not usable, and an MCP
+    /// error when the part cannot be read or the file cannot be written.
+    #[tool(
+        description = "Saves one attachment into the download folder and returns the file path. Local installs only.",
+        annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<SavedAttachmentOut>(),
+    )]
+    pub async fn mail_save_attachment(
+        &self,
+        Parameters(params): Parameters<SaveAttachmentParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.reject_write()?;
+        let Some(dir) = self.downloads.clone() else {
+            return Err(ErrorData::invalid_params("tool not found", None));
+        };
+        let id = require_id(&params.id)?;
+        let _permit = self.permit().await?;
+        let file = try_mail!(self.mail.get_attachment_bytes(&id, &params.part).await);
+        let Some(bytes) = file.bytes else {
+            return mapped(&CoreError::Unsupported("saving attachments"));
+        };
+        let name = safe_name(&file.info.name, &file.info.part);
+        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let written = tokio::task::spawn_blocking(move || save_unique(&dir, &name, &bytes))
+            .await
+            .map_err(|_| ErrorData::internal_error("internal error", None))?;
+        let path = match written {
+            Ok(path) => path,
+            Err(error) => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "the attachment could not be saved: {}",
+                    error.kind()
+                ))]));
+            }
+        };
+        respond(
+            &SavedAttachmentOut {
+                path: path.display().to_string(),
+                size,
+                content_type: file.info.content_type,
+            },
+            "attachment saved".to_owned(),
         )
     }
 

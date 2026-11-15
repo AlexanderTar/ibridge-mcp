@@ -12,6 +12,7 @@ mod error_map;
 mod handler;
 pub mod http;
 mod mail_api;
+mod save;
 mod untrusted;
 
 #[cfg(test)]
@@ -28,7 +29,8 @@ pub use contacts_dto::{
 };
 pub use contacts_tools::NoContacts;
 pub use dto::{
-    FlagParams, GetAttachmentParams, GetMessageParams, MoveParams, SearchParams, SendParams,
+    FlagParams, GetAttachmentParams, GetMessageParams, MoveParams, SaveAttachmentParams,
+    SearchParams, SendParams,
 };
 pub use error_map::{MappedError, map_core_error};
 pub use handler::IbridgeServer;

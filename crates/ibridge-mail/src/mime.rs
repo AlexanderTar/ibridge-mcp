@@ -129,6 +129,23 @@ pub(crate) fn read_attachment(
     ))
 }
 
+/// Every decoded byte of one attachment, with no size cap and no text window.
+///
+/// # Errors
+///
+/// Returns [`CoreError::NotFound`] when the part is not an attachment.
+pub(crate) fn read_attachment_bytes(bytes: &[u8], part: &str) -> Result<Attachment, CoreError> {
+    let message = MessageParser::new()
+        .parse(bytes)
+        .ok_or(CoreError::NotFound)?;
+    let found = attachment_part(&message, part)?;
+    Ok(Attachment {
+        info: attachment_info(found),
+        text: None,
+        bytes: Some(found.decoded().into_owned()),
+    })
+}
+
 fn window(text: &str, offset: usize) -> (String, Option<usize>) {
     let mut chars = text.chars().skip(offset);
     let body: String = chars.by_ref().take(BODY_WINDOW).collect();

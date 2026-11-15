@@ -6,8 +6,8 @@
 use std::sync::{Arc, Mutex};
 
 use ibridge_core::{
-    AppleId, CoreError, Draft, FlagChange, MailSearch, Mailbox, Message, MessageId, MessageSummary,
-    Uid, UidValidity, encode,
+    AppleId, Attachment, AttachmentInfo, CoreError, Draft, FlagChange, MailSearch, Mailbox,
+    Message, MessageId, MessageSummary, Uid, UidValidity, encode,
 };
 use ibridge_server::{
     AccountSnapshot, IbridgeServer, MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail,
@@ -80,6 +80,27 @@ impl MailApi for Scripted {
         _offset: usize,
     ) -> Result<MailPart, CoreError> {
         Err(CoreError::NotFound)
+    }
+
+    async fn get_attachment_bytes(
+        &self,
+        id: &MessageId,
+        part: &str,
+    ) -> Result<Attachment, CoreError> {
+        if *id != message_id() || part != "2" {
+            return Err(CoreError::NotFound);
+        }
+        Ok(Attachment {
+            info: AttachmentInfo {
+                part: "2".to_owned(),
+                content_type: "text/plain".to_owned(),
+                size: 16,
+                // A hostile name: a path that climbs out of the download folder.
+                name: "../../evil name.txt".to_owned(),
+            },
+            text: None,
+            bytes: Some(b"hello attachment".to_vec()),
+        })
     }
 
     async fn create_draft(&self, _draft: &Draft) -> Result<MessageId, CoreError> {
@@ -222,5 +243,142 @@ async fn e2e_send_requires_destructive_annotation() {
         !names.iter().any(|name| name == "mail_send")
             && names.iter().any(|name| name == "mail_search"),
         "a read-only server hides writes over the wire, got {names:?}"
+    );
+}
+
+async fn tool_names(client: &RunningService<RoleClient, ()>) -> Vec<String> {
+    client
+        .list_all_tools()
+        .await
+        .expect("list tools")
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn save_attachment_only_in_local_modes() {
+    let downloads = tempfile::tempdir().expect("download folder");
+    let listed = |names: &[String]| names.iter().any(|name| name == "mail_save_attachment");
+
+    let hosted_like = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    assert!(
+        !listed(&tool_names(&hosted_like).await),
+        "a server with no download folder never offers the tool"
+    );
+    let mut params = CallToolRequestParams::new("mail_save_attachment");
+    params.arguments = Some(arguments(
+        &serde_json::json!({ "id": encode(&message_id()), "part": "2" }),
+    ));
+    hosted_like
+        .call_tool(params)
+        .await
+        .expect_err("and a direct call is refused");
+
+    let local = connect(
+        IbridgeServer::read_write(account(), Arc::new(Scripted::default()))
+            .with_downloads(downloads.path().to_path_buf()),
+    )
+    .await;
+    let tools = local.list_all_tools().await.expect("list tools");
+    let save = tools
+        .iter()
+        .find(|tool| tool.name == "mail_save_attachment")
+        .expect("a local server offers mail_save_attachment");
+    let annotations = save.annotations.as_ref().expect("annotations");
+    assert_eq!(annotations.read_only_hint, Some(false), "it writes a file");
+    assert_eq!(
+        annotations.destructive_hint,
+        Some(true),
+        "so clients ask first"
+    );
+
+    let read_only = connect(
+        IbridgeServer::read_only(account(), Arc::new(Scripted::default()))
+            .with_downloads(downloads.path().to_path_buf()),
+    )
+    .await;
+    assert!(
+        !listed(&tool_names(&read_only).await),
+        "--read-only hides it: saving a file is a write"
+    );
+}
+
+#[tokio::test]
+async fn save_attachment_writes_to_download_dir() {
+    let root = tempfile::tempdir().expect("temp root");
+    let downloads = root.path().join("not").join("made").join("yet");
+    let client = connect(
+        IbridgeServer::read_write(account(), Arc::new(Scripted::default()))
+            .with_downloads(downloads.clone()),
+    )
+    .await;
+    let id = encode(&message_id());
+
+    let saved = call(
+        &client,
+        "mail_save_attachment",
+        serde_json::json!({ "id": id, "part": "2" }),
+    )
+    .await;
+    assert_eq!(saved.is_error, Some(false), "save succeeds: {saved:?}");
+    let out = saved.structured_content.expect("structured content");
+    let path = std::path::PathBuf::from(out["path"].as_str().expect("a path"));
+    assert_eq!(
+        path.parent(),
+        Some(downloads.as_path()),
+        "the file lands directly in the download folder, got {path:?}"
+    );
+    assert_eq!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("evil name.txt"),
+        "a name that climbs out of the folder is cut down to its last part"
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("the file exists"),
+        b"hello attachment",
+        "every byte is written"
+    );
+    assert_eq!(out["size"], 16);
+
+    let again = call(
+        &client,
+        "mail_save_attachment",
+        serde_json::json!({ "id": id, "part": "2" }),
+    )
+    .await;
+    let second = std::path::PathBuf::from(
+        again.structured_content.expect("structured content")["path"]
+            .as_str()
+            .expect("a path"),
+    );
+    assert_ne!(second, path, "a second save never overwrites the first");
+    assert_eq!(
+        second.file_name().and_then(|name| name.to_str()),
+        Some("evil name (1).txt")
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("the first file is intact"),
+        b"hello attachment"
+    );
+    assert!(
+        !root.path().join("evil name.txt").exists(),
+        "nothing was written above the download folder"
+    );
+
+    let missing = call(
+        &client,
+        "mail_save_attachment",
+        serde_json::json!({ "id": id, "part": "9" }),
+    )
+    .await;
+    assert_eq!(
+        missing.is_error,
+        Some(true),
+        "an unknown part is a tool error"
     );
 }

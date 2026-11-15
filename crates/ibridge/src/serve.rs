@@ -42,6 +42,11 @@ where
     }
     .with_calendar(calendar)
     .with_contacts(contacts);
+    // Stdio and the local daemon both build here. A hosted server does not, so it never writes files.
+    let server = match crate::downloads::dir() {
+        Some(dir) => server.with_downloads(dir),
+        None => server,
+    };
     let server = if services.calendar {
         server
     } else {
@@ -275,6 +280,86 @@ mod http_tests {
             .collect()
     }
 
+    /// A stateless `tools/list` or `tools/call`.
+    async fn stateless(daemon: &Daemon, method: &str, params: &Value) -> Reply {
+        let mut params = params.clone();
+        params["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1.0"},
+            "io.modelcontextprotocol/clientCapabilities": {},
+        });
+        daemon
+            .post(
+                &[
+                    ("mcp-protocol-version", "2026-07-28"),
+                    ("mcp-method", method),
+                ],
+                &json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}),
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn read_only_flag_hides_writes_over_http() {
+        let _turn = KEYCHAIN.lock().await;
+        mock_keychain();
+
+        let read_only = Daemon::start(Access::ReadOnly).await;
+        let listed = stateless(&read_only, "tools/list", &json!({})).await;
+        let tools = message(&listed)["result"]["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a tool list, got {:?}", listed.body))
+            .clone();
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        for tool in &tools {
+            assert_eq!(
+                tool["annotations"]["readOnlyHint"], true,
+                "{} is listed in a read-only daemon but is not a read tool",
+                tool["name"]
+            );
+        }
+        for read in [
+            "account_status",
+            "mail_search",
+            "calendar_list_events",
+            "contacts_search",
+        ] {
+            assert!(names.contains(&read), "{read} stays, got {names:?}");
+        }
+        for write in [
+            "mail_send",
+            "mail_save_attachment",
+            "calendar_create_event",
+            "contacts_create",
+        ] {
+            assert!(!names.contains(&write), "{write} is hidden, got {names:?}");
+        }
+        let refused = stateless(
+            &read_only,
+            "tools/call",
+            &json!({"name": "mail_send", "arguments": {"to": ["bob@example.com"], "subject": "s", "body": "b"}}),
+        )
+        .await;
+        assert!(
+            message(&refused).get("error").is_some(),
+            "a direct write call over HTTP is refused, got {:?}",
+            refused.body
+        );
+
+        let read_write = Daemon::start(Access::ReadWrite).await;
+        let listed = stateless(&read_write, "tools/list", &json!({})).await;
+        let names = tool_names(&listed);
+        for write in ["mail_send", "mail_save_attachment", "calendar_create_event"] {
+            assert!(
+                names.iter().any(|name| name == write),
+                "a read-write daemon offers {write}, got {names:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn e2e_http_tools_list() {
         let _turn = KEYCHAIN.lock().await;
@@ -437,6 +522,38 @@ mod tests {
         assert!(
             names.iter().any(|name| name == "account_status"),
             "account_status stays, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn local_servers_offer_save_attachment_unless_read_only() {
+        let names = |access: Access| -> Vec<String> {
+            let services = Services::built();
+            let apple_id = AppleId::try_from("ada@icloud.com").expect("apple id");
+            assemble(
+                services,
+                access,
+                snapshot(apple_id, services, None),
+                Arc::new(NoMail),
+                Arc::new(NoCalendar),
+                Arc::new(NoContacts),
+            )
+            .tools()
+            .into_iter()
+            .map(|tool| tool.name.into_owned())
+            .collect()
+        };
+        assert!(
+            names(Access::ReadWrite)
+                .iter()
+                .any(|name| name == "mail_save_attachment"),
+            "stdio and the daemon both build with assemble, which turns the tool on"
+        );
+        assert!(
+            !names(Access::ReadOnly)
+                .iter()
+                .any(|name| name == "mail_save_attachment"),
+            "read-only hides it"
         );
     }
 

@@ -91,6 +91,21 @@ pub trait MailApi {
         offset: usize,
     ) -> Result<MailPart, CoreError>;
 
+    /// Fetches every decoded byte of one attachment, for saving to disk.
+    ///
+    /// A backend that cannot do this keeps the default, which refuses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError`] when the part cannot be read.
+    async fn get_attachment_bytes(
+        &self,
+        _id: &MessageId,
+        _part: &str,
+    ) -> Result<Attachment, CoreError> {
+        async { Err(CoreError::Unsupported("saving attachments")) }
+    }
+
     /// Appends a draft.
     ///
     /// # Errors

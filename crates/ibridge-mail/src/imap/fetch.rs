@@ -72,6 +72,23 @@ impl<C: Connect> ImapPool<C> {
         })
     }
 
+    /// Fetches the decoded bytes of one attachment, whatever its size or type.
+    ///
+    /// The tool layer limits what a client sees inline. This is for saving the
+    /// file to disk, so there is no 64 KiB cap and no text window.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when the part is not an attachment of the message.
+    pub async fn get_attachment_bytes(
+        &self,
+        id: &MessageId,
+        part: &str,
+    ) -> Result<Attachment, CoreError> {
+        let body = load_body(self, id).await?;
+        mime::read_attachment_bytes(&body, part)
+    }
+
     /// `In-Reply-To` and `References` for a reply to `id`.
     ///
     /// # Errors
@@ -259,6 +276,34 @@ mod tests {
             attachment.attachment.bytes.is_none(),
             "text parts are returned as text"
         );
+    }
+
+    #[tokio::test]
+    async fn get_attachment_bytes_has_no_size_cap() {
+        let (_fake, pooled) = pool(FakeScript::default());
+        let big = pooled
+            .get_attachment_bytes(&message_id(50), "2")
+            .await
+            .expect("a binary over 64 KiB can be saved");
+        assert_eq!(
+            big.bytes.as_ref().map(Vec::len),
+            Some(65_537),
+            "every decoded byte comes back"
+        );
+        let text = pooled
+            .get_attachment_bytes(&message_id(50), "1")
+            .await
+            .expect("a text part can be saved too");
+        assert_eq!(
+            text.bytes.as_deref(),
+            Some(b"note".as_slice()),
+            "a text part comes back as its bytes, not a window"
+        );
+        let missing = pooled
+            .get_attachment_bytes(&message_id(50), "99")
+            .await
+            .expect_err("a part that is not there");
+        assert!(matches!(missing, CoreError::NotFound), "got {missing:?}");
     }
 
     #[tokio::test]

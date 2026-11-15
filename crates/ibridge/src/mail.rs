@@ -7,6 +7,8 @@ use std::sync::Arc;
 #[cfg(feature = "mail")]
 use ibridge_auth::ServiceCheck;
 use ibridge_auth::{AuthError, Credentials, ValidationReport, Validator};
+#[cfg(feature = "mail")]
+use ibridge_core::Attachment;
 use ibridge_core::{CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId};
 use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
 
@@ -140,6 +142,14 @@ impl<C: ibridge_mail::Connect + 'static> MailApi for SessionMail<C> {
             attachment: fetched.attachment,
             next_offset: fetched.next_offset,
         })
+    }
+
+    async fn get_attachment_bytes(
+        &self,
+        id: &MessageId,
+        part: &str,
+    ) -> Result<Attachment, CoreError> {
+        self.0.imap().get_attachment_bytes(id, part).await
     }
 
     async fn create_draft(&self, draft: &Draft) -> Result<MessageId, CoreError> {

@@ -89,6 +89,15 @@ pub struct GetAttachmentParams {
     pub offset: u64,
 }
 
+/// Arguments for `mail_save_attachment`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct SaveAttachmentParams {
+    /// Opaque message id.
+    pub id: String,
+    /// Part identifier from `mail_get_message`.
+    pub part: String,
+}
+
 /// Arguments for `mail_move`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct MoveParams {
@@ -173,6 +182,13 @@ pub(crate) struct AttachmentOut {
     pub(crate) text: Option<String>,
     pub(crate) bytes_base64: Option<String>,
     pub(crate) next_offset: Option<u64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct SavedAttachmentOut {
+    pub(crate) path: String,
+    pub(crate) size: u64,
+    pub(crate) content_type: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

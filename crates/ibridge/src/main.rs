@@ -9,6 +9,7 @@ mod contacts;
 #[cfg(feature = "http")]
 mod daemon;
 mod doctor;
+mod downloads;
 mod login;
 mod mail;
 mod platform;

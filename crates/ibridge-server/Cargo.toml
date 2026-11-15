@@ -24,6 +24,7 @@ trait-variant.workspace = true
 ibridge-testkit.workspace = true
 insta.workspace = true
 rmcp = { workspace = true, features = ["client"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -11,9 +11,13 @@
 # libsqlite3-sys` cannot select the fix (0.39 / 0.40). Drop it when a sqlx
 # release allows libsqlite3-sys >= 0.39. Tracked in
 # https://github.com/transact-rs/sqlx/issues/4516
+#
+# RUSTSEC-2026-0441: pin-utils 0.1.1 is archived and comes in through
+# async-imap 0.12. Drop it when async-imap stops depending on pin-utils.
 [advisories]
 ignore = [
     { id = "RUSTSEC-2026-0440", reason = "test-only testcontainers dependency with no safe upgrade" },
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.1 is archived and comes in through async-imap 0.12; no patched release" },
     { id = "RUSTSEC-2026-0459", reason = "sqlx 0.9.0 cannot select libsqlite3-sys >= 0.39; remove when sqlx publishes that bound" },
 ]
 
@@ -31,3 +35,4 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
+

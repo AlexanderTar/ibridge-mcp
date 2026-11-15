@@ -9,7 +9,13 @@ description = "Scripted protocol fakes, fixtures and test containers."
 publish = false
 
 [dependencies]
+imap-codec.workspace = true
 testcontainers.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+async-imap.workspace = true
+futures.workspace = true
 
 [lints]
 workspace = true

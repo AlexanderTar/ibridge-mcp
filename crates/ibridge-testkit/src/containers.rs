@@ -4,13 +4,21 @@
 
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
-use testcontainers::{ContainerAsync, GenericImage};
+use testcontainers::{ContainerAsync, ContainerRequest, GenericImage, ImageExt};
 
 /// Host port Radicale listens on inside the container.
 const RADICALE_PORT: u16 = 5232;
 
-/// Start a `GreenMail` container. The image wiring lands with the mail tests.
-pub fn greenmail() {}
+/// `GreenMail` on IMAP port 3143 for `ada@icloud.com`. Building the request does not start Docker.
+pub fn greenmail() -> ContainerRequest<GenericImage> {
+    GenericImage::new("greenmail/standalone", "2.1.15")
+        .with_exposed_port(3143.tcp())
+        .with_wait_for(WaitFor::message_on_stdout("Starting GreenMail API server"))
+        .with_env_var(
+            "GREENMAIL_OPTS",
+            "-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=ada:test-secret@icloud.com -Dgreenmail.users.login=email",
+        )
+}
 
 /// A Radicale container that stays stopped until [`Radicale::start`].
 #[derive(Debug)]

@@ -13,8 +13,10 @@ repository = "https://github.com/AlexanderTar/icloud-mcp"
 # every crate resolves the same one.
 [workspace.dependencies]
 aes-gcm = "0.11"
+async-imap = { version = "0.12.0", default-features = false, features = ["runtime-tokio"] }
 base64 = "0.22"
 bytes = "1"
+futures = "0.3"
 getrandom = "0.4"
 hkdf = "0.13"
 http = "1"
@@ -36,8 +38,10 @@ hyper-util = { version = "0.1", features = [
 ibridge-auth = { path = "crates/ibridge-auth" }
 ibridge-core = { path = "crates/ibridge-core" }
 ibridge-testkit = { path = "crates/ibridge-testkit" }
+imap-codec = "1.0.0"
 keyring-core = "1"
 libdav = "0.11.2"
+mail-parser = "1.0"
 proptest = "1"
 roxmltree = "0.21"
 secrecy = "0.10"

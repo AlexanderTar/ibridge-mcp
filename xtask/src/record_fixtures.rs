@@ -44,6 +44,14 @@ pub(crate) enum RecordError {
     /// The fixture directory could not be written.
     #[error("could not write fixtures: {0}")]
     Write(#[from] std::io::Error),
+    /// The test calendar or list the recorder writes to does not exist.
+    #[error(
+        "no {0} named ibridge-test exists; create one with that exact name in the Calendar or Reminders app, then run --check"
+    )]
+    MissingCollection(&'static str),
+    /// A `CalDAV` request failed. Text never carries server replies.
+    #[error("a CalDAV request failed: {0}")]
+    Dav(&'static str),
     /// Fewer marker mails arrived than were sent. The ones that did were recorded and cleaned up.
     #[error("sent {sent} marker mails but only {found} arrived")]
     MarkersMissing { sent: usize, found: usize },

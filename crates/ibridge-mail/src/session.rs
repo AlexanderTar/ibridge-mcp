@@ -2,7 +2,7 @@
 
 //! One account's IMAP pool and SMTP client.
 
-use ibridge_core::{CoreError, Draft, MailboxRole, MessageId};
+use ibridge_core::{CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId};
 
 use crate::imap::{Connect, ImapPool};
 use crate::smtp::{OutgoingMail, SmtpClient};
@@ -44,6 +44,37 @@ impl<C: Connect> MailSession<C> {
             .append(MailboxRole::Drafts, Some(r"(\Draft)"), &bytes)
             .await
     }
+
+    /// Moves `id` to `destination`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError`] when the move cannot be done.
+    pub async fn move_to(
+        &self,
+        id: &MessageId,
+        destination: &MailboxPath,
+    ) -> Result<(), CoreError> {
+        self.imap.move_uid(id, destination).await
+    }
+
+    /// Moves `id` to the mailbox with `role`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError`] when the role is missing or the move fails.
+    pub async fn move_to_role(&self, id: &MessageId, role: MailboxRole) -> Result<(), CoreError> {
+        self.imap.move_to_role(id, role).await
+    }
+
+    /// Sets or clears `\Seen` and `\Flagged`. A second identical call leaves the same flags.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError`] when the flags cannot be stored.
+    pub async fn set_flags(&self, id: &MessageId, flags: &FlagChange) -> Result<(), CoreError> {
+        self.imap.store_flags(id, flags).await
+    }
 }
 
 fn outgoing(from: &str, draft: &Draft) -> OutgoingMail {
@@ -60,7 +91,9 @@ fn outgoing(from: &str, draft: &Draft) -> OutgoingMail {
 #[cfg(test)]
 mod tests {
     use ibridge_auth::Credentials;
-    use ibridge_core::{AppleId, Draft};
+    use ibridge_core::{
+        AppleId, Draft, FlagChange, MailboxPath, MailboxRole, MessageId, Uid, UidValidity,
+    };
     use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
 
     use super::MailSession;
@@ -124,6 +157,136 @@ mod tests {
             copies[0].flags.contains("\\Draft"),
             "the append carries the Draft flag, got {}",
             copies[0].flags
+        );
+    }
+
+    fn message(uid: u32) -> MessageId {
+        MessageId {
+            mailbox: MailboxPath::try_from("INBOX").expect("inbox"),
+            validity: UidValidity::try_from(1).expect("validity"),
+            uid: Uid::try_from(uid).expect("uid"),
+        }
+    }
+
+    fn plain_expunge(line: &str) -> bool {
+        let upper = line.to_ascii_uppercase();
+        upper.contains("EXPUNGE") && !upper.contains("UID")
+    }
+
+    #[tokio::test]
+    async fn move_tries_uid_move_without_capability() {
+        let (fake, _capture, session) = session().await;
+        let archive = MailboxPath::try_from("Archive").expect("archive");
+        session.move_to(&message(4), &archive).await.expect("move");
+        assert!(
+            fake.saw("UID MOVE"),
+            "UID MOVE is sent even though the server never advertises MOVE, got {:?}",
+            fake.lines()
+        );
+    }
+
+    #[tokio::test]
+    async fn move_falls_back_to_uid_copy_store_uid_expunge() {
+        let capture = SmtpCapture::start().await;
+        let fake = FakeImap::spawn(FakeScript {
+            reject_uid_move: true,
+            ..FakeScript::default()
+        });
+        let imap = ImapPool::new(credentials(), fake.clone());
+        let smtp = SmtpClient::plain(credentials(), capture.host(), capture.port())
+            .expect("loopback host is allowed");
+        let session = MailSession::new(imap, smtp);
+        let archive = MailboxPath::try_from("Archive").expect("archive");
+        session.move_to(&message(4), &archive).await.expect("move");
+        let lines = fake.lines();
+        assert!(
+            lines.iter().any(|line| line.contains("UID COPY")),
+            "a rejected UID MOVE is followed by UID COPY, got {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("UID STORE") && line.contains("\\Deleted")),
+            "the copy is followed by UID STORE of \\Deleted, got {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("UID EXPUNGE")),
+            "the deleted uid is removed with UID EXPUNGE, got {lines:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn move_fallback_does_not_expunge_other_deleted() {
+        let capture = SmtpCapture::start().await;
+        let fake = FakeImap::spawn(FakeScript {
+            reject_uid_move: true,
+            ..FakeScript::default()
+        });
+        let imap = ImapPool::new(credentials(), fake.clone());
+        let smtp = SmtpClient::plain(credentials(), capture.host(), capture.port())
+            .expect("loopback host is allowed");
+        let session = MailSession::new(imap, smtp);
+        let archive = MailboxPath::try_from("Archive").expect("archive");
+        session.move_to(&message(4), &archive).await.expect("move");
+        assert!(
+            fake.saw("UID EXPUNGE"),
+            "the moved uid is removed with UID EXPUNGE, got {:?}",
+            fake.lines()
+        );
+        assert!(
+            !fake.lines().iter().any(|line| plain_expunge(line)),
+            "plain EXPUNGE would remove every \\Deleted message, got {:?}",
+            fake.lines()
+        );
+        assert!(
+            fake.deleted_uids("INBOX").contains(&99),
+            "a \\Deleted message that was not moved stays, got {:?}",
+            fake.deleted_uids("INBOX")
+        );
+    }
+
+    #[tokio::test]
+    async fn move_to_role_trash() {
+        let (fake, _capture, session) = session().await;
+        session
+            .move_to_role(&message(4), MailboxRole::Trash)
+            .await
+            .expect("move to trash");
+        assert!(
+            fake.lines()
+                .iter()
+                .any(|line| line.contains("Deleted Messages")),
+            "trash is the Deleted Messages mailbox, got {:?}",
+            fake.lines()
+        );
+    }
+
+    #[tokio::test]
+    async fn set_flags_idempotent() {
+        let (fake, _capture, session) = session().await;
+        let flags = FlagChange {
+            seen: Some(true),
+            flagged: None,
+        };
+        session.set_flags(&message(4), &flags).await.expect("set");
+        session
+            .set_flags(&message(4), &flags)
+            .await
+            .expect("set again");
+        let stores: Vec<_> = fake
+            .lines()
+            .into_iter()
+            .filter(|line| line.contains("UID STORE"))
+            .collect();
+        assert_eq!(stores.len(), 2, "each call stores the flag, got {stores:?}");
+        assert!(
+            stores.iter().all(|line| line.contains("\\Seen")),
+            "both stores set \\Seen, got {stores:?}"
+        );
+        assert_eq!(
+            fake.flag_count("INBOX", 4, "\\Seen"),
+            1,
+            "a second identical store does not add a second \\Seen"
         );
     }
 }

@@ -10,11 +10,12 @@ use imap_codec::decode::{CommandDecodeError, Decoder};
 use imap_codec::encode::Encoder;
 use imap_codec::imap_types::command::{Command, CommandBody};
 use imap_codec::imap_types::core::{Atom, LiteralMode, QuotedChar, Tag};
-use imap_codec::imap_types::flag::FlagNameAttribute;
+use imap_codec::imap_types::flag::{Flag, FlagNameAttribute, StoreType};
 use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
     Capability, Code, CodeOther, Data, Greeting, Response, Status,
 };
+use imap_codec::imap_types::sequence::{SeqOrUid, Sequence};
 use imap_codec::imap_types::status::StatusDataItem;
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
@@ -48,6 +49,8 @@ pub struct FakeScript {
     pub long_attachment: bool,
     /// `UIDVALIDITY` advertised by `SELECT`. `None` means 1.
     pub uid_validity: Option<u32>,
+    /// `UID MOVE` is rejected, so the client must copy, delete, and expunge that uid.
+    pub reject_uid_move: bool,
 }
 
 #[derive(Debug)]
@@ -59,6 +62,10 @@ struct Observed {
     appended: Vec<AppendedMessage>,
     /// Bytes of a command the decoder rejected. Successful `LOGIN` is never stored.
     inbound: Vec<u8>,
+    /// Inbox UIDs that carry `\Deleted`. UID 99 starts deleted and is not the message under test.
+    inbox_deleted: Vec<u32>,
+    /// How many times `\Seen` is recorded on inbox UID 4.
+    seen_on_four: usize,
 }
 
 /// One message a client appended.
@@ -98,6 +105,8 @@ impl FakeImap {
                 lines: Vec::new(),
                 appended: Vec::new(),
                 inbound: Vec::new(),
+                inbox_deleted: vec![99],
+                seen_on_four: 0,
             })),
         }
     }
@@ -130,6 +139,26 @@ impl FakeImap {
     #[must_use]
     pub fn appended(&self) -> Vec<AppendedMessage> {
         self.observed().appended.clone()
+    }
+
+    /// Inbox UIDs that still carry `\Deleted`.
+    #[must_use]
+    pub fn deleted_uids(&self, mailbox: &str) -> Vec<u32> {
+        if mailbox == "INBOX" {
+            self.observed().inbox_deleted.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// How many `\Seen` flags inbox UID 4 carries. One means a repeated store did not toggle.
+    #[must_use]
+    pub fn flag_count(&self, mailbox: &str, uid: u32, flag: &str) -> usize {
+        if mailbox == "INBOX" && uid == 4 && flag == "\\Seen" {
+            self.observed().seen_on_four
+        } else {
+            0
+        }
     }
 
     /// Whether a successfully parsed command, or a command the decoder rejected, contains `needle`.
@@ -201,6 +230,7 @@ async fn serve(
                     if let Some((_, message)) = stored {
                         observed.appended.push(message);
                     }
+                    apply_mailbox(&command, &mut observed);
                 }
                 let reply = appended_uid.map_or_else(
                     || encode_reply(&command, &script, &selected),
@@ -219,9 +249,25 @@ async fn serve(
                 None
             }
             Err(_) => {
-                let mut observed = observed.lock().expect("observed lock");
-                observed.inbound.extend_from_slice(&buf);
-                break;
+                let line_end = buf.windows(2).position(|window| window == b"\r\n");
+                let expunged = line_end.and_then(|end| {
+                    let line = String::from_utf8_lossy(&buf[..end]).into_owned();
+                    uid_expunge(&line).map(|(tag, uid)| (end, tag, uid, line))
+                });
+                if let Some((end, tag, uid, line)) = expunged {
+                    {
+                        let mut observed = observed.lock().expect("observed lock");
+                        observed.commands.push("EXPUNGE");
+                        observed.lines.push(line);
+                        observed.inbox_deleted.retain(|kept| *kept != uid);
+                    }
+                    buf.drain(..end + 2);
+                    Some(format!("{tag} OK expunged\r\n").into_bytes())
+                } else {
+                    let mut observed = observed.lock().expect("observed lock");
+                    observed.inbound.extend_from_slice(&buf);
+                    break;
+                }
             }
         };
         if let Some(reply) = reply {
@@ -273,6 +319,51 @@ fn append_ok(tag: &Tag<'_>, validity: u32, uid: u32) -> Vec<u8> {
     .into_bytes()
 }
 
+fn apply_mailbox(command: &Command<'_>, observed: &mut Observed) {
+    match &command.body {
+        CommandBody::Store {
+            sequence_set,
+            kind: StoreType::Add,
+            flags,
+            uid: true,
+            ..
+        } => {
+            let Some(uid) = single_uid(sequence_set) else {
+                return;
+            };
+            if flags.iter().any(|flag| matches!(flag, Flag::Seen)) && uid == 4 {
+                observed.seen_on_four = 1;
+            }
+            if flags.iter().any(|flag| matches!(flag, Flag::Deleted))
+                && !observed.inbox_deleted.contains(&uid)
+            {
+                observed.inbox_deleted.push(uid);
+            }
+        }
+        CommandBody::Expunge => observed.inbox_deleted.clear(),
+        _ => {}
+    }
+}
+
+fn single_uid(set: &imap_codec::imap_types::sequence::SequenceSet) -> Option<u32> {
+    let Sequence::Single(SeqOrUid::Value(uid)) = set.0.as_ref().first()? else {
+        return None;
+    };
+    Some(uid.get())
+}
+
+fn uid_expunge(line: &str) -> Option<(String, u32)> {
+    let mut parts = line.split_whitespace();
+    let tag = parts.next()?;
+    let uid_word = parts.next()?;
+    let verb = parts.next()?;
+    if !uid_word.eq_ignore_ascii_case("UID") || !verb.eq_ignore_ascii_case("EXPUNGE") {
+        return None;
+    }
+    let uid = parts.next()?.parse().ok()?;
+    Some((tag.to_owned(), uid))
+}
+
 fn recorded_line(command: &Command<'_>, raw: &str) -> String {
     if matches!(command.body, CommandBody::Login { .. }) {
         return "LOGIN".to_owned();
@@ -299,7 +390,6 @@ fn encode_reply(command: &Command<'_>, script: &FakeScript, selected: &str) -> V
         CommandBody::Login { .. } if script.reject_login => {
             tagged(Status::no(Some(tag.clone()), None, "server-said-no").expect("no text"))
         }
-        CommandBody::Login { .. } | CommandBody::Noop => tagged_ok(tag),
         CommandBody::Capability => {
             let mut bytes = untagged(
                 Data::capability(names(&[
@@ -327,6 +417,15 @@ fn encode_reply(command: &Command<'_>, script: &FakeScript, selected: &str) -> V
         CommandBody::Search { .. } => search_reply(tag, &[]),
         CommandBody::Fetch { .. } if script.throttle_fetch => throttled(tag),
         CommandBody::Fetch { .. } if selected == "INBOX" => fetch_inbox(tag, script),
+        CommandBody::Move { uid: true, .. } if script.reject_uid_move => {
+            tagged(Status::no(Some(tag.clone()), None, "no move").expect("no text"))
+        }
+        CommandBody::Login { .. }
+        | CommandBody::Noop
+        | CommandBody::Move { .. }
+        | CommandBody::Copy { .. }
+        | CommandBody::Store { .. }
+        | CommandBody::Expunge => tagged_ok(tag),
         _ => tagged(Status::bad(Some(tag.clone()), None, "unknown").expect("bad text")),
     }
 }

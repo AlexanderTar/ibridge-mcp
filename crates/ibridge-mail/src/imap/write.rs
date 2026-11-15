@@ -4,10 +4,10 @@
 
 use async_imap::imap_proto::rfc4315::UidSetMember;
 use async_imap::imap_proto::{RequestId, Response, ResponseCode};
-use ibridge_core::{CoreError, MailboxPath, MailboxRole, MessageId, Uid, UidValidity};
+use ibridge_core::{CoreError, FlagChange, MailboxPath, MailboxRole, MessageId, Uid, UidValidity};
 use tokio::io::AsyncWriteExt;
 
-use super::pool::{Connect, ImapPool, done_status, map_command};
+use super::pool::{Connect, ImapPool, done_status, map_command, run_checked};
 
 impl<C: Connect> ImapPool<C> {
     /// Appends `bytes` to the mailbox with `role`.
@@ -29,6 +29,54 @@ impl<C: Connect> ImapPool<C> {
         let appended = append_on(&mut lease, path.as_str(), flags, bytes).await;
         lease.release();
         appended
+    }
+
+    /// Moves `id` into `destination`. `UID MOVE` is tried first. A rejection falls
+    /// back to `UID COPY`, `UID STORE` of `\Deleted`, and `UID EXPUNGE` of that uid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when the mailbox generation does not match,
+    /// and [`CoreError::Protocol`] when the copy or the expunge fails.
+    pub(crate) async fn move_uid(
+        &self,
+        id: &MessageId,
+        destination: &MailboxPath,
+    ) -> Result<(), CoreError> {
+        let mut lease = self.checkout().await?;
+        let moved = move_on(&mut lease, id, destination).await;
+        lease.release();
+        moved
+    }
+
+    /// Moves `id` to the mailbox with `role`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when no mailbox has `role`.
+    pub(crate) async fn move_to_role(
+        &self,
+        id: &MessageId,
+        role: MailboxRole,
+    ) -> Result<(), CoreError> {
+        let destination = path_for_role(self, role).await?;
+        self.move_uid(id, &destination).await
+    }
+
+    /// Stores `\Seen` and `\Flagged`. `None` leaves a flag unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when the mailbox generation does not match.
+    pub(crate) async fn store_flags(
+        &self,
+        id: &MessageId,
+        flags: &FlagChange,
+    ) -> Result<(), CoreError> {
+        let mut lease = self.checkout().await?;
+        let stored = store_on(&mut lease, id, flags).await;
+        lease.release();
+        stored
     }
 }
 
@@ -153,6 +201,87 @@ fn message_id(mailbox: &str, validity: u32, uid: u32) -> Result<MessageId, CoreE
         validity,
         uid,
     })
+}
+
+async fn move_on<C: Connect>(
+    lease: &mut super::pool::Lease<'_, C>,
+    id: &MessageId,
+    destination: &MailboxPath,
+) -> Result<(), CoreError> {
+    let Some(session) = lease.session_mut() else {
+        return Err(CoreError::Network);
+    };
+    select_mailbox(session, id).await?;
+    let dest = quote_mailbox(destination.as_str())?;
+    let uid = id.uid.get();
+    let moved = run_checked(session, &format!("UID MOVE {uid} {dest}"), |_| {}).await;
+    if moved.is_ok() {
+        return Ok(());
+    }
+    if !matches!(moved, Err(CoreError::Protocol(_))) {
+        return moved.map(|_| ());
+    }
+    run_checked(session, &format!("UID COPY {uid} {dest}"), |_| {}).await?;
+    run_checked(
+        session,
+        &format!("UID STORE {uid} +FLAGS.SILENT (\\Deleted)"),
+        |_| {},
+    )
+    .await?;
+    run_checked(session, &format!("UID EXPUNGE {uid}"), |_| {}).await?;
+    Ok(())
+}
+
+async fn store_on<C: Connect>(
+    lease: &mut super::pool::Lease<'_, C>,
+    id: &MessageId,
+    flags: &FlagChange,
+) -> Result<(), CoreError> {
+    let ops = flag_ops(*flags);
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let Some(session) = lease.session_mut() else {
+        return Err(CoreError::Network);
+    };
+    select_mailbox(session, id).await?;
+    let uid = id.uid.get();
+    for op in ops {
+        run_checked(session, &format!("UID STORE {uid} {op}"), |_| {}).await?;
+    }
+    Ok(())
+}
+
+async fn select_mailbox<S>(
+    session: &mut async_imap::Session<S>,
+    id: &MessageId,
+) -> Result<(), CoreError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    let selected = session
+        .select(id.mailbox.as_str())
+        .await
+        .map_err(|error| map_command(&error))?;
+    if selected.uid_validity != Some(id.validity.get()) {
+        return Err(CoreError::NotFound);
+    }
+    Ok(())
+}
+
+fn flag_ops(flags: FlagChange) -> Vec<String> {
+    let mut ops = Vec::new();
+    push_flag(&mut ops, flags.seen, "\\Seen");
+    push_flag(&mut ops, flags.flagged, "\\Flagged");
+    ops
+}
+
+fn push_flag(ops: &mut Vec<String>, value: Option<bool>, flag: &str) {
+    let Some(on) = value else {
+        return;
+    };
+    let verb = if on { "+FLAGS.SILENT" } else { "-FLAGS.SILENT" };
+    ops.push(format!("{verb} ({flag})"));
 }
 
 fn quote_mailbox(name: &str) -> Result<String, CoreError> {

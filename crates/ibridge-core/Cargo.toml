@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Domain newtypes, provider traits and the core error type."
 
 [dependencies]
+base64.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

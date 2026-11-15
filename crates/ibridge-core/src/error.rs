@@ -11,8 +11,8 @@ pub enum ParseError {
         "use the primary iCloud address (@icloud.com, @me.com or @mac.com), not a custom domain"
     )]
     AppleId,
-    /// The mailbox path is empty or contains a control character.
-    #[error("mailbox path is empty or contains a control character")]
+    /// The mailbox path is empty, a URL, or contains a control character.
+    #[error("mailbox path is empty, a URL, or contains a control character")]
     MailboxPath,
     /// An IMAP UID or UIDVALIDITY was zero.
     #[error("uid must be a non-zero IMAP identifier")]
@@ -23,4 +23,13 @@ pub enum ParseError {
     /// The `ETag` is empty or contains a control character.
     #[error("etag is empty or contains a control character")]
     ETag,
+}
+
+/// An opaque id could not be decoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum IdError {
+    /// The token is not a versioned, length-prefixed id, or its payload is not allowed.
+    #[error("id could not be decoded")]
+    Decode,
 }

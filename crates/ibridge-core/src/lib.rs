@@ -8,15 +8,18 @@ mod ids;
 mod mail;
 
 pub use account::AppleId;
-pub use error::ParseError;
-pub use ids::{ETag, ResourcePath};
+pub use error::{IdError, ParseError};
+pub use ids::{ETag, MessageId, ResourcePath, decode, encode};
 pub use mail::{MailboxPath, Uid, UidValidity};
 
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
 
-    use super::{AppleId, ETag, MailboxPath, ResourcePath, Uid, UidValidity};
+    use super::{
+        AppleId, ETag, MailboxPath, MessageId, ResourcePath, Uid, UidValidity, decode, encode,
+    };
+    use crate::ids::encode_raw;
 
     #[test]
     fn apple_id_rejects_custom_domain_hint() {
@@ -114,5 +117,49 @@ mod tests {
             let parsed = ETag::try_from(etag.as_str()).unwrap();
             prop_assert_eq!(parsed.as_str(), etag.as_str());
         }
+
+        #[test]
+        fn message_id_roundtrip(
+            mailbox in "[A-Za-z][A-Za-z0-9]{0,16}",
+            validity in 1u32..=u32::MAX,
+            uid in 1u32..=u32::MAX,
+        ) {
+            let id = MessageId {
+                mailbox: MailboxPath::try_from(mailbox.as_str()).unwrap(),
+                validity: UidValidity::try_from(validity).unwrap(),
+                uid: Uid::try_from(uid).unwrap(),
+            };
+            let decoded = decode(&encode(&id)).unwrap();
+            prop_assert_eq!(decoded, id);
+        }
+    }
+
+    #[test]
+    fn decode_rejects_tampered() {
+        let id = MessageId {
+            mailbox: MailboxPath::try_from("INBOX").expect("mailbox"),
+            validity: UidValidity::try_from(9).expect("validity"),
+            uid: Uid::try_from(4).expect("uid"),
+        };
+        let token = encode(&id);
+        let mut bytes = token.into_bytes();
+        let index = bytes.len() / 2;
+        bytes[index] = if bytes[index] == b'A' { b'B' } else { b'A' };
+        let tampered = String::from_utf8(bytes).expect("ascii token");
+        assert!(
+            decode(&tampered).is_err(),
+            "a flipped character must not decode"
+        );
+    }
+
+    #[test]
+    fn decode_rejects_url_payload() {
+        let url = "https://p12-caldav.icloud.com/123/calendars/x.ics";
+        assert!(decode(url).is_err(), "a raw URL is not an id");
+        let crafted = encode_raw(url, 7, 9);
+        assert!(
+            decode(&crafted).is_err(),
+            "a length-prefixed URL payload must not decode"
+        );
     }
 }

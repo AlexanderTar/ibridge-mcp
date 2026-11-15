@@ -4,7 +4,143 @@
 
 use std::fmt;
 
-use crate::error::ParseError;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+use crate::error::{IdError, ParseError};
+use crate::mail::{MailboxPath, Uid, UidValidity};
+
+const VERSION: u8 = 1;
+const KIND_MESSAGE: u8 = 1;
+
+/// A mail id: mailbox path, UIDVALIDITY and UID.
+///
+/// The wire form is an opaque base64url token from [`encode`]. It carries no host.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct MessageId {
+    /// Mailbox the message lives in.
+    pub mailbox: MailboxPath,
+    /// UIDVALIDITY of that mailbox at the time the id was issued.
+    pub validity: UidValidity,
+    /// IMAP UID.
+    pub uid: Uid,
+}
+
+/// Encodes a [`MessageId`] as an opaque token.
+///
+/// Version 1 is base64url (no padding) over a length-prefixed body: version,
+/// kind, `u16` mailbox length, mailbox bytes, `u32` UIDVALIDITY, `u32` UID, and
+/// a CRC-32 of those bytes. A flipped character fails the checksum.
+#[must_use]
+pub fn encode(id: &MessageId) -> String {
+    encode_parts(id.mailbox.as_str(), id.validity.get(), id.uid.get())
+}
+
+/// Decodes a token produced by [`encode`].
+///
+/// # Errors
+///
+/// Returns [`IdError::Decode`] when the token is malformed, tampered, or carries a URL.
+pub fn decode(token: &str) -> Result<MessageId, IdError> {
+    let bytes = URL_SAFE_NO_PAD.decode(token).map_err(|_| IdError::Decode)?;
+    // version + kind + length + validity + uid + checksum, with an empty mailbox.
+    if bytes.len() < 16 {
+        return Err(IdError::Decode);
+    }
+    let (body, sum_bytes) = bytes.split_at(bytes.len() - 4);
+    let mut sum = [0_u8; 4];
+    sum.copy_from_slice(sum_bytes);
+    if crc32(body) != u32::from_be_bytes(sum) {
+        return Err(IdError::Decode);
+    }
+    let mut rest = body;
+    if take_u8(&mut rest)? != VERSION || take_u8(&mut rest)? != KIND_MESSAGE {
+        return Err(IdError::Decode);
+    }
+    let len = usize::from(take_u16(&mut rest)?);
+    if rest.len() != len + 8 {
+        return Err(IdError::Decode);
+    }
+    let (mailbox_bytes, after) = rest.split_at(len);
+    let mailbox = std::str::from_utf8(mailbox_bytes).map_err(|_| IdError::Decode)?;
+    let mailbox = MailboxPath::try_from(mailbox).map_err(|_| IdError::Decode)?;
+    let mut tail = after;
+    let validity = UidValidity::try_from(take_u32(&mut tail)?).map_err(|_| IdError::Decode)?;
+    let uid = Uid::try_from(take_u32(&mut tail)?).map_err(|_| IdError::Decode)?;
+    if !tail.is_empty() {
+        return Err(IdError::Decode);
+    }
+    Ok(MessageId {
+        mailbox,
+        validity,
+        uid,
+    })
+}
+
+/// Builds a token from raw parts, skipping mailbox validation. Tests use this to
+/// craft a URL payload.
+#[cfg(test)]
+#[must_use]
+pub(crate) fn encode_raw(mailbox: &str, validity: u32, uid: u32) -> String {
+    encode_parts(mailbox, validity, uid)
+}
+
+fn encode_parts(mailbox: &str, validity: u32, uid: u32) -> String {
+    URL_SAFE_NO_PAD.encode(frame(mailbox, validity, uid))
+}
+
+fn frame(mailbox: &str, validity: u32, uid: u32) -> Vec<u8> {
+    let mailbox_bytes = mailbox.as_bytes();
+    let len = u16::try_from(mailbox_bytes.len()).expect("mailbox name fits in a u16");
+    let mut body = Vec::with_capacity(16 + mailbox_bytes.len());
+    body.push(VERSION);
+    body.push(KIND_MESSAGE);
+    body.extend_from_slice(&len.to_be_bytes());
+    body.extend_from_slice(mailbox_bytes);
+    body.extend_from_slice(&validity.to_be_bytes());
+    body.extend_from_slice(&uid.to_be_bytes());
+    let sum = crc32(&body);
+    body.extend_from_slice(&sum.to_be_bytes());
+    body
+}
+
+fn take_u8(rest: &mut &[u8]) -> Result<u8, IdError> {
+    let (&first, tail) = rest.split_first().ok_or(IdError::Decode)?;
+    *rest = tail;
+    Ok(first)
+}
+
+fn take_u16(rest: &mut &[u8]) -> Result<u16, IdError> {
+    Ok(u16::from_be_bytes(take_array::<2>(rest)?))
+}
+
+fn take_u32(rest: &mut &[u8]) -> Result<u32, IdError> {
+    Ok(u32::from_be_bytes(take_array::<4>(rest)?))
+}
+
+fn take_array<const N: usize>(rest: &mut &[u8]) -> Result<[u8; N], IdError> {
+    if rest.len() < N {
+        return Err(IdError::Decode);
+    }
+    let (head, tail) = rest.split_at(N);
+    *rest = tail;
+    let mut value = [0_u8; N];
+    value.copy_from_slice(head);
+    Ok(value)
+}
+
+/// CRC-32/ISO-HDLC. Detects a flipped token byte; it is not an authenticator.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffff_u32;
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
 
 /// A DAV resource path relative to the account's discovered collection.
 ///

@@ -23,7 +23,12 @@ impl TryFrom<&str> for MailboxPath {
     type Error = ParseError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        if value.is_empty() || value.len() > 1024 || value.chars().any(char::is_control) {
+        if value.is_empty()
+            || value.len() > 1024
+            || value.contains("://")
+            || value.starts_with("//")
+            || value.chars().any(char::is_control)
+        {
             return Err(ParseError::MailboxPath);
         }
         Ok(Self(value.to_owned()))

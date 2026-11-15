@@ -12,6 +12,7 @@ repository = "https://github.com/AlexanderTar/icloud-mcp"
 # Dependencies arrive with the crates that use them. Versions live here so
 # every crate resolves the same one.
 [workspace.dependencies]
+base64 = "0.22"
 proptest = "1"
 thiserror = "2"
 

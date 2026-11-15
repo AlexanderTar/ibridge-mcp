@@ -13,7 +13,7 @@ use std::path::Path;
 use ibridge_auth::Credentials;
 use ibridge_contacts::CardDavProvider;
 use ibridge_core::{ContactDraft, ContactsProvider, ResourcePath};
-use ibridge_dav::{DavClient, DavError};
+use ibridge_dav::{DavClient, DavError, multistatus};
 
 use crate::record_calendar::{dav, delete_marked, dsid_of, load, send};
 use crate::record_fixtures::{MARKER, RecordError};
@@ -68,16 +68,20 @@ async fn record(
     created: &mut Option<ResourcePath>,
 ) -> Result<usize, RecordError> {
     let home = raw.contacts_home().await.map_err(dav)?;
+    let listing = send(raw, "PROPFIND", &home.url, Some("1"), PROPFIND_BODY).await?;
+    // Address book names are the account's own and part of the listing saved below.
+    let names = multistatus::parse(listing.as_bytes())
+        .map_err(dav)?
+        .into_iter()
+        .filter_map(|entry| entry.display_name)
+        .collect();
     let mut scrubber = Scrubber::new(Identity {
         apple_id: credentials.apple_id.as_str().to_owned(),
         dsid: dsid_of(&home.url),
-        names: Vec::new(),
+        names,
     });
     let mut fixtures: Vec<(&str, String)> = Vec::new();
-    fixtures.push((
-        "propfind-home.xml",
-        send(raw, "PROPFIND", &home.url, Some("1"), PROPFIND_BODY).await?,
-    ));
+    fixtures.push(("propfind-home.xml", listing));
 
     let path = provider
         .create(&ContactDraft {
@@ -152,7 +156,7 @@ mod tests {
 
     async fn account_with_contacts() -> FakeCardDav {
         let fake = FakeCardDav::start().await;
-        fake.add_book("card", "card");
+        fake.add_book("card", "Private Family Book");
         fake.put("card", "real.vcf", REAL);
         fake
     }
@@ -235,7 +239,13 @@ mod tests {
         for file in ["propfind-home.xml", "report-multiget.xml", "contact.vcf"] {
             let text = fs::read_to_string(out.join(file))
                 .unwrap_or_else(|error| panic!("{file} was not recorded: {error}"));
-            for private in ["Dentist", "555 0188", "ada@icloud.com", "never-print-me"] {
+            for private in [
+                "Dentist",
+                "555 0188",
+                "ada@icloud.com",
+                "never-print-me",
+                "Private Family Book",
+            ] {
                 assert!(!text.contains(private), "{file} leaks {private}: {text}");
             }
         }

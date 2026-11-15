@@ -1,10 +1,10 @@
-CREATE TABLE accounts (
+CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     apple_id TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL
 );
 
-CREATE TABLE grants (
+CREATE TABLE IF NOT EXISTS grants (
     id BLOB NOT NULL PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts (id),
     kind TEXT NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE grants (
     created_at INTEGER NOT NULL
 );
 
-CREATE TABLE seals (
+CREATE TABLE IF NOT EXISTS seals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     grant_id BLOB NOT NULL REFERENCES grants (id),
     purpose TEXT NOT NULL,
@@ -27,4 +27,4 @@ CREATE TABLE seals (
     created_at INTEGER NOT NULL
 );
 
-CREATE INDEX seals_by_grant ON seals (grant_id);
+CREATE INDEX IF NOT EXISTS seals_by_grant ON seals (grant_id);

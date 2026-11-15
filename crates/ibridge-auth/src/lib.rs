@@ -4,11 +4,14 @@
 
 mod credentials;
 mod hosts;
+mod platform;
+mod source;
 
 pub use credentials::{
     AuthError, AuthMethod, Credentials, ServiceCheck, ValidationReport, Validator,
 };
 pub use hosts::is_allowed_host;
+pub use source::{CredentialSource, EnvSource, FileSource, KeyringSource};
 
 #[cfg(test)]
 mod tests {

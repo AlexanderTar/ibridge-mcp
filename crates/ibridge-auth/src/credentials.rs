@@ -49,6 +49,9 @@ pub enum AuthError {
     /// Validation could not be run.
     #[error("validation failed")]
     Validation,
+    /// A credential source could not supply an Apple ID and password.
+    #[error("credentials are unavailable")]
+    Unavailable,
 }
 
 /// Result of checking one iCloud service.

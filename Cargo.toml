@@ -14,9 +14,11 @@ repository = "https://github.com/AlexanderTar/icloud-mcp"
 [workspace.dependencies]
 base64 = "0.22"
 ibridge-core = { path = "crates/ibridge-core" }
+keyring-core = "1"
 proptest = "1"
 secrecy = "0.10"
 serde = "1"
+temp-env = "0.3"
 thiserror = "2"
 trait-variant = "0.1"
 trybuild = "1"

@@ -24,8 +24,8 @@ pub struct AccountSnapshot {
     pub apple_id: AppleId,
     /// Mail reachability.
     pub mail: ServiceStatus,
-    /// Calendar reachability. Calendar tools arrive in a later package.
+    /// Calendar reachability.
     pub calendar: ServiceStatus,
-    /// Contacts reachability. Contacts tools arrive in a later package.
+    /// Contacts reachability.
     pub contacts: ServiceStatus,
 }

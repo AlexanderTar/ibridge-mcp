@@ -4,7 +4,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ibridge_auth::{Credentials, is_allowed_host};
+use ibridge_auth::Credentials;
 use ibridge_core::CoreError;
 use lettre::address::{Address, Envelope};
 use lettre::transport::smtp::authentication::Credentials as SmtpCredentials;
@@ -31,7 +31,7 @@ pub struct OutgoingMail {
 /// SMTP client for one account.
 ///
 /// [`Self::icloud`] is the production constructor: port 587 and required STARTTLS.
-/// [`Self::plain`] is cleartext for a loopback test server.
+/// Tests build a cleartext client for a loopback server only.
 #[derive(Debug)]
 pub struct SmtpClient {
     credentials: Credentials,
@@ -52,19 +52,22 @@ impl SmtpClient {
         }
     }
 
-    /// Cleartext SMTP. The host must still be loopback or on the iCloud allowlist.
+    /// Cleartext SMTP for a loopback test server.
+    ///
+    /// An allowlisted iCloud host is refused: lettre would send `AUTH` with no TLS.
     ///
     /// # Errors
     ///
-    /// Returns [`CoreError::HostNotAllowed`] when `host` is not loopback and not
-    /// an allowlisted iCloud host. The port is not part of that check.
-    pub fn plain(
+    /// Returns [`CoreError::HostNotAllowed`] when `host` is not a loopback name.
+    /// The port is not part of that check.
+    #[cfg(test)]
+    pub(crate) fn plain(
         credentials: Credentials,
         host: impl Into<String>,
         port: u16,
     ) -> Result<Self, CoreError> {
         let host = host.into();
-        if !host_allowed(&host) {
+        if !is_loopback(&host) {
             return Err(CoreError::HostNotAllowed);
         }
         Ok(Self {
@@ -141,8 +144,9 @@ impl SmtpClient {
     }
 }
 
-fn host_allowed(host: &str) -> bool {
-    matches!(host, "127.0.0.1" | "localhost" | "::1") || is_allowed_host(host)
+#[cfg(test)]
+fn is_loopback(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 pub(crate) fn build_message(mail: &OutgoingMail) -> Result<Vec<u8>, CoreError> {
@@ -251,6 +255,7 @@ fn message_bytes(mail: &OutgoingMail) -> Vec<u8> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -281,18 +286,25 @@ pub(crate) mod tests {
 
     impl SmtpCapture {
         pub(crate) async fn start() -> Self {
+            Self::start_failing(0).await
+        }
+
+        /// The first `times` connections are refused. Later ones speak SMTP.
+        pub(crate) async fn start_failing(times: usize) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
             let port = listener.local_addr().expect("local addr").port();
             let seen = Arc::new(Mutex::new(Seen::default()));
             let slot = Arc::clone(&seen);
+            let fails_left = Arc::new(AtomicUsize::new(times));
             let task = tokio::spawn(async move {
                 loop {
                     let Ok((socket, _)) = listener.accept().await else {
                         return;
                     };
                     let slot = Arc::clone(&slot);
+                    let fails_left = Arc::clone(&fails_left);
                     tokio::spawn(async move {
-                        let _ = serve(socket, slot).await;
+                        let _ = serve(socket, slot, fails_left).await;
                     });
                 }
             });
@@ -319,6 +331,14 @@ pub(crate) mod tests {
         pub(crate) fn message(&self) -> String {
             self.seen.lock().expect("seen").data.clone()
         }
+
+        pub(crate) fn mail_from(&self) -> String {
+            self.seen.lock().expect("seen").mail_from.clone()
+        }
+
+        pub(crate) fn username(&self) -> String {
+            self.seen.lock().expect("seen").username.clone()
+        }
     }
 
     impl Drop for SmtpCapture {
@@ -327,8 +347,21 @@ pub(crate) mod tests {
         }
     }
 
-    async fn serve(socket: TcpStream, seen: Arc<Mutex<Seen>>) -> std::io::Result<()> {
+    async fn serve(
+        socket: TcpStream,
+        seen: Arc<Mutex<Seen>>,
+        fails_left: Arc<AtomicUsize>,
+    ) -> std::io::Result<()> {
         let mut reader = BufReader::new(socket);
+        let refuse = fails_left
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok();
+        if refuse {
+            write_line(&mut reader, "550 refused\r\n").await?;
+            return Ok(());
+        }
         write_line(&mut reader, "220 localhost ESMTP\r\n").await?;
         let mut captured = Seen::default();
         loop {
@@ -545,6 +578,16 @@ pub(crate) mod tests {
             line.split_once(':')
                 .is_some_and(|(key, rest)| key.eq_ignore_ascii_case(name) && rest.contains(value))
         })
+    }
+
+    #[test]
+    fn plain_refuses_a_non_loopback_host() {
+        let err = SmtpClient::plain(credentials(), "smtp.mail.me.com", 587)
+            .expect_err("cleartext SMTP is only for a loopback test server");
+        assert!(
+            matches!(err, ibridge_core::CoreError::HostNotAllowed),
+            "an allowlisted host must not receive the password in cleartext, got {err:?}"
+        );
     }
 
     #[tokio::test]

@@ -248,6 +248,8 @@ pub struct Draft {
     pub subject: String,
     /// Body as text.
     pub body: String,
+    /// `From` when it is not the account's Apple ID. A custom domain is allowed.
+    pub from: Option<String>,
     /// Message this draft replies to.
     pub reply_to: Option<MessageId>,
 }

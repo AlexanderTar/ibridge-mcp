@@ -25,6 +25,48 @@ pub(crate) struct ReadMessage {
     pub(crate) attachments: Vec<AttachmentInfo>,
 }
 
+/// `In-Reply-To` and `References` taken from a parent message.
+pub(crate) struct ThreadHeaders {
+    /// Parent `Message-ID`, with angle brackets.
+    pub(crate) in_reply_to: String,
+    /// Parent `References`, then the parent `Message-ID` when it is not already last.
+    pub(crate) references: Vec<String>,
+}
+
+/// Reply headers for `bytes`.
+///
+/// # Errors
+///
+/// Returns [`CoreError::NotFound`] when `bytes` is not a message, and
+/// [`CoreError::InvalidInput`] when it has no `Message-ID`.
+pub(crate) fn thread_headers(bytes: &[u8]) -> Result<ThreadHeaders, CoreError> {
+    let message = MessageParser::new()
+        .parse(bytes)
+        .ok_or(CoreError::NotFound)?;
+    let id = message.message_id().ok_or_else(|| {
+        CoreError::InvalidInput("the message being replied to has no Message-ID".to_owned())
+    })?;
+    let in_reply_to = angle(id);
+    let mut references = message
+        .references()
+        .map_or_else(Vec::new, |list| list.iter().map(angle).collect());
+    if references.last() != Some(&in_reply_to) {
+        references.push(in_reply_to.clone());
+    }
+    Ok(ThreadHeaders {
+        in_reply_to,
+        references,
+    })
+}
+
+fn angle(id: &str) -> String {
+    if id.starts_with('<') && id.ends_with('>') && id.len() > 2 {
+        id.to_owned()
+    } else {
+        format!("<{id}>")
+    }
+}
+
 /// Text window and attachment list for one parsed message.
 pub(crate) fn read_message(bytes: &[u8], offset: usize) -> Option<ReadMessage> {
     let message = MessageParser::new().parse(bytes)?;

@@ -71,6 +71,20 @@ impl<C: Connect> ImapPool<C> {
             next_offset,
         })
     }
+
+    /// `In-Reply-To` and `References` for a reply to `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when the message is missing or unreadable,
+    /// and [`CoreError::InvalidInput`] when it has no `Message-ID`.
+    pub(crate) async fn reply_headers(
+        &self,
+        id: &MessageId,
+    ) -> Result<crate::mime::ThreadHeaders, CoreError> {
+        let body = load_body(self, id).await?;
+        crate::mime::thread_headers(&body)
+    }
 }
 
 async fn load_body<C: Connect>(pool: &ImapPool<C>, id: &MessageId) -> Result<Vec<u8>, CoreError> {

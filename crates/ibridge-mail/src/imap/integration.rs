@@ -169,6 +169,7 @@ async fn greenmail_send_then_find_in_inbox_and_sent() {
             to: vec!["ada@icloud.com".to_owned()],
             subject: "bridge picnic".to_owned(),
             body: "See you at the gate.".to_owned(),
+            from: None,
             reply_to: None,
         })
         .await

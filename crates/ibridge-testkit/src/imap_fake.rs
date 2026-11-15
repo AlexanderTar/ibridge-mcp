@@ -3,6 +3,7 @@
 //! Scripted IMAP server for contract tests.
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::io;
 use std::sync::{Arc, Mutex};
 
@@ -51,6 +52,10 @@ pub struct FakeScript {
     pub uid_validity: Option<u32>,
     /// `UID MOVE` is rejected, so the client must copy, delete, and expunge that uid.
     pub reject_uid_move: bool,
+    /// `APPEND` is rejected.
+    pub fail_append: bool,
+    /// A user folder named `Archive` is listed before the `\Archive` mailbox.
+    pub archive_name_shadow: bool,
 }
 
 #[derive(Debug)]
@@ -64,8 +69,8 @@ struct Observed {
     inbound: Vec<u8>,
     /// Inbox UIDs that carry `\Deleted`. UID 99 starts deleted and is not the message under test.
     inbox_deleted: Vec<u32>,
-    /// How many times `\Seen` is recorded on inbox UID 4.
-    seen_on_four: usize,
+    /// Flags stored on inbox UID 4. A repeated `+FLAGS` does not insert twice.
+    flags_on_four: BTreeSet<String>,
 }
 
 /// One message a client appended.
@@ -106,7 +111,7 @@ impl FakeImap {
                 appended: Vec::new(),
                 inbound: Vec::new(),
                 inbox_deleted: vec![99],
-                seen_on_four: 0,
+                flags_on_four: BTreeSet::new(),
             })),
         }
     }
@@ -151,11 +156,11 @@ impl FakeImap {
         }
     }
 
-    /// How many `\Seen` flags inbox UID 4 carries. One means a repeated store did not toggle.
+    /// Whether inbox UID 4 carries `flag`. One when it is in the flag set.
     #[must_use]
     pub fn flag_count(&self, mailbox: &str, uid: u32, flag: &str) -> usize {
-        if mailbox == "INBOX" && uid == 4 && flag == "\\Seen" {
-            self.observed().seen_on_four
+        if mailbox == "INBOX" && uid == 4 {
+            usize::from(self.observed().flags_on_four.contains(flag))
         } else {
             0
         }
@@ -215,26 +220,13 @@ async fn serve(
                     break;
                 }
                 let raw = String::from_utf8_lossy(&buf[..consumed]).into_owned();
-                if let CommandBody::Select { mailbox } = &command.body {
-                    selected = mailbox_name(mailbox);
-                }
-                let stored = appended_from(&command, &mut next_uid);
-                let appended_uid = stored.as_ref().map(|(uid, _)| *uid);
-                {
-                    let mut observed = observed.lock().expect("observed lock");
-                    observed.commands.push(command.name());
-                    observed.lines.push(recorded_line(&command, &raw));
-                    if matches!(command.body, CommandBody::Login { .. }) {
-                        observed.logins += 1;
-                    }
-                    if let Some((_, message)) = stored {
-                        observed.appended.push(message);
-                    }
-                    apply_mailbox(&command, &mut observed);
-                }
-                let reply = appended_uid.map_or_else(
-                    || encode_reply(&command, &script, &selected),
-                    |uid| append_ok(&command.tag, script.uid_validity.unwrap_or(1), uid),
+                let reply = command_reply(
+                    &command,
+                    &raw,
+                    &script,
+                    &mut selected,
+                    &mut next_uid,
+                    &observed,
                 );
                 buf.drain(..consumed);
                 Some(reply)
@@ -284,6 +276,44 @@ async fn serve(
     Ok(())
 }
 
+fn command_reply(
+    command: &Command<'_>,
+    raw: &str,
+    script: &FakeScript,
+    selected: &mut String,
+    next_uid: &mut u32,
+    observed: &Arc<Mutex<Observed>>,
+) -> Vec<u8> {
+    if let CommandBody::Select { mailbox } = &command.body {
+        *selected = mailbox_name(mailbox);
+    }
+    let stored = appended_from(command, next_uid);
+    let appended_uid = stored.as_ref().map(|(uid, _)| *uid);
+    let fail_append = script.fail_append && matches!(command.body, CommandBody::Append { .. });
+    {
+        let mut observed = observed.lock().expect("observed lock");
+        observed.commands.push(command.name());
+        observed.lines.push(recorded_line(command, raw));
+        if matches!(command.body, CommandBody::Login { .. }) {
+            observed.logins += 1;
+        }
+        if let Some((_, message)) = stored
+            && !fail_append
+        {
+            observed.appended.push(message);
+        }
+        apply_mailbox(command, &mut observed);
+    }
+    if fail_append {
+        tagged(Status::no(Some(command.tag.clone()), None, "append failed").expect("no text"))
+    } else {
+        appended_uid.map_or_else(
+            || encode_reply(command, script, selected),
+            |uid| append_ok(&command.tag, script.uid_validity.unwrap_or(1), uid),
+        )
+    }
+}
+
 fn appended_from(command: &Command<'_>, next_uid: &mut u32) -> Option<(u32, AppendedMessage)> {
     let CommandBody::Append {
         mailbox,
@@ -323,7 +353,7 @@ fn apply_mailbox(command: &Command<'_>, observed: &mut Observed) {
     match &command.body {
         CommandBody::Store {
             sequence_set,
-            kind: StoreType::Add,
+            kind,
             flags,
             uid: true,
             ..
@@ -331,10 +361,11 @@ fn apply_mailbox(command: &Command<'_>, observed: &mut Observed) {
             let Some(uid) = single_uid(sequence_set) else {
                 return;
             };
-            if flags.iter().any(|flag| matches!(flag, Flag::Seen)) && uid == 4 {
-                observed.seen_on_four = 1;
+            if uid == 4 {
+                apply_flag_set(&mut observed.flags_on_four, *kind, flags);
             }
-            if flags.iter().any(|flag| matches!(flag, Flag::Deleted))
+            if matches!(kind, StoreType::Add)
+                && flags.iter().any(|flag| matches!(flag, Flag::Deleted))
                 && !observed.inbox_deleted.contains(&uid)
             {
                 observed.inbox_deleted.push(uid);
@@ -342,6 +373,22 @@ fn apply_mailbox(command: &Command<'_>, observed: &mut Observed) {
         }
         CommandBody::Expunge => observed.inbox_deleted.clear(),
         _ => {}
+    }
+}
+
+fn apply_flag_set(set: &mut BTreeSet<String>, kind: StoreType, flags: &[Flag<'_>]) {
+    let names = flags.iter().map(ToString::to_string);
+    match kind {
+        StoreType::Add => set.extend(names),
+        StoreType::Remove => {
+            for name in names {
+                set.remove(&name);
+            }
+        }
+        StoreType::Replace => {
+            set.clear();
+            set.extend(names);
+        }
     }
 }
 
@@ -450,7 +497,15 @@ const MAILBOXES: &[(&str, Option<&str>, u32, u32)] = &[
 
 fn list_reply(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
     let mut bytes = Vec::new();
+    if script.archive_name_shadow {
+        bytes.extend(untagged(list_data("Archive", None)));
+    }
     for (name, attribute, _, _) in MAILBOXES {
+        let name = if script.archive_name_shadow && *name == "Archive" {
+            "Archived Messages"
+        } else {
+            *name
+        };
         bytes.extend(untagged(list_data(name, *attribute)));
     }
     if script.list_noselect {
@@ -556,7 +611,11 @@ fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
             4,
             r#"INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "newer" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#
                 .to_owned(),
-            single_part("text/html; charset=utf-8", b"<p>Hello <b>there</b></p>"),
+            headed(
+                "text/html; charset=utf-8",
+                "Message-ID: <parent@example.com>\r\nReferences: <root@example.com>\r\n",
+                b"<p>Hello <b>there</b></p>",
+            ),
         ),
         (
             2,
@@ -624,7 +683,11 @@ fn push_fetch(out: &mut Vec<u8>, seq: u32, uid: u32, head: &str, body: &[u8]) {
 }
 
 fn single_part(content_type: &str, body: &[u8]) -> Vec<u8> {
-    let mut bytes = format!("Content-Type: {content_type}\r\n\r\n").into_bytes();
+    headed(content_type, "", body)
+}
+
+fn headed(content_type: &str, headers: &str, body: &[u8]) -> Vec<u8> {
+    let mut bytes = format!("{headers}Content-Type: {content_type}\r\n\r\n").into_bytes();
     bytes.extend_from_slice(body);
     bytes
 }

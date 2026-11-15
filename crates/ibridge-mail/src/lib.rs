@@ -10,5 +10,5 @@ mod smtp;
 
 pub use imap::ImapPool;
 pub use limits::SendLimits;
-pub use session::MailSession;
+pub use session::{MailSession, SendOutcome};
 pub use smtp::{OutgoingMail, SmtpClient};

@@ -84,12 +84,16 @@ async fn path_for_role<C: Connect>(
     pool: &ImapPool<C>,
     role: MailboxRole,
 ) -> Result<MailboxPath, CoreError> {
-    let mailboxes = pool.list_mailboxes().await?;
-    mailboxes
-        .into_iter()
-        .find(|mailbox| mailbox.role == role)
-        .map(|mailbox| mailbox.path)
-        .ok_or(CoreError::NotFound)
+    let mailboxes = pool.listed().await?;
+    // A SPECIAL-USE mailbox wins over a user folder that only shares the name.
+    let index = mailboxes
+        .iter()
+        .position(|mailbox| mailbox.role == role && mailbox.special_use)
+        .or_else(|| mailboxes.iter().position(|mailbox| mailbox.role == role));
+    let Some(index) = index else {
+        return Err(CoreError::NotFound);
+    };
+    Ok(mailboxes[index].path.clone())
 }
 
 async fn append_on<C: Connect>(

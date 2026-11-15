@@ -8,6 +8,16 @@ use ibridge_core::{CoreError, Mailbox, MailboxPath, MailboxRole};
 
 use super::pool::{Connect, ImapPool, map_command, run_checked};
 
+/// One mailbox, including whether its role came from a SPECIAL-USE attribute.
+pub(crate) struct ListedMailbox {
+    pub(crate) path: MailboxPath,
+    pub(crate) role: MailboxRole,
+    /// `true` when [`role`](Self::role) came from a SPECIAL-USE attribute.
+    pub(crate) special_use: bool,
+    pub(crate) total: u32,
+    pub(crate) unread: u32,
+}
+
 impl<C: Connect> ImapPool<C> {
     /// Lists mailboxes and maps SPECIAL-USE attributes to roles.
     ///
@@ -15,6 +25,19 @@ impl<C: Connect> ImapPool<C> {
     ///
     /// Returns [`CoreError`] when the list cannot be read.
     pub async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, CoreError> {
+        let listed = self.listed().await?;
+        Ok(listed
+            .into_iter()
+            .map(|item| Mailbox {
+                path: item.path,
+                role: item.role,
+                total: item.total,
+                unread: item.unread,
+            })
+            .collect())
+    }
+
+    pub(crate) async fn listed(&self) -> Result<Vec<ListedMailbox>, CoreError> {
         let mut lease = self.checkout().await?;
         let listed = list_with(&mut lease).await;
         lease.release();
@@ -24,7 +47,7 @@ impl<C: Connect> ImapPool<C> {
 
 async fn list_with<C: Connect>(
     lease: &mut super::pool::Lease<'_, C>,
-) -> Result<Vec<Mailbox>, CoreError> {
+) -> Result<Vec<ListedMailbox>, CoreError> {
     let Some(session) = lease.session_mut() else {
         return Err(CoreError::Network);
     };
@@ -39,15 +62,15 @@ async fn list_with<C: Connect>(
         let Ok(path) = MailboxPath::try_from(data.name.as_ref()) else {
             return;
         };
-        let role = role_of(data.name.as_ref(), &data.name_attributes);
-        found.push((path, role));
+        let (role, special_use) = role_of(data.name.as_ref(), &data.name_attributes);
+        found.push((path, role, special_use));
     })
     .await?;
     if reply.unparsed {
         return Err(CoreError::Protocol("imap command failed".to_owned()));
     }
     let mut mailboxes = Vec::with_capacity(found.len());
-    for (path, role) in found {
+    for (path, role, special_use) in found {
         let status = session.status(path.as_str(), "(MESSAGES UNSEEN)").await;
         let (total, unread) = match status {
             Ok(status) => (status.exists, status.unseen.unwrap_or(0)),
@@ -59,9 +82,10 @@ async fn list_with<C: Connect>(
                 (0, 0)
             }
         };
-        mailboxes.push(Mailbox {
+        mailboxes.push(ListedMailbox {
             path,
             role,
+            special_use,
             total,
             unread,
         });
@@ -81,7 +105,8 @@ fn unselectable(attributes: &[NameAttribute<'_>]) -> bool {
 /// iCloud's folder names and the short names `GreenMail` uses (`Sent`, `Trash`,
 /// `Drafts`, `Junk`, `Archive`) still map. `Notes` has no special-use attribute.
 /// `INBOX` is always inbox.
-fn role_of(name: &str, attributes: &[NameAttribute<'_>]) -> MailboxRole {
+/// The bool is `true` when the role came from a SPECIAL-USE attribute.
+fn role_of(name: &str, attributes: &[NameAttribute<'_>]) -> (MailboxRole, bool) {
     for attribute in attributes {
         let role = match attribute {
             NameAttribute::Archive => Some(MailboxRole::Archive),
@@ -92,10 +117,10 @@ fn role_of(name: &str, attributes: &[NameAttribute<'_>]) -> MailboxRole {
             _ => None,
         };
         if let Some(role) = role {
-            return role;
+            return (role, true);
         }
     }
-    if name.eq_ignore_ascii_case("INBOX") {
+    let role = if name.eq_ignore_ascii_case("INBOX") {
         MailboxRole::Inbox
     } else if name.eq_ignore_ascii_case("Notes") {
         MailboxRole::Notes
@@ -111,7 +136,8 @@ fn role_of(name: &str, attributes: &[NameAttribute<'_>]) -> MailboxRole {
         MailboxRole::Archive
     } else {
         MailboxRole::Other
-    }
+    };
+    (role, false)
 }
 
 #[cfg(test)]

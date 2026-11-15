@@ -1,0 +1,14 @@
+# Only these licences may be linked. GPL and LGPL are not allowed.
+# https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8

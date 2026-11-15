@@ -1,0 +1,20 @@
+[package]
+name = "ibridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "iCloud Mail, Calendar, Reminders and Contacts MCP server."
+
+[features]
+default = ["mail", "calendar", "contacts", "stdio", "http"]
+mail = []
+calendar = []
+contacts = []
+stdio = []
+http = []
+hosted = []
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+# Docker-backed tests live in a module path containing `::integration::`.
+# `group()` is command-line only, so this filter is what puts them in the
+# integration test group and what the default profile excludes.
+
+[test-groups.integration]
+max-threads = 1
+
+[profile.default]
+default-filter = 'not test(::integration::)'
+
+[[profile.default.overrides]]
+filter = 'test(::integration::)'
+test-group = 'integration'
+
+[profile.integration]
+default-filter = 'test(::integration::)'

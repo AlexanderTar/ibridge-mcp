@@ -55,22 +55,19 @@ pub(crate) struct Expansion {
 
 /// Expands every `VEVENT` in `ical` and keeps the occurrences that overlap `window`.
 pub(crate) fn expand(ical: &ICalendar, window: Option<Window>) -> Expansion {
-    let clipped = window.map(|window| clip_open_rules(ical, window));
+    let prepared = for_expansion(ical, window);
     let limit = if window.is_some() {
         EXPANSION_LIMIT
     } else {
         FIRST_EXPANSION_LIMIT
     };
-    let expanded = clipped
-        .as_ref()
-        .unwrap_or(ical)
-        .expand_dates(Tz::Floating, limit);
+    let expanded = prepared.expand_dates(Tz::Floating, limit);
     let resolver = ical.build_tz_resolver().with_default(Tz::Floating);
     let mut result = Expansion {
         occurrences: Vec::new(),
         // Stopping at the limit may have missed occurrences.
         had_errors: !expanded.errors.is_empty()
-            || expanded.events.len() >= limit && window.is_some(),
+            || (expanded.events.len() >= limit && window.is_some()),
     };
     for event in expanded.events {
         let Some(component) = ical.components.get(usize_from(event.comp_id)) else {
@@ -105,12 +102,29 @@ pub(crate) fn expand(ical: &ICalendar, window: Option<Window>) -> Expansion {
     result
 }
 
-/// A copy of `ical` whose rules with no `COUNT` or `UNTIL` end just after the
-/// window, so an open-ended series is not expanded to the limit.
-fn clip_open_rules(ical: &ICalendar, window: Window) -> ICalendar {
+/// A copy of `ical` made ready for calcard: no `SEQUENCE`, and, when there is a
+/// window, open-ended rules end just after it.
+///
+/// calcard only matches an override to its series when both have the same
+/// `SEQUENCE`, but a series and its overrides are free to differ (iCloud and
+/// this provider's own updates both do that). The clip keeps an open-ended rule
+/// from being expanded all the way to the limit.
+fn for_expansion(ical: &ICalendar, window: Option<Window>) -> ICalendar {
+    let mut prepared = ical.clone();
+    for component in &mut prepared.components {
+        component
+            .entries
+            .retain(|entry| entry.name != ICalendarProperty::Sequence);
+    }
+    if let Some(window) = window {
+        clip_open_rules(&mut prepared, window);
+    }
+    prepared
+}
+
+fn clip_open_rules(prepared: &mut ICalendar, window: Window) {
     let until = window.end + chrono::Duration::days(CLIP_SLACK_DAYS);
-    let mut clipped = ical.clone();
-    for component in &mut clipped.components {
+    for component in &mut prepared.components {
         for entry in &mut component.entries {
             if entry.name != ICalendarProperty::Rrule {
                 continue;
@@ -135,7 +149,6 @@ fn clip_open_rules(ical: &ICalendar, window: Window) -> ICalendar {
             }
         }
     }
-    clipped
 }
 
 /// The component's own `RECURRENCE-ID`, read in its zone.

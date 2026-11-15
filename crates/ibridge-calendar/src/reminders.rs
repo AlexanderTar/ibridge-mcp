@@ -330,6 +330,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_reminder_refreshes_dtstamp_and_bumps_sequence_on_due_change() {
+        let (fake, provider) = with_lists().await;
+        let etag = fake.put(
+            "tasks",
+            "milk.ics",
+            &vcalendar(
+                "BEGIN:VTODO\nUID:milk-1\nDTSTAMP:20261101T000000Z\nSEQUENCE:4\n\
+                 SUMMARY:Buy milk\nDUE:20261120T080000Z\nSTATUS:NEEDS-ACTION\nEND:VTODO",
+            ),
+        );
+        let target = path("tasks/milk.ics");
+        let later = ReminderDraft {
+            due: Some("2026-11-21T08:00:00Z".to_owned()),
+            ..draft("Buy milk")
+        };
+        let etag = provider
+            .update(
+                &target,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &later,
+            )
+            .await
+            .expect("move the due date");
+        let body = fake.body("tasks", "milk.ics").expect("stored");
+        assert!(body.contains("SEQUENCE:5"), "a due change bumps it: {body}");
+        assert!(
+            !body.contains("DTSTAMP:20261101T000000Z"),
+            "the stamp is refreshed: {body}"
+        );
+
+        provider
+            .update(
+                &target,
+                &etag,
+                &ReminderDraft {
+                    notes: "2%".to_owned(),
+                    ..later
+                },
+            )
+            .await
+            .expect("add notes");
+        let body = fake.body("tasks", "milk.ics").expect("stored");
+        assert!(
+            body.contains("SEQUENCE:5") && !body.contains("SEQUENCE:6"),
+            "notes alone keep the sequence: {body}"
+        );
+    }
+
+    #[tokio::test]
     async fn upgraded_lists_note() {
         let (_fake, provider) = with_lists().await;
         let error = provider

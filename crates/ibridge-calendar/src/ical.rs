@@ -285,8 +285,9 @@ pub(crate) fn new_event_text(
 
 /// Applies `draft` to the event in `text` and returns the new text.
 ///
-/// Only the summary, description, start and end change. Every other property,
-/// alarm and attendee is left as it was.
+/// Only the summary, description, start and end change, plus `DTSTAMP` and, when
+/// the time moves, `SEQUENCE`. Every other property, alarm and attendee is left
+/// as it was.
 ///
 /// # Errors
 ///
@@ -296,6 +297,7 @@ pub(crate) fn update_event_text(
     text: &str,
     draft: &EventDraft,
     scope: &UpdateScope,
+    now: DateTime<Utc>,
 ) -> Result<String, CoreError> {
     let (start, end) = draft_times(draft)?;
     let mut ical = parse(text).ok_or_else(|| CoreError::Protocol(String::new()))?;
@@ -314,9 +316,57 @@ pub(crate) fn update_event_text(
         }
         _ => return Err(CoreError::Unsupported("update scope")),
     };
-    apply(&mut ical.components[target], draft, &start, &end);
+    let component = &mut ical.components[target];
+    let before = moments(component);
+    apply(component, draft, &start, &end);
+    mark_changed(component, &before, now);
     ical.add_missing_timezones();
     Ok(ical.to_string())
+}
+
+/// The properties that place a component in time.
+fn moments(component: &ICalendarComponent) -> Vec<ICalendarEntry> {
+    component
+        .entries
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.name,
+                ICalendarProperty::Dtstart
+                    | ICalendarProperty::Dtend
+                    | ICalendarProperty::Duration
+                    | ICalendarProperty::Due
+            )
+        })
+        .cloned()
+        .collect()
+}
+
+/// Stamps `component` as changed at `now`. A changed time also raises
+/// `SEQUENCE`, which is how attendees' clients order updates (RFC 5545 3.8.7.4).
+fn mark_changed(component: &mut ICalendarComponent, before: &[ICalendarEntry], now: DateTime<Utc>) {
+    component
+        .entries
+        .retain(|entry| entry.name != ICalendarProperty::Dtstamp);
+    component.add_dtstamp(partial(now.naive_utc(), Part::UtcTime));
+    if before == moments(component) {
+        return;
+    }
+    let current = component
+        .property(&ICalendarProperty::Sequence)
+        .and_then(|entry| entry.values.first())
+        .and_then(|value| match value {
+            ICalendarValue::Integer(number) => Some(*number),
+            _ => None,
+        })
+        .unwrap_or(0);
+    component
+        .entries
+        .retain(|entry| entry.name != ICalendarProperty::Sequence);
+    component.entries.push(
+        ICalendarEntry::new(ICalendarProperty::Sequence)
+            .with_value(ICalendarValue::Integer(current + 1)),
+    );
 }
 
 fn apply(component: &mut ICalendarComponent, draft: &EventDraft, start: &When, end: &When) {
@@ -566,7 +616,9 @@ pub(crate) fn update_todo_text(
         .iter_mut()
         .find(|component| component.component_type == ICalendarComponentType::VTodo)
         .ok_or_else(|| CoreError::Protocol(String::new()))?;
+    let before = moments(todo);
     apply_todo(todo, draft, now)?;
+    mark_changed(todo, &before, now);
     Ok(ical.to_string())
 }
 
@@ -684,7 +736,7 @@ mod tests {
                  END:VEVENT\r\nEND:VCALENDAR\r\n"
             )
             .expect("write to string");
-            let updated = update_event_text(&text, &draft("After"), &UpdateScope::Series)
+            let updated = update_event_text(&text, &draft("After"), &UpdateScope::Series, chrono::Utc::now())
                 .expect("update applies");
             let reparsed = parse(&updated).expect("the result is still an iCalendar object");
             let flat = reparsed.to_string();

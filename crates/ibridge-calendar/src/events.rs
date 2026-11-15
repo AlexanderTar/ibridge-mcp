@@ -105,7 +105,7 @@ impl CalendarProvider for CalDavProvider {
         if &current.etag != etag {
             return Err(CoreError::Conflict);
         }
-        let text = ical::update_event_text(&current.text, draft, scope)?;
+        let text = ical::update_event_text(&current.text, draft, scope, Utc::now())?;
         let home = self.home().await?;
         Ok(self
             .client
@@ -816,6 +816,112 @@ mod tests {
             .find(|request| request.method == "DELETE")
             .expect("a DELETE was sent");
         assert_eq!(delete.if_match.as_deref(), Some(etag.as_str()));
+    }
+
+    const SEQUENCED_EVENT: &str = "BEGIN:VEVENT\nUID:seq-1\nDTSTAMP:20261101T000000Z\n\
+        SEQUENCE:2\nDTSTART:20261116T090000Z\nDTEND:20261116T100000Z\nSUMMARY:Review\nEND:VEVENT";
+
+    #[tokio::test]
+    async fn update_event_bumps_sequence_on_time_change_and_refreshes_dtstamp() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put("work", "a.ics", &vcalendar(SEQUENCED_EVENT));
+        let path = ResourcePath::try_from("work/a.ics").expect("path");
+        let etag = provider
+            .update_event(
+                &path,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &draft("Review", "2026-11-16T11:00:00Z", "2026-11-16T12:00:00Z"),
+                &UpdateScope::Series,
+            )
+            .await
+            .expect("move the event");
+        let body = fake.body("work", "a.ics").expect("stored");
+        assert!(
+            body.contains("SEQUENCE:3"),
+            "a time change bumps it: {body}"
+        );
+        assert!(
+            !body.contains("DTSTAMP:20261101T000000Z"),
+            "the stamp is refreshed: {body}"
+        );
+
+        provider
+            .update_event(
+                &path,
+                &etag,
+                &draft("Renamed", "2026-11-16T11:00:00Z", "2026-11-16T12:00:00Z"),
+                &UpdateScope::Series,
+            )
+            .await
+            .expect("rename the event");
+        let body = fake.body("work", "a.ics").expect("stored");
+        assert!(
+            body.contains("SEQUENCE:3") && !body.contains("SEQUENCE:4"),
+            "a rename keeps the sequence: {body}"
+        );
+        assert!(body.contains("SUMMARY:Renamed"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn update_event_without_sequence_starts_at_one() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put("work", "a.ics", &vcalendar(ALARM_EVENT));
+        let path = ResourcePath::try_from("work/a.ics").expect("path");
+        provider
+            .update_event(
+                &path,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &draft("Review", "2026-11-16T11:00:00Z", "2026-11-16T12:00:00Z"),
+                &UpdateScope::Series,
+            )
+            .await
+            .expect("move the event");
+        let body = fake.body("work", "a.ics").expect("stored");
+        assert!(body.contains("SEQUENCE:1"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn moved_occurrence_of_a_sequenced_series_is_still_listed_once() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put(
+            "work",
+            "daily.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:daily-1\nDTSTAMP:20261101T000000Z\nSEQUENCE:1\n\
+                 DTSTART:20261116T090000Z\nDTEND:20261116T100000Z\n\
+                 RRULE:FREQ=DAILY;COUNT=3\nSUMMARY:Standup\nEND:VEVENT",
+            ),
+        );
+        let path = ResourcePath::try_from("work/daily.ics").expect("path");
+        provider
+            .update_event(
+                &path,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &draft("Moved", "2026-11-17T10:00:00Z", "2026-11-17T11:00:00Z"),
+                &UpdateScope::Occurrence {
+                    recurrence_id: "2026-11-17T09:00:00Z".to_owned(),
+                },
+            )
+            .await
+            .expect("move one occurrence");
+        let list = provider
+            .list_events(&query("2026-11-16T00:00:00Z", "2026-11-20T00:00:00Z"))
+            .await
+            .expect("list");
+        let starts: Vec<(&str, &str)> = list
+            .events
+            .iter()
+            .map(|e| (e.start.as_str(), e.summary.as_str()))
+            .collect();
+        assert_eq!(
+            starts,
+            [
+                ("2026-11-16T09:00:00Z", "Standup"),
+                ("2026-11-17T10:00:00Z", "Moved"),
+                ("2026-11-18T09:00:00Z", "Standup"),
+            ],
+            "the original 09:00 instance is replaced, not duplicated"
+        );
     }
 
     #[tokio::test]

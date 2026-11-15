@@ -35,7 +35,9 @@ jobs:
         run: cargo nextest run --workspace
 
       - name: Integration tests
-        run: cargo nextest run --workspace --profile integration
+        # --no-tests=pass: the Docker group is empty until a later package adds
+        # a ::integration:: test. A failing test still fails this step.
+        run: cargo nextest run --workspace --profile integration --no-tests=pass
 
       - name: MSRV
         run: cargo +1.98 check --workspace --all-features

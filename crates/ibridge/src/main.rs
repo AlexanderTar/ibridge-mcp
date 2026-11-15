@@ -6,6 +6,8 @@ mod account;
 mod calendar;
 mod cli;
 mod contacts;
+#[cfg(feature = "http")]
+mod daemon;
 mod login;
 mod mail;
 mod platform;

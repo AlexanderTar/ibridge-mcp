@@ -2,10 +2,14 @@
 
 //! Code that differs by operating system: the keychain and the browser opener.
 
+#[cfg(feature = "http")]
+pub(crate) mod launchd;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(feature = "http")]
+pub(crate) mod systemd;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -58,4 +62,28 @@ pub(crate) async fn shutdown_signal() {
         }
     }
     let _ = tokio::signal::ctrl_c().await;
+}
+
+/// The service manager that runs the daemon on this operating system.
+#[cfg(feature = "http")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Service {
+    /// A launchd `LaunchAgent` (macOS).
+    Launchd,
+    /// A systemd `--user` unit (Linux).
+    Systemd,
+}
+
+#[cfg(feature = "http")]
+impl Service {
+    /// The manager here, or `None` on an operating system without one.
+    pub(crate) const fn current() -> Option<Self> {
+        if cfg!(target_os = "macos") {
+            Some(Self::Launchd)
+        } else if cfg!(target_os = "linux") {
+            Some(Self::Systemd)
+        } else {
+            None
+        }
+    }
 }

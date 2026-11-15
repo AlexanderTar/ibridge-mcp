@@ -1,0 +1,31 @@
+---
+source: crates/ibridge/src/platform/launchd.rs
+expression: "plist(&spec(true), home)"
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>fyi.ibridge.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/ibridge</string>
+        <string>serve</string>
+        <string>--http</string>
+        <string>127.0.0.1:8765</string>
+        <string>--read-only</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/ada/Library/Logs/ibridge/daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ada/Library/Logs/ibridge/daemon.log</string>
+</dict>
+</plist>

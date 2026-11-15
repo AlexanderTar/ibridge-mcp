@@ -53,7 +53,6 @@ impl DaemonToken {
     }
 
     /// Passes the token to `read` and ends the borrow before returning.
-    #[cfg(test)]
     pub(crate) fn with_secret<T>(&self, read: impl FnOnce(&str) -> T) -> T {
         read(self.0.expose_secret())
     }

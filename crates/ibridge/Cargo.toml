@@ -52,7 +52,9 @@ secret-service = { version = "5", features = ["crypto-rust"] }
 
 [dev-dependencies]
 ibridge-testkit.workspace = true
+insta.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["secret-service"]

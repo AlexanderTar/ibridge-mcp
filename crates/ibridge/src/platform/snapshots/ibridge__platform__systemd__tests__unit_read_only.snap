@@ -1,0 +1,16 @@
+---
+source: crates/ibridge/src/platform/systemd.rs
+expression: "unit(&spec(\"/usr/local/bin/ibridge\", true))"
+---
+[Unit]
+Description=ibridge MCP server on loopback
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart="/usr/local/bin/ibridge" serve --http 127.0.0.1:8765 --read-only
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

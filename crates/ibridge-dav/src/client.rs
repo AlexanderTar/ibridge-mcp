@@ -215,6 +215,20 @@ impl DavClient {
         )
         .await
     }
+
+    /// Delete a resource with `If-Match`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::Conflict`] when the server answers 412 and
+    /// [`DavError::NotFound`] when it answers 404.
+    pub async fn delete_if_match(
+        &self,
+        resource_url: &str,
+        etag: &ibridge_core::ETag,
+    ) -> Result<(), DavError> {
+        crate::sync::delete_if_match(self, &self.credentials, resource_url, etag).await
+    }
 }
 
 impl Transport for DavClient {
@@ -291,8 +305,33 @@ pub(crate) async fn execute(
             outgoing.headers.remove(http::header::AUTHORIZATION);
             continue;
         }
-        return exchange_from(response, outgoing.uri.clone()).await;
+        return auth_gate(exchange_from(response, outgoing.uri.clone()).await?);
     }
+}
+
+/// 401, and a 403 that is not a `WebDAV` precondition, are an auth failure.
+///
+/// A 403 whose body is a `DAV:error` (for example `valid-sync-token`) stays a
+/// response the caller can parse.
+fn auth_gate(exchange: Exchange) -> Result<Exchange, DavError> {
+    match exchange.status {
+        StatusCode::UNAUTHORIZED => Err(DavError::Auth),
+        StatusCode::FORBIDDEN if !dav_precondition(&exchange.body) => Err(DavError::Auth),
+        _ => Ok(exchange),
+    }
+}
+
+fn dav_precondition(body: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return false;
+    };
+    let Ok(doc) = roxmltree::Document::parse(text) else {
+        return false;
+    };
+    doc.descendants().any(|node| {
+        let name = node.tag_name();
+        name.name() == "error" && name.namespace() == Some("DAV:")
+    })
 }
 
 /// Fetch `url` twice with the production HTTP stack.

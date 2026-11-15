@@ -28,10 +28,17 @@ pub struct SyncedItem {
 /// Changes since a sync token, or a full etag scan when the token is stale.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncReport {
-    /// Token to send on the next sync. A `getctag` when the server rejected the token.
-    pub token: String,
+    /// Token to send on the next sync.
+    ///
+    /// `None` after a full etag scan. That value is not a sync token: the caller
+    /// diffs [`Self::changed`] and starts a fresh sync.
+    pub token: Option<String>,
     /// Resources created or changed.
     pub changed: Vec<SyncedItem>,
+    /// Hrefs removed since the previous token.
+    pub deleted: Vec<String>,
+    /// Items skipped because they had no usable etag.
+    pub warnings: u32,
 }
 
 /// Sync `collection_url`. `limit` is ignored: iCloud does not honour `DAV:limit`.
@@ -61,9 +68,11 @@ pub(crate) async fn sync_collection(
         .prepare_request(base)
         .map_err(|_| DavError::Protocol)?;
     let exchange = execute(transport, credentials, http_request).await?;
+    if exchange.status.is_success() {
+        return report_from_body(&exchange.body);
+    }
     let parts = parts_of(&exchange)?;
     match request.parse_response(&parts, &exchange.body) {
-        Ok(response) => report_from_sync(response),
         Err(SyncCollectionParseError::PreconditionFailed(precondition)) => {
             if PropertyName::from(precondition) == VALID_SYNC_TOKEN {
                 etag_scan(transport, credentials, collection_url).await
@@ -71,7 +80,7 @@ pub(crate) async fn sync_collection(
                 Err(DavError::Protocol)
             }
         }
-        Err(_) => Err(DavError::Protocol),
+        _ => Err(DavError::Protocol),
     }
 }
 
@@ -116,6 +125,32 @@ pub(crate) async fn put_if_match(
     finish_put(transport, credentials, http_request, &request).await
 }
 
+/// Delete a resource. Sends `If-Match` with `etag`.
+///
+/// # Errors
+///
+/// Returns [`DavError::Conflict`] when the server answers 412 and
+/// [`DavError::NotFound`] when it answers 404.
+pub(crate) async fn delete_if_match(
+    transport: &impl Transport,
+    credentials: &Credentials,
+    resource_url: &str,
+    etag: &ETag,
+) -> Result<(), DavError> {
+    let (base, path) = split_url(resource_url)?;
+    let request = libdav::dav::Delete::new(&path).with_etag(etag.as_str());
+    let http_request = request
+        .prepare_request(base)
+        .map_err(|_| DavError::Protocol)?;
+    let exchange = execute(transport, credentials, http_request).await?;
+    match exchange.status {
+        status if status.is_success() => Ok(()),
+        StatusCode::PRECONDITION_FAILED => Err(DavError::Conflict),
+        StatusCode::NOT_FOUND => Err(DavError::NotFound),
+        _ => Err(DavError::Protocol),
+    }
+}
+
 async fn finish_put(
     transport: &impl Transport,
     credentials: &Credentials,
@@ -142,18 +177,57 @@ async fn finish_put(
     }
 }
 
-fn report_from_sync(response: libdav::dav::SyncCollectionResponse) -> Result<SyncReport, DavError> {
-    let mut changed = Vec::with_capacity(response.changed.len());
-    for resource in response.changed {
-        let etag = resource.etag.ok_or(DavError::Protocol)?;
-        changed.push(SyncedItem {
-            href: resource.href,
-            etag: ETag::try_from(etag.as_str()).map_err(|_| DavError::Protocol)?,
-        });
+fn report_from_body(body: &[u8]) -> Result<SyncReport, DavError> {
+    let text = std::str::from_utf8(body).map_err(|_| DavError::Protocol)?;
+    let doc = roxmltree::Document::parse(text).map_err(|_| DavError::Protocol)?;
+    let token = doc
+        .descendants()
+        .find(|node| node.tag_name().name() == "sync-token")
+        .and_then(|node| node.text())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or(DavError::Protocol)?;
+    let mut changed = Vec::new();
+    let mut deleted = Vec::new();
+    let mut warnings = 0_u32;
+    for response in doc
+        .descendants()
+        .filter(|node| node.tag_name().name() == "response")
+    {
+        let href = response
+            .children()
+            .find(|node| node.tag_name().name() == "href")
+            .and_then(|node| node.text())
+            .unwrap_or("")
+            .trim();
+        if href.is_empty() {
+            warnings += 1;
+            continue;
+        }
+        if status_is_not_found(&response) {
+            deleted.push(href.to_owned());
+            continue;
+        }
+        match element_text(&response, "getetag").map(ETag::try_from) {
+            Some(Ok(etag)) => changed.push(SyncedItem {
+                href: href.to_owned(),
+                etag,
+            }),
+            _ => warnings += 1,
+        }
     }
     Ok(SyncReport {
-        token: response.new_sync_token,
+        token: Some(token),
         changed,
+        deleted,
+        warnings,
+    })
+}
+
+fn status_is_not_found(response: &roxmltree::Node<'_, '_>) -> bool {
+    response.children().any(|node| {
+        node.tag_name().name() == "status" && node.text().is_some_and(|text| text.contains("404"))
     })
 }
 
@@ -179,8 +253,8 @@ async fn etag_scan(
 fn scan_report(body: &[u8], collection_path: &str) -> Result<SyncReport, DavError> {
     let text = std::str::from_utf8(body).map_err(|_| DavError::Protocol)?;
     let doc = roxmltree::Document::parse(text).map_err(|_| DavError::Protocol)?;
-    let mut token = None;
     let mut changed = Vec::new();
+    let mut warnings = 0_u32;
     for response in doc
         .descendants()
         .filter(|node| node.tag_name().name() == "response")
@@ -191,22 +265,22 @@ fn scan_report(body: &[u8], collection_path: &str) -> Result<SyncReport, DavErro
             .and_then(|node| node.text())
             .unwrap_or("")
             .trim();
-        if let Some(ctag) = element_text(&response, "getctag") {
-            token = Some(ctag.to_owned());
-        }
         if href.is_empty() || same_path(href, collection_path) {
             continue;
         }
-        if let Some(etag) = element_text(&response, "getetag") {
-            changed.push(SyncedItem {
+        match element_text(&response, "getetag").map(ETag::try_from) {
+            Some(Ok(etag)) => changed.push(SyncedItem {
                 href: href.to_owned(),
-                etag: ETag::try_from(etag).map_err(|_| DavError::Protocol)?,
-            });
+                etag,
+            }),
+            _ => warnings += 1,
         }
     }
     Ok(SyncReport {
-        token: token.ok_or(DavError::Protocol)?,
+        token: None,
         changed,
+        deleted: Vec::new(),
+        warnings,
     })
 }
 
@@ -307,7 +381,10 @@ mod tests {
         assert_eq!(report.changed[0].href, "/184573921/calendars/a.ics");
         assert_eq!(report.changed[0].etag.as_str(), "\"e1\"");
         assert_eq!(report.changed[1].etag.as_str(), "\"e2\"");
-        assert_eq!(report.token, "http://example.com/ns/sync/1234");
+        assert_eq!(
+            report.token.as_deref(),
+            Some("http://example.com/ns/sync/1234")
+        );
         let seen = script.requests();
         assert!(
             seen.iter()
@@ -372,7 +449,11 @@ mod tests {
                 .any(|logged| logged.body.contains("getctag") && logged.body.contains("getetag")),
             "fallback asks for getctag and getetag, saw {seen:?}"
         );
-        assert_eq!(report.token, "\"ctag-9\"");
+        assert!(
+            report.token.is_none(),
+            "a getctag must not be handed back as a sync token, got {:?}",
+            report.token
+        );
         assert_eq!(report.changed.len(), 1);
         assert_eq!(report.changed[0].href, "/184573921/calendars/a.ics");
         assert_eq!(report.changed[0].etag.as_str(), "\"e1\"");
@@ -452,5 +533,164 @@ mod tests {
         .await
         .expect_err("412 is a lost update");
         assert_eq!(error, DavError::Conflict);
+    }
+
+    #[tokio::test]
+    async fn delete_if_match_sends_header() {
+        let script = Script::new(|_request| {
+            Response::builder()
+                .status(204)
+                .body(Full::new(Bytes::new()))
+                .expect("response")
+        });
+        let client = crate::DavClient::from_script(script.clone(), credentials());
+        let etag = ETag::try_from("\"abc\"").expect("etag");
+        client
+            .delete_if_match(EVENT, &etag)
+            .await
+            .expect("conditional delete");
+        let seen = script.requests();
+        assert_eq!(seen.len(), 1, "one DELETE, saw {seen:?}");
+        assert_eq!(seen[0].if_match.as_deref(), Some("\"abc\""));
+        assert_eq!(seen[0].uri.path(), "/184573921/calendars/a.ics");
+    }
+
+    #[tokio::test]
+    async fn delete_conflict_on_412() {
+        let script = Script::new(|_request| {
+            Response::builder()
+                .status(412)
+                .body(Full::new(Bytes::new()))
+                .expect("response")
+        });
+        let client = crate::DavClient::from_script(script, credentials());
+        let etag = ETag::try_from("\"abc\"").expect("etag");
+        let error = client
+            .delete_if_match(EVENT, &etag)
+            .await
+            .expect_err("412 is a lost delete");
+        assert_eq!(error, DavError::Conflict);
+    }
+
+    #[tokio::test]
+    async fn delete_missing_is_not_found() {
+        let script = Script::new(|_request| {
+            Response::builder()
+                .status(404)
+                .body(Full::new(Bytes::new()))
+                .expect("response")
+        });
+        let client = crate::DavClient::from_script(script, credentials());
+        let etag = ETag::try_from("\"abc\"").expect("etag");
+        let error = client
+            .delete_if_match(EVENT, &etag)
+            .await
+            .expect_err("404 means the resource is already gone");
+        assert_eq!(error, DavError::NotFound);
+    }
+
+    #[tokio::test]
+    async fn sync_reports_deleted_href() {
+        let body = r#"<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:">
+  <response>
+    <href>/184573921/calendars/a.ics</href>
+    <propstat>
+      <prop><getetag>"e1"</getetag></prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response>
+    <href>/184573921/calendars/gone.ics</href>
+    <status>HTTP/1.1 404 Not Found</status>
+  </response>
+  <sync-token>http://example.com/ns/sync/9</sync-token>
+</multistatus>"#;
+        let script = Script::new(|_| xml(207, body));
+        let report = sync_collection(&script, &credentials(), COLLECTION, Some("prev"), None)
+            .await
+            .expect("a 404 member is a deletion, not a protocol error");
+        assert_eq!(report.deleted, vec!["/184573921/calendars/gone.ics"]);
+        assert_eq!(report.changed.len(), 1);
+        assert_eq!(report.changed[0].href, "/184573921/calendars/a.ics");
+    }
+
+    #[tokio::test]
+    async fn sync_skips_item_without_etag() {
+        let body = r#"<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:">
+  <response>
+    <href>/184573921/calendars/a.ics</href>
+    <propstat>
+      <prop><getetag>"e1"</getetag></prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response>
+    <href>/184573921/calendars/bad.ics</href>
+    <propstat>
+      <prop></prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <sync-token>http://example.com/ns/sync/9</sync-token>
+</multistatus>"#;
+        let script = Script::new(|_| xml(207, body));
+        let report = sync_collection(&script, &credentials(), COLLECTION, None, None)
+            .await
+            .expect("one item without an etag must not fail the sync");
+        assert_eq!(report.changed.len(), 1);
+        assert_eq!(report.changed[0].href, "/184573921/calendars/a.ics");
+        assert!(
+            report.warnings >= 1,
+            "the skipped item is counted, got {}",
+            report.warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn status_401_and_bare_403_are_auth() {
+        for status in [401_u16, 403] {
+            let script = Script::new(move |_| xml(status, ""));
+            let error = sync_collection(&script, &credentials(), COLLECTION, None, None)
+                .await
+                .expect_err("a rejected password is not a protocol error");
+            assert_eq!(error, DavError::Auth, "sync status {status}");
+
+            let script = Script::new(move |_| xml(status, ""));
+            let error = put_new(
+                &script,
+                &credentials(),
+                EVENT,
+                "BEGIN:VCALENDAR",
+                "text/calendar",
+            )
+            .await
+            .expect_err("a rejected password is not a protocol error");
+            assert_eq!(error, DavError::Auth, "put status {status}");
+        }
+
+        let script = Script::new(|request| {
+            if request.body().contains("sync-collection") {
+                return xml(
+                    403,
+                    r#"<?xml version="1.0" encoding="utf-8"?>
+<error xmlns="DAV:">
+  <valid-sync-token/>
+</error>"#,
+                );
+            }
+            xml(401, "")
+        });
+        let error = sync_collection(
+            &script,
+            &credentials(),
+            COLLECTION,
+            Some("stale-token"),
+            None,
+        )
+        .await
+        .expect_err("a 401 during the etag scan is still auth");
+        assert_eq!(error, DavError::Auth);
     }
 }

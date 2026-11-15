@@ -2,16 +2,12 @@
 
 //! The calendar home and its collections.
 
-use std::fmt::Write as _;
-
 use http::{Request, StatusCode};
 use ibridge_core::{CoreError, ResourcePath};
 use ibridge_dav::Exchange;
+use ibridge_dav::multistatus::{self, Entry, decode_path, encode_path};
 
 use crate::CalDavProvider;
-
-const NS_DAV: &str = "DAV:";
-const NS_CALDAV: &str = "urn:ietf:params:xml:ns:caldav";
 
 /// The account's calendar home: absolute URL and its path.
 #[derive(Clone, Debug)]
@@ -24,7 +20,7 @@ impl Home {
     /// Absolute URL of the resource at `path`, which is relative to the home
     /// and not percent-encoded.
     pub(crate) fn url_of(&self, path: &str) -> String {
-        format!("{}/{}", self.url.trim_end_matches('/'), encode(path))
+        format!("{}/{}", self.url.trim_end_matches('/'), encode_path(path))
     }
 
     /// The decoded path of `href` relative to the home, or `None` outside the
@@ -35,8 +31,8 @@ impl Home {
             let rest = &href[scheme_end + 3..];
             rest.find('/').map_or("", |slash| &rest[slash..])
         });
-        let href_path = decode(href_path)?;
-        let home_path = decode(&self.path)?;
+        let href_path = decode_path(href_path)?;
+        let home_path = decode_path(&self.path)?;
         let rest = href_path.strip_prefix(home_path.trim_end_matches('/'))?;
         let rest = rest.strip_prefix('/')?;
         (!rest.is_empty()).then(|| rest.to_owned())
@@ -50,18 +46,6 @@ pub(crate) struct Collection {
     pub(crate) name: String,
     pub(crate) holds_events: bool,
     pub(crate) holds_tasks: bool,
-}
-
-/// One response of a multistatus body.
-#[derive(Debug)]
-pub(crate) struct Entry {
-    pub(crate) href: String,
-    pub(crate) etag: Option<String>,
-    pub(crate) calendar_data: Option<String>,
-    pub(crate) display_name: Option<String>,
-    pub(crate) is_calendar: bool,
-    /// `None` when the server did not list supported components.
-    pub(crate) components: Option<Vec<String>>,
 }
 
 impl CalDavProvider {
@@ -116,35 +100,6 @@ impl CalDavProvider {
     }
 }
 
-fn decode(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while let Some(&byte) = bytes.get(index) {
-        if byte == b'%' {
-            let pair = text.get(index + 1..index + 3)?;
-            out.push(u8::from_str_radix(pair, 16).ok()?);
-            index += 3;
-        } else {
-            out.push(byte);
-            index += 1;
-        }
-    }
-    String::from_utf8(out).ok()
-}
-
-fn encode(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~@:!$&'()*+,;=/".contains(&byte) {
-            out.push(char::from(byte));
-        } else {
-            let _ = write!(out, "%{byte:02X}");
-        }
-    }
-    out
-}
-
 impl CalDavProvider {
     /// Runs a `calendar-query` report on `collection` and returns its responses.
     pub(crate) async fn query(
@@ -179,85 +134,10 @@ pub(crate) fn status_error(status: StatusCode) -> CoreError {
     }
 }
 
-/// Parses a 207 multistatus body into its responses.
+/// Reads a 207 multistatus response into its entries.
 pub(crate) fn multistatus(exchange: &Exchange) -> Result<Vec<Entry>, CoreError> {
     if exchange.status.as_u16() != 207 {
         return Err(status_error(exchange.status));
     }
-    let text = std::str::from_utf8(&exchange.body).map_err(|_| protocol())?;
-    let doc = roxmltree::Document::parse(text).map_err(|_| protocol())?;
-    let mut entries = Vec::new();
-    for response in doc
-        .descendants()
-        .filter(|node| is(node, NS_DAV, "response"))
-    {
-        let Some(href) = child_text(response, NS_DAV, "href") else {
-            continue;
-        };
-        let mut entry = Entry {
-            href,
-            etag: None,
-            calendar_data: None,
-            display_name: None,
-            is_calendar: false,
-            components: None,
-        };
-        for propstat in response
-            .children()
-            .filter(|node| is(node, NS_DAV, "propstat"))
-        {
-            let ok = child_text(propstat, NS_DAV, "status").is_some_and(|s| s.contains(" 200"));
-            if !ok {
-                continue;
-            }
-            let Some(prop) = propstat.children().find(|node| is(node, NS_DAV, "prop")) else {
-                continue;
-            };
-            read_prop(prop, &mut entry);
-        }
-        entries.push(entry);
-    }
-    Ok(entries)
-}
-
-fn read_prop(prop: roxmltree::Node<'_, '_>, entry: &mut Entry) {
-    for node in prop.children().filter(roxmltree::Node::is_element) {
-        let tag = node.tag_name();
-        match (tag.namespace(), tag.name()) {
-            (Some(NS_DAV), "getetag") => entry.etag = node.text().map(|t| t.trim().to_owned()),
-            (Some(NS_DAV), "displayname") => {
-                entry.display_name = node.text().map(|t| t.trim().to_owned());
-            }
-            (Some(NS_DAV), "resourcetype") => {
-                entry.is_calendar = node
-                    .children()
-                    .any(|child| is(&child, NS_CALDAV, "calendar"));
-            }
-            (Some(NS_CALDAV), "calendar-data") => {
-                entry.calendar_data = Some(node.text().unwrap_or_default().to_owned());
-            }
-            (Some(NS_CALDAV), "supported-calendar-component-set") => {
-                entry.components = Some(
-                    node.children()
-                        .filter(|child| is(child, NS_CALDAV, "comp"))
-                        .filter_map(|child| child.attribute("name").map(str::to_owned))
-                        .collect(),
-                );
-            }
-            _ => {}
-        }
-    }
-}
-
-fn is(node: &roxmltree::Node<'_, '_>, namespace: &str, name: &str) -> bool {
-    node.is_element()
-        && node.tag_name().namespace() == Some(namespace)
-        && node.tag_name().name() == name
-}
-
-fn child_text(node: roxmltree::Node<'_, '_>, namespace: &str, name: &str) -> Option<String> {
-    node.children()
-        .find(|child| is(child, namespace, name))
-        .and_then(|child| child.text())
-        .map(|text| text.trim().to_owned())
+    multistatus::parse(&exchange.body).map_err(|_| protocol())
 }

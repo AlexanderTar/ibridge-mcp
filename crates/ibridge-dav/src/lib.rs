@@ -5,6 +5,7 @@
 mod client;
 mod discovery;
 mod error;
+pub mod multistatus;
 mod redirect;
 mod sync;
 

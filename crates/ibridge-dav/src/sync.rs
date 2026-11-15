@@ -12,6 +12,7 @@ use libdav::{Depth, PropertyName};
 
 use crate::client::{Exchange, Transport, execute};
 use crate::error::DavError;
+use crate::multistatus;
 
 const GETCTAG: PropertyName<'static, 'static> =
     PropertyName::new(libdav::names::CALENDAR_SERVER, "getctag");
@@ -191,30 +192,19 @@ fn report_from_body(body: &[u8]) -> Result<SyncReport, DavError> {
     let mut changed = Vec::new();
     let mut deleted = Vec::new();
     let mut warnings = 0_u32;
-    for response in doc
-        .descendants()
-        .filter(|node| node.tag_name().name() == "response")
-    {
-        let href = response
-            .children()
-            .find(|node| node.tag_name().name() == "href")
-            .and_then(|node| node.text())
-            .unwrap_or("")
-            .trim();
-        if href.is_empty() {
+    for entry in multistatus::parse(body)? {
+        if entry.href.is_empty() {
             warnings += 1;
-            continue;
-        }
-        if status_is_not_found(&response) {
-            deleted.push(href.to_owned());
-            continue;
-        }
-        match element_text(&response, "getetag").map(ETag::try_from) {
-            Some(Ok(etag)) => changed.push(SyncedItem {
-                href: href.to_owned(),
-                etag,
-            }),
-            _ => warnings += 1,
+        } else if entry.not_found {
+            deleted.push(entry.href);
+        } else {
+            match entry.etag.as_deref().map(ETag::try_from) {
+                Some(Ok(etag)) => changed.push(SyncedItem {
+                    href: entry.href,
+                    etag,
+                }),
+                _ => warnings += 1,
+            }
         }
     }
     Ok(SyncReport {
@@ -222,12 +212,6 @@ fn report_from_body(body: &[u8]) -> Result<SyncReport, DavError> {
         changed,
         deleted,
         warnings,
-    })
-}
-
-fn status_is_not_found(response: &roxmltree::Node<'_, '_>) -> bool {
-    response.children().any(|node| {
-        node.tag_name().name() == "status" && node.text().is_some_and(|text| text.contains("404"))
     })
 }
 
@@ -251,26 +235,15 @@ async fn etag_scan(
 }
 
 fn scan_report(body: &[u8], collection_path: &str) -> Result<SyncReport, DavError> {
-    let text = std::str::from_utf8(body).map_err(|_| DavError::Protocol)?;
-    let doc = roxmltree::Document::parse(text).map_err(|_| DavError::Protocol)?;
     let mut changed = Vec::new();
     let mut warnings = 0_u32;
-    for response in doc
-        .descendants()
-        .filter(|node| node.tag_name().name() == "response")
-    {
-        let href = response
-            .descendants()
-            .find(|node| node.tag_name().name() == "href")
-            .and_then(|node| node.text())
-            .unwrap_or("")
-            .trim();
-        if href.is_empty() || same_path(href, collection_path) {
+    for entry in multistatus::parse(body)? {
+        if entry.href.is_empty() || same_path(&entry.href, collection_path) {
             continue;
         }
-        match element_text(&response, "getetag").map(ETag::try_from) {
+        match entry.etag.as_deref().map(ETag::try_from) {
             Some(Ok(etag)) => changed.push(SyncedItem {
-                href: href.to_owned(),
+                href: entry.href,
                 etag,
             }),
             _ => warnings += 1,
@@ -282,13 +255,6 @@ fn scan_report(body: &[u8], collection_path: &str) -> Result<SyncReport, DavErro
         deleted: Vec::new(),
         warnings,
     })
-}
-
-fn element_text<'a>(node: &roxmltree::Node<'a, 'a>, name: &str) -> Option<&'a str> {
-    node.descendants()
-        .find(|child| child.tag_name().name() == name)
-        .and_then(|child| child.text())
-        .map(str::trim)
 }
 
 fn same_path(left: &str, right: &str) -> bool {

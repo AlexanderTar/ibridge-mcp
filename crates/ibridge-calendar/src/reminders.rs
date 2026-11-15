@@ -9,7 +9,9 @@ use ibridge_core::{
 };
 
 use crate::CalDavProvider;
-use crate::collections::{Collection, Entry, Home, protocol};
+use ibridge_dav::multistatus::Entry;
+
+use crate::collections::{Collection, Home, protocol};
 use crate::events::{ICS_TYPE, new_uid};
 use crate::ical;
 

@@ -4,4 +4,4 @@
 
 mod store;
 
-pub use store::{Redacted, Store, StoreError, redact};
+pub use store::{RedactingFields, Store, StoreError, ValidatedCredentials, redact};

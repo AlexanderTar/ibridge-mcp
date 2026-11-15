@@ -5,7 +5,7 @@
 mod redact;
 mod seal;
 
-pub use redact::{Redacted, redact};
+pub use redact::{RedactingFields, redact};
 
 use std::error::Error;
 use std::fmt;
@@ -135,6 +135,41 @@ pub struct ApiKey {
     pub scope: Scope,
 }
 
+/// Password that has passed a live sign-in check.
+///
+/// The only constructor runs that check on these credentials, so a caller cannot
+/// validate one password and seal another.
+#[derive(Debug)]
+pub struct ValidatedCredentials {
+    apple_id: AppleId,
+    secret: SecretString,
+}
+
+impl ValidatedCredentials {
+    /// Checks `credentials` with the validator `validator_for` builds from them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Rejected`] when no service accepts the password
+    /// or the check cannot run.
+    pub async fn from_check<V: Validator>(
+        credentials: Credentials,
+        validator_for: impl FnOnce(&Credentials) -> V,
+    ) -> Result<Self, StoreError> {
+        let validator = validator_for(&credentials);
+        let accepted = match validator.validate().await {
+            Ok(report) => report.any_service_ok(),
+            Err(_err) => false,
+        };
+        if !accepted {
+            return Err(StoreError::Rejected);
+        }
+        let apple_id = credentials.apple_id.clone();
+        let secret = credentials.with_secret(|value| SecretString::from(value));
+        Ok(Self { apple_id, secret })
+    }
+}
+
 /// Open credential store.
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -199,18 +234,23 @@ impl Store {
         settle(tx, result).await
     }
 
-    /// Exchanges a code for an access token and a refresh token, then deletes the code seal.
+    /// Exchanges a code for an access token and a refresh token, then deletes the code ciphertext.
+    ///
+    /// A second presentation of the same code revokes the grant.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Expired`] after 60 seconds, and [`StoreError::InvalidToken`]
-    /// when the code is unknown or already exchanged.
+    /// Returns [`StoreError::Expired`] after 60 seconds, [`StoreError::InvalidGrant`]
+    /// when the code is presented again, and [`StoreError::InvalidToken`] when it is unknown.
     pub async fn exchange_code(
         &self,
         code: &str,
         now: SystemTime,
     ) -> Result<IssuedTokens, StoreError> {
         let now = unix(now)?;
+        if !known_token(&self.pool, code).await? {
+            return Err(StoreError::InvalidToken);
+        }
         let mut tx = begin(&self.pool).await?;
         let result = exchange_in(&mut tx, code, now).await;
         settle(tx, result).await
@@ -229,6 +269,9 @@ impl Store {
         now: SystemTime,
     ) -> Result<CallSecret, StoreError> {
         let now = unix(now)?;
+        if !known_token(&self.pool, access).await? {
+            return Err(StoreError::InvalidToken);
+        }
         let mut tx = begin(&self.pool).await?;
         let result = open_in(&mut tx, access, now).await;
         settle(tx, result).await
@@ -246,6 +289,9 @@ impl Store {
         now: SystemTime,
     ) -> Result<IssuedTokens, StoreError> {
         let now = unix(now)?;
+        if !known_token(&self.pool, refresh_token).await? {
+            return Err(StoreError::InvalidToken);
+        }
         let mut tx = begin(&self.pool).await?;
         let result = refresh_in(&mut tx, refresh_token, now).await;
         settle(tx, result).await
@@ -276,53 +322,66 @@ impl Store {
     ///
     /// Returns [`StoreError::InvalidGrant`] when the grant does not exist, and
     /// [`StoreError::Internal`] when the row cannot be updated.
-    pub async fn note_auth_success(
-        &self,
-        grant: GrantId,
-        now: SystemTime,
-    ) -> Result<(), StoreError> {
-        let _ = unix(now)?;
+    pub async fn note_auth_success(&self, grant: GrantId) -> Result<(), StoreError> {
         let mut tx = begin(&self.pool).await?;
         let result = record_success(&mut tx, &grant.0).await;
         settle(tx, result).await
     }
 
-    /// Mints a personal API key after `validator` accepts the password.
+    /// Mints a personal API key for a password that already passed a live sign-in check.
     ///
     /// The key does not expire. Its seal opens only with this key.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Rejected`] when no service accepts the password or
-    /// validation cannot run, and [`StoreError::Internal`] when the row cannot be written.
+    /// Returns [`StoreError::Internal`] when the row cannot be written.
     pub async fn mint_api_key(
         &self,
-        credentials: &Credentials,
+        validated: &ValidatedCredentials,
         name: &str,
         scope: Scope,
-        validator: &impl Validator,
         now: SystemTime,
     ) -> Result<ApiKey, StoreError> {
-        let report = match validator.validate().await {
-            Ok(report) => report,
-            Err(_err) => return Err(StoreError::Rejected),
-        };
-        if !report.any_service_ok() {
-            return Err(StoreError::Rejected);
-        }
         let now = unix(now)?;
-        let asp = credentials.with_secret(|secret| SecretString::from(secret));
         let mut tx = begin(&self.pool).await?;
-        let result = mint_key_in(&mut tx, &credentials.apple_id, &asp, name, scope, now).await;
+        let result = mint_key_in(
+            &mut tx,
+            &validated.apple_id,
+            &validated.secret,
+            name,
+            scope,
+            now,
+        )
+        .await;
         settle(tx, result).await
     }
 }
 
+const SCHEMA_VERSION: i64 = 1;
+
 async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
-    sqlx::raw_sql(include_str!("schema.sql"))
-        .execute(pool)
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(pool)
         .await
         .map_err(internal)?;
+    match version {
+        0 => {
+            sqlx::raw_sql(include_str!("schema.sql"))
+                .execute(pool)
+                .await
+                .map_err(internal)?;
+            sqlx::raw_sql("PRAGMA user_version = 1")
+                .execute(pool)
+                .await
+                .map_err(internal)?;
+        }
+        SCHEMA_VERSION => {}
+        _ => {
+            return Err(internal(StoreFault(
+                "store schema version is not supported",
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -336,7 +395,6 @@ const CODE_TTL: i64 = 60;
 const ACCESS_TTL: i64 = 3_600;
 const REFRESH_TTL: i64 = 90 * 24 * 60 * 60;
 const GRACE_TTL: i64 = 120;
-const ACCESS_TTL_SECS: u64 = 3_600;
 
 const PREFIX_CODE: &str = "ibc_";
 const PREFIX_ACCESS: &str = "iba_";
@@ -344,6 +402,7 @@ const PREFIX_REFRESH: &str = "ibf_";
 const PREFIX_API: &str = "ibr_";
 
 const PURPOSE_CODE: &str = "code";
+const PURPOSE_CODE_SPENT: &str = "code_spent";
 const PURPOSE_ACCESS: &str = "access";
 const PURPOSE_API_KEY: &str = "api_key";
 const PURPOSE_REFRESH: &str = "refresh";
@@ -408,10 +467,7 @@ async fn settle<T>(tx: WriteTx, result: Result<T, StoreError>) -> Result<T, Stor
 }
 
 fn persists(err: &StoreError) -> bool {
-    matches!(
-        err,
-        StoreError::InvalidToken | StoreError::Expired | StoreError::InvalidGrant
-    )
+    matches!(err, StoreError::Expired | StoreError::InvalidGrant)
 }
 
 async fn commit_err(tx: WriteTx, err: StoreError) -> StoreError {
@@ -428,7 +484,6 @@ async fn seal_in(
     scope: Scope,
     now: i64,
 ) -> Result<IssuedCode, StoreError> {
-    sweep(tx, now).await?;
     let account = upsert_account(tx, apple_id, now).await?;
     let grant = random_bytes::<16>()?;
     sqlx::query(
@@ -472,7 +527,6 @@ async fn mint_key_in(
     scope: Scope,
     now: i64,
 ) -> Result<ApiKey, StoreError> {
-    sweep(tx, now).await?;
     let account = upsert_account(tx, apple_id, now).await?;
     let grant = random_bytes::<16>()?;
     sqlx::query(
@@ -511,21 +565,23 @@ async fn mint_key_in(
 }
 
 async fn exchange_in(tx: &mut WriteTx, code: &str, now: i64) -> Result<IssuedTokens, StoreError> {
-    let hit = load(tx, code, now).await?;
-    if hit.purpose != PURPOSE_CODE {
-        return Err(StoreError::InvalidToken);
-    }
+    let hit = load(tx, code).await?;
     if let Some(err) = refusal(&hit, now) {
         return Err(refuse(tx, &hit, err).await);
     }
+    if hit.purpose != PURPOSE_CODE {
+        return Err(StoreError::InvalidToken);
+    }
     let grant = grant_bytes(&hit.grant_id)?;
     let plain = unseal(&hit, code)?;
-    delete_seal(tx, hit.seal_id).await?;
-    issue_pair(tx, &hit, &grant, plain.expose_secret(), now).await
+    mark_code_spent(tx, hit.seal_id).await?;
+    let issued = issue_pair(tx, &hit, &grant, plain.expose_secret(), now).await?;
+    sweep_grant(tx, &grant, now).await?;
+    Ok(issued)
 }
 
 async fn open_in(tx: &mut WriteTx, access: &str, now: i64) -> Result<CallSecret, StoreError> {
-    let hit = load(tx, access, now).await?;
+    let hit = load(tx, access).await?;
     if hit.purpose != PURPOSE_ACCESS && hit.purpose != PURPOSE_API_KEY {
         return Err(StoreError::InvalidToken);
     }
@@ -534,6 +590,7 @@ async fn open_in(tx: &mut WriteTx, access: &str, now: i64) -> Result<CallSecret,
     }
     let grant = grant_bytes(&hit.grant_id)?;
     let secret = unseal(&hit, access)?;
+    sweep_grant(tx, &grant, now).await?;
     Ok(CallSecret {
         grant_id: GrantId(grant),
         apple_id: AppleId::try_from(hit.apple_id.as_str()).map_err(internal)?,
@@ -547,7 +604,7 @@ async fn refresh_in(
     refresh_token: &str,
     now: i64,
 ) -> Result<IssuedTokens, StoreError> {
-    let hit = load(tx, refresh_token, now).await?;
+    let hit = load(tx, refresh_token).await?;
     if let Some(err) = refusal(&hit, now) {
         return Err(refuse(tx, &hit, err).await);
     }
@@ -559,10 +616,17 @@ async fn refresh_in(
     if hit.purpose == PURPOSE_REFRESH {
         mark_grace(tx, hit.seal_id, later(now, GRACE_TTL)?).await?;
     }
-    issue_pair(tx, &hit, &grant, plain.expose_secret(), now).await
+    let issued = issue_pair(tx, &hit, &grant, plain.expose_secret(), now).await?;
+    sweep_grant(tx, &grant, now).await?;
+    Ok(issued)
 }
 
 async fn refuse(tx: &mut WriteTx, hit: &Hit, err: StoreError) -> StoreError {
+    if matches!(err, StoreError::Expired)
+        && let Err(drop_err) = drop_expired(tx, hit).await
+    {
+        return drop_err;
+    }
     if matches!(err, StoreError::InvalidGrant)
         && let Err(revoke_err) = revoke(tx, &hit.grant_id).await
     {
@@ -572,17 +636,24 @@ async fn refuse(tx: &mut WriteTx, hit: &Hit, err: StoreError) -> StoreError {
 }
 
 fn refusal(hit: &Hit, now: i64) -> Option<StoreError> {
-    if hit.status == STATUS_REVOKED || hit.purpose == PURPOSE_SPENT {
+    if hit.status == STATUS_REVOKED || is_tombstone(&hit.purpose) {
         return Some(StoreError::InvalidGrant);
     }
-    if hit.expires_at.is_some_and(|expires| now >= expires) {
+    let expired = hit.expires_at.is_some_and(|expires| now >= expires);
+    if hit.purpose == PURPOSE_GRACE && expired {
+        return Some(StoreError::InvalidGrant);
+    }
+    if expired {
         return Some(StoreError::Expired);
     }
     None
 }
 
-async fn load(tx: &mut WriteTx, token: &str, now: i64) -> Result<Hit, StoreError> {
-    sweep(tx, now).await?;
+fn is_tombstone(purpose: &str) -> bool {
+    purpose == PURPOSE_SPENT || purpose == PURPOSE_CODE_SPENT
+}
+
+async fn load(tx: &mut WriteTx, token: &str) -> Result<Hit, StoreError> {
     let mut lookup = seal::lookup(token.as_bytes());
     let row = sqlx::query(
         "SELECT seals.id AS seal_id, seals.grant_id AS grant_id, seals.purpose AS purpose,
@@ -619,11 +690,23 @@ fn hit_from(row: &SqliteRow) -> Result<Hit, sqlx::Error> {
     })
 }
 
-async fn sweep(tx: &mut WriteTx, now: i64) -> Result<(), StoreError> {
+async fn known_token(pool: &SqlitePool, token: &str) -> Result<bool, StoreError> {
+    let mut lookup = seal::lookup(token.as_bytes());
+    let found = sqlx::query_scalar::<_, i32>("SELECT 1 FROM seals WHERE lookup = ?")
+        .bind(lookup.as_slice())
+        .fetch_optional(pool)
+        .await;
+    lookup.zeroize();
+    Ok(found.map_err(internal)?.is_some())
+}
+
+async fn sweep_grant(tx: &mut WriteTx, grant_id: &[u8], now: i64) -> Result<(), StoreError> {
     sqlx::query(
-        "UPDATE seals SET ciphertext = NULL, nonce = NULL
-         WHERE purpose IN (?, ?, ?) AND expires_at IS NOT NULL AND expires_at <= ?",
+        "DELETE FROM seals
+         WHERE grant_id = ? AND purpose IN (?, ?, ?)
+           AND expires_at IS NOT NULL AND expires_at <= ?",
     )
+    .bind(grant_id)
     .bind(PURPOSE_CODE)
     .bind(PURPOSE_ACCESS)
     .bind(PURPOSE_REFRESH)
@@ -633,15 +716,24 @@ async fn sweep(tx: &mut WriteTx, now: i64) -> Result<(), StoreError> {
     .map_err(internal)?;
     sqlx::query(
         "UPDATE seals SET purpose = ?, ciphertext = NULL, nonce = NULL
-         WHERE purpose = ? AND expires_at IS NOT NULL AND expires_at <= ?",
+         WHERE grant_id = ? AND purpose = ? AND expires_at IS NOT NULL AND expires_at <= ?",
     )
     .bind(PURPOSE_SPENT)
+    .bind(grant_id)
     .bind(PURPOSE_GRACE)
     .bind(now)
     .execute(&mut **tx)
     .await
     .map_err(internal)?;
     Ok(())
+}
+
+async fn drop_expired(tx: &mut WriteTx, hit: &Hit) -> Result<(), StoreError> {
+    match hit.purpose.as_str() {
+        PURPOSE_CODE | PURPOSE_ACCESS | PURPOSE_REFRESH => delete_seal(tx, hit.seal_id).await,
+        PURPOSE_GRACE => mark_spent(tx, hit.seal_id).await,
+        _ => Ok(()),
+    }
 }
 
 async fn upsert_account(tx: &mut WriteTx, apple_id: &AppleId, now: i64) -> Result<i64, StoreError> {
@@ -722,8 +814,32 @@ async fn issue_pair(
         access,
         refresh,
         scope: Scope::parse(&hit.scope)?,
-        expires_in: Duration::from_secs(ACCESS_TTL_SECS),
+        expires_in: Duration::from_secs(u64::try_from(ACCESS_TTL).map_err(internal)?),
     })
+}
+
+async fn mark_code_spent(tx: &mut WriteTx, seal_id: i64) -> Result<(), StoreError> {
+    sqlx::query(
+        "UPDATE seals
+         SET purpose = ?, ciphertext = NULL, nonce = NULL, expires_at = NULL
+         WHERE id = ?",
+    )
+    .bind(PURPOSE_CODE_SPENT)
+    .bind(seal_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(internal)?;
+    Ok(())
+}
+
+async fn mark_spent(tx: &mut WriteTx, seal_id: i64) -> Result<(), StoreError> {
+    sqlx::query("UPDATE seals SET purpose = ?, ciphertext = NULL, nonce = NULL WHERE id = ?")
+        .bind(PURPOSE_SPENT)
+        .bind(seal_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    Ok(())
 }
 
 async fn mark_grace(tx: &mut WriteTx, seal_id: i64, expires_at: i64) -> Result<(), StoreError> {
@@ -824,7 +940,7 @@ fn unseal(hit: &Hit, token: &str) -> Result<SecretString, StoreError> {
         return Err(internal(StoreFault("seal has no ciphertext")));
     };
     let sealed = seal::Sealed {
-        lookup: seal::lookup(token.as_bytes()),
+        lookup: [0; 32],
         nonce,
         ciphertext: ciphertext.to_vec(),
     };
@@ -946,6 +1062,25 @@ mod tests {
             ],
             "migration must create the credential tables"
         );
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            version, 1,
+            "the schema records user_version so a later package can migrate"
+        );
+        let temp = TempDb::new();
+        let opened = Store::open(&temp.path()).await.unwrap();
+        drop(opened);
+        let opened = Store::open(&temp.path())
+            .await
+            .expect("a recorded schema version opens again");
+        let again: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&opened.pool)
+            .await
+            .unwrap();
+        assert_eq!(again, 1, "opening an existing database keeps user_version");
     }
 
     #[tokio::test]
@@ -953,20 +1088,23 @@ mod tests {
         let store = Store::memory().await.unwrap();
         let now = at(0);
         let code = seal_code(&store, now).await;
-        let tokens = store
-            .exchange_code(code.code.expose_secret(), now)
-            .await
-            .unwrap();
-        let again = store.exchange_code(code.code.expose_secret(), now).await;
-        assert!(
-            matches!(again, Err(StoreError::InvalidToken)),
-            "exchanged code must be deleted, got {again:?}"
-        );
+        let code_secret = code.code.expose_secret().to_owned();
+        let tokens = store.exchange_code(&code_secret, now).await.unwrap();
         assert_eq!(
             purposes(&store).await,
-            vec!["access".to_owned(), "refresh".to_owned()],
-            "only the access and refresh seals remain"
+            vec![
+                "access".to_owned(),
+                "code_spent".to_owned(),
+                "refresh".to_owned()
+            ],
+            "the code seal becomes a tombstone and the tokens remain"
         );
+        let spent: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT ciphertext FROM seals WHERE purpose = 'code_spent'")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert!(spent.is_none(), "exchange must delete the code ciphertext");
         let opened = store
             .open_for_call(tokens.access.expose_secret(), now)
             .await
@@ -981,6 +1119,87 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(from_refresh.secret.expose_secret(), ASP);
+    }
+
+    #[tokio::test]
+    async fn replayed_code_revokes_issued_tokens() {
+        let store = Store::memory().await.unwrap();
+        let now = at(0);
+        let code = seal_code(&store, now).await;
+        let code_secret = code.code.expose_secret().to_owned();
+        let tokens = store.exchange_code(&code_secret, now).await.unwrap();
+        let again = store.exchange_code(&code_secret, now).await;
+        assert!(
+            matches!(again, Err(StoreError::InvalidGrant)),
+            "replaying a code revokes the grant, got {again:?}"
+        );
+        let opened = store
+            .open_for_call(tokens.access.expose_secret(), now)
+            .await;
+        assert!(
+            matches!(opened, Err(StoreError::InvalidGrant)),
+            "tokens issued from a replayed code must die, got {opened:?}"
+        );
+        let refreshed = store.refresh(tokens.refresh.expose_secret(), now).await;
+        assert!(
+            matches!(refreshed, Err(StoreError::InvalidGrant)),
+            "the refresh token issued from a replayed code must die, got {refreshed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_token_does_not_wipe_expired_ciphertext() {
+        let store = Store::memory().await.unwrap();
+        let code = seal_code(&store, at(0)).await;
+        let bogus = store.open_for_call("iba_not-a-real-token", at(60)).await;
+        assert!(
+            matches!(bogus, Err(StoreError::InvalidToken)),
+            "an unknown token is rejected, got {bogus:?}"
+        );
+        let left: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM seals WHERE ciphertext IS NOT NULL")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            left, 1,
+            "a bogus token must not commit a sweep of other rows"
+        );
+        let expired = store.exchange_code(code.code.expose_secret(), at(60)).await;
+        assert!(
+            matches!(expired, Err(StoreError::Expired)),
+            "the expired code is still expired, got {expired:?}"
+        );
+        let left: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM seals WHERE ciphertext IS NOT NULL")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            left, 0,
+            "presenting the expired code deletes its ciphertext"
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_access_row_is_deleted() {
+        let store = Store::memory().await.unwrap();
+        let tokens = exchange(&store, at(0)).await;
+        let expired = store
+            .open_for_call(tokens.access.expose_secret(), at(3600))
+            .await;
+        assert!(
+            matches!(expired, Err(StoreError::Expired)),
+            "the access token is expired, got {expired:?}"
+        );
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM seals WHERE purpose = 'access'")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            rows, 0,
+            "an expired access row is deleted, not kept with null ciphertext"
+        );
     }
 
     #[tokio::test]
@@ -1124,16 +1343,48 @@ mod tests {
         );
     }
 
+    struct TempDb {
+        dir: std::path::PathBuf,
+    }
+
+    impl TempDb {
+        fn new() -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!("ibridge-store-{nanos}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self { dir }
+        }
+
+        fn path(&self) -> std::path::PathBuf {
+            self.dir.join("store.db")
+        }
+    }
+
+    impl Drop for TempDb {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn temp_db_dir_is_removed_on_drop() {
+        let temp = TempDb::new();
+        let dir = temp.dir.clone();
+        assert!(dir.is_dir(), "the store directory exists at {dir:?}");
+        drop(temp);
+        assert!(
+            !dir.exists(),
+            "dropping the guard must remove {dir:?} even when a test fails"
+        );
+    }
+
     #[tokio::test]
     async fn concurrent_refresh_both_succeed_within_grace() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("ibridge-store-{nanos}"));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("store.db");
-        let store = Store::open(&path).await.unwrap();
+        let temp = TempDb::new();
+        let store = Store::open(&temp.path()).await.unwrap();
         let tokens = exchange(&store, at(0)).await;
         let refresh = tokens.refresh.expose_secret().to_owned();
         let left = store.clone();
@@ -1165,7 +1416,6 @@ mod tests {
             .refresh(second.refresh.expose_secret(), at(6))
             .await
             .expect("second refresh token rotates");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     const FIFTEEN_MIN: u64 = 15 * 60;
@@ -1249,10 +1499,7 @@ mod tests {
             .note_auth_failure(tokens.grant_id, at(60))
             .await
             .unwrap();
-        store
-            .note_auth_success(tokens.grant_id, at(120))
-            .await
-            .unwrap();
+        store.note_auth_success(tokens.grant_id).await.unwrap();
         store
             .note_auth_failure(tokens.grant_id, at(120))
             .await
@@ -1337,18 +1584,45 @@ mod tests {
         }
     }
 
+    fn validator_for(password: &str) -> FixedValidator {
+        FixedValidator {
+            result: if password == ASP {
+                Ok(accepted_report())
+            } else {
+                Ok(rejected_report())
+            },
+        }
+    }
+
+    async fn check(apple: &str, asp: &str) -> Result<super::ValidatedCredentials, StoreError> {
+        let id = AppleId::try_from(apple).unwrap();
+        super::ValidatedCredentials::from_check(
+            Credentials::new(id, SecretString::from(asp)),
+            |credentials| credentials.with_secret(validator_for),
+        )
+        .await
+    }
+
     async fn mint_key(store: &Store, apple: &str, asp: &str, scope: Scope) -> super::ApiKey {
         let id = AppleId::try_from(apple).unwrap();
+        let expected = asp.to_owned();
+        let validated = super::ValidatedCredentials::from_check(
+            Credentials::new(id, SecretString::from(asp)),
+            move |credentials| {
+                let seen = credentials.with_secret(ToOwned::to_owned);
+                FixedValidator {
+                    result: if seen == expected {
+                        Ok(accepted_report())
+                    } else {
+                        Ok(rejected_report())
+                    },
+                }
+            },
+        )
+        .await
+        .unwrap();
         store
-            .mint_api_key(
-                &Credentials::new(id, SecretString::from(asp)),
-                "laptop",
-                scope,
-                &FixedValidator {
-                    result: Ok(accepted_report()),
-                },
-                at(0),
-            )
+            .mint_api_key(&validated, "laptop", scope, at(0))
             .await
             .unwrap()
     }
@@ -1356,33 +1630,21 @@ mod tests {
     #[tokio::test]
     async fn mint_requires_validated_asp() {
         let store = Store::memory().await.unwrap();
-        let ada = AppleId::try_from("ada@icloud.com").unwrap();
-        let denied = store
-            .mint_api_key(
-                &Credentials::new(ada.clone(), SecretString::from(ASP)),
-                "laptop",
-                Scope::Read,
-                &FixedValidator {
-                    result: Ok(rejected_report()),
-                },
-                at(0),
-            )
-            .await;
+        let denied = check("ada@icloud.com", "zzzz-zzzz-zzzz-zzzz").await;
         assert!(
             matches!(denied, Err(StoreError::Rejected)),
             "a password no service accepts is rejected, got {denied:?}"
         );
-        let broken = store
-            .mint_api_key(
-                &Credentials::new(ada.clone(), SecretString::from(ASP)),
-                "laptop",
-                Scope::Read,
-                &FixedValidator {
-                    result: Err(AuthError::Validation),
-                },
-                at(0),
-            )
-            .await;
+        let broken = super::ValidatedCredentials::from_check(
+            Credentials::new(
+                AppleId::try_from("ada@icloud.com").unwrap(),
+                SecretString::from(ASP),
+            ),
+            |_credentials| FixedValidator {
+                result: Err(AuthError::Validation),
+            },
+        )
+        .await;
         assert!(
             matches!(broken, Err(StoreError::Rejected)),
             "a validator that cannot run is rejected, got {broken:?}"
@@ -1392,21 +1654,25 @@ mod tests {
             stored.iter().all(|purpose| purpose != "api_key"),
             "a rejected mint must not store an api key, got {stored:?}"
         );
-        let minted = store
-            .mint_api_key(
-                &Credentials::new(ada, SecretString::from(ASP)),
-                "laptop",
-                Scope::ReadWrite,
-                &FixedValidator {
-                    result: Ok(accepted_report()),
-                },
-                at(0),
-            )
+        let validated = check("ada@icloud.com", ASP)
             .await
             .expect("one accepting service is enough to mint");
+        let minted = store
+            .mint_api_key(&validated, "laptop", Scope::ReadWrite, at(0))
+            .await
+            .unwrap();
         assert!(
             minted.key.expose_secret().starts_with("ibr_"),
             "api keys use the ibr_ prefix"
+        );
+        let opened = store
+            .open_for_call(minted.key.expose_secret(), at(1))
+            .await
+            .unwrap();
+        assert_eq!(
+            opened.secret.expose_secret(),
+            ASP,
+            "the sealed password is the one the check saw"
         );
     }
 
@@ -1484,16 +1750,51 @@ mod tests {
     async fn db_dump_plus_config_decrypts_nothing() {
         let store = Store::memory().await.unwrap();
         let tokens = exchange(&store, at(0)).await;
+        let grace = tokens.refresh.expose_secret().to_owned();
+        let rotated = store.refresh(&grace, at(10)).await.unwrap();
+        let pending = seal_code(&store, at(10)).await;
+        let key = mint_key(&store, "ada@icloud.com", ASP, Scope::ReadWrite).await;
         let opened = store
-            .open_for_call(tokens.access.expose_secret(), at(1))
+            .open_for_call(tokens.access.expose_secret(), at(11))
             .await
             .unwrap();
         assert_eq!(opened.secret.expose_secret(), ASP);
+        let samples = [
+            tokens.access.expose_secret().to_owned(),
+            grace,
+            rotated.access.expose_secret().to_owned(),
+            rotated.refresh.expose_secret().to_owned(),
+            pending.code.expose_secret().to_owned(),
+            key.key.expose_secret().to_owned(),
+        ];
         let rows = sqlx::query("SELECT lookup, nonce, ciphertext FROM seals")
             .fetch_all(&store.pool)
             .await
             .unwrap();
-        assert!(!rows.is_empty(), "the grant must have stored seals");
+        assert!(
+            rows.len() >= samples.len(),
+            "the dump must include the code, access, refresh, grace and api-key seals"
+        );
+        for token in &samples {
+            let wrong = super::seal::lookup_with_info(token.as_bytes(), super::seal::SEAL_INFO);
+            let right = super::seal::lookup_with_info(token.as_bytes(), super::seal::LOOKUP_INFO);
+            let mut found = false;
+            for row in &rows {
+                let lookup: Vec<u8> = row.try_get("lookup").unwrap();
+                assert_ne!(
+                    lookup.as_slice(),
+                    wrong.as_slice(),
+                    "storing the lookup under ibridge-seal-v1 would make it the encryption key"
+                );
+                if lookup.as_slice() == right.as_slice() {
+                    found = true;
+                }
+            }
+            assert!(
+                found,
+                "each token must have a lookup row under ibridge-lookup-v1"
+            );
+        }
         for row in &rows {
             let lookup: Vec<u8> = row.try_get("lookup").unwrap();
             let nonce: Option<Vec<u8>> = row.try_get("nonce").unwrap();

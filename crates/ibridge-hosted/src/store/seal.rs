@@ -127,7 +127,13 @@ pub(crate) fn open(aad: &[u8], token: &[u8], sealed: &Sealed) -> Result<SecretSt
 /// Lookup hash for `token`. Safe to store; it is not the encryption key.
 #[must_use]
 pub(crate) fn lookup(token: &[u8]) -> [u8; 32] {
-    derive(token, LOOKUP_INFO)
+    lookup_with_info(token, LOOKUP_INFO)
+}
+
+/// HKDF output of `token` under `info`. Tests use this to tell the two labels apart.
+#[must_use]
+pub(crate) fn lookup_with_info(token: &[u8], info: &[u8]) -> [u8; 32] {
+    derive(token, info)
 }
 
 /// HKDF-SHA256 with an empty salt.

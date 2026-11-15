@@ -4261,7 +4261,17 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "async-imap",
+ "futures",
+ "ibridge-auth",
+ "ibridge-core",
+ "ibridge-mail",
+ "ibridge-testkit",
+ "mail-parser",
  "regex",
+ "thiserror 2.0.21",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]

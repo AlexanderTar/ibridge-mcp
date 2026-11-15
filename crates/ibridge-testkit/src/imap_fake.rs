@@ -56,6 +56,9 @@ pub struct FakeScript {
     pub fail_append: bool,
     /// A user folder named `Archive` is listed before the `\Archive` mailbox.
     pub archive_name_shadow: bool,
+    /// Inbox UIDs 60 and 61 are fixture-recorder markers: their subjects start with `[ibridge-fixture]`.
+    /// `UID SEARCH` still answers every inbox UID, as a loose server could, so a client must filter.
+    pub marker_messages: bool,
 }
 
 #[derive(Debug)]
@@ -566,6 +569,9 @@ fn inbox_uids(script: &FakeScript) -> Vec<u32> {
     if script.missing_date {
         uids.push(9);
     }
+    if script.marker_messages {
+        uids.extend([60, 61]);
+    }
     uids
 }
 
@@ -650,12 +656,32 @@ fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
             long_note(),
         ));
     }
+    if script.marker_messages {
+        messages.extend([marker_message(60, "one"), marker_message(61, "two")]);
+    }
     for (seq, (uid, head, body)) in messages.into_iter().enumerate() {
         let seq = u32::try_from(seq.saturating_add(1)).unwrap_or(1);
         push_fetch(&mut bytes, seq, uid, &head, &body);
     }
     bytes.extend(tagged_ok(tag));
     bytes
+}
+
+fn marker_message(uid: u32, word: &str) -> (u32, String, Vec<u8>) {
+    let subject = format!("[ibridge-fixture] seed {word}");
+    let head = format!(
+        r#"INTERNALDATE "04-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "{subject}" (("Ada Lovelace" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#
+    );
+    let raw = format!(
+        "Message-ID: <marker-{word}@mail.icloud.com>\r\n\
+         From: \"Ada Lovelace\" <ada@icloud.com>\r\n\
+         To: ada@icloud.com\r\n\
+         Subject: {subject}\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         \r\n\
+         marker body {word}"
+    );
+    (uid, head, raw.into_bytes())
 }
 
 fn long_note() -> Vec<u8> {

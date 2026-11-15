@@ -2,6 +2,7 @@
 
 //! Workspace maintenance tasks.
 
+mod record;
 mod scrub;
 
 use std::env;

@@ -9,7 +9,19 @@ description = "Workspace maintenance tasks."
 publish = false
 
 [dependencies]
+async-imap.workspace = true
+futures.workspace = true
+ibridge-auth.workspace = true
+ibridge-mail.workspace = true
+mail-parser.workspace = true
 regex.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+ibridge-core.workspace = true
+ibridge-testkit.workspace = true
 
 [lints]
 workspace = true

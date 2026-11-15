@@ -15,7 +15,6 @@ getrandom.workspace = true
 http.workspace = true
 ibridge-core.workspace = true
 ibridge-dav.workspace = true
-roxmltree.workspace = true
 
 [dev-dependencies]
 ibridge-auth.workspace = true

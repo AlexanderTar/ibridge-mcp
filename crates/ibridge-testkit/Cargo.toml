@@ -8,5 +8,8 @@ repository.workspace = true
 description = "Scripted protocol fakes, fixtures and test containers."
 publish = false
 
+[dependencies]
+testcontainers.workspace = true
+
 [lints]
 workspace = true

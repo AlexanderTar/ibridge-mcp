@@ -1,3 +1,9 @@
+# Advisories with no upgrade. `testcontainers` 0.28 pulls `astral-tokio-tar`,
+# which RustSec marks unmaintained (RUSTSEC-2026-0440) and says has no safe
+# upgrade. It is a test-only dependency used to copy files into containers.
+[advisories]
+ignore = ["RUSTSEC-2026-0440"]
+
 # Only these licences may be linked. GPL and LGPL are not allowed.
 # https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
 

@@ -33,6 +33,7 @@ hyper-util = { version = "0.1", features = [
 ] }
 ibridge-auth = { path = "crates/ibridge-auth" }
 ibridge-core = { path = "crates/ibridge-core" }
+ibridge-testkit = { path = "crates/ibridge-testkit" }
 keyring-core = "1"
 libdav = "0.11.2"
 proptest = "1"
@@ -40,6 +41,7 @@ roxmltree = "0.21"
 secrecy = "0.10"
 serde = "1"
 temp-env = "0.3"
+testcontainers = "0.28"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = "0.1"

@@ -14,4 +14,6 @@ pub use error::DavError;
 pub use sync::{SyncReport, SyncedItem};
 
 #[cfg(test)]
+mod integration;
+#[cfg(test)]
 mod test_support;

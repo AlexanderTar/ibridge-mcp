@@ -41,7 +41,26 @@ pub(crate) fn resolve_location(current: &Uri, location: &str) -> Result<Uri, Dav
 }
 
 /// The URI host, including a non-default port, is on the iCloud allowlist.
+///
+/// Tests may also use `127.0.0.1` or `localhost` on any port, so a Radicale
+/// container can run beside the suite. Production builds have no loopback
+/// exception.
 pub(crate) fn host_is_allowed(uri: &Uri) -> bool {
+    // ponytail: loopback is test-only. A production build never reaches it.
+    icloud_host(uri) || loopback_for_tests(uri)
+}
+
+#[cfg(test)]
+fn loopback_for_tests(uri: &Uri) -> bool {
+    matches!(uri.host(), Some("127.0.0.1" | "localhost"))
+}
+
+#[cfg(not(test))]
+fn loopback_for_tests(_uri: &Uri) -> bool {
+    false
+}
+
+fn icloud_host(uri: &Uri) -> bool {
     let Some(host) = uri.host() else {
         return false;
     };

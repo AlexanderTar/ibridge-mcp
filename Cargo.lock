@@ -631,6 +631,7 @@ dependencies = [
  "base64",
  "getrandom",
  "hkdf",
+ "ibridge-auth",
  "ibridge-core",
  "secrecy",
  "sha2 0.11.1",

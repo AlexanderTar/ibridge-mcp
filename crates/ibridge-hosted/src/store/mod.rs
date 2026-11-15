@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
+use ibridge_auth::{Credentials, Validator};
 use ibridge_core::AppleId;
 use secrecy::{ExposeSecret, SecretString};
 use sqlx::Row;
@@ -31,6 +32,9 @@ pub enum StoreError {
     /// The grant was revoked, including after a refresh token was reused.
     #[error("the grant was revoked")]
     InvalidGrant,
+    /// No iCloud service accepted the app-specific password.
+    #[error("the password was not accepted")]
+    Rejected,
     /// The database could not be opened or updated.
     #[error("the store failed")]
     Internal {
@@ -117,6 +121,17 @@ pub struct CallSecret {
     pub scope: Scope,
 }
 
+/// Personal API key. The key is shown once and is the only copy of its seal key.
+#[derive(Debug)]
+pub struct ApiKey {
+    /// Grant this key belongs to.
+    pub grant_id: GrantId,
+    /// Bearer token. Prefix `ibr_`.
+    pub key: SecretString,
+    /// Scope chosen when the key was minted.
+    pub scope: Scope,
+}
+
 /// Open credential store.
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -198,12 +213,13 @@ impl Store {
         settle(tx, result).await
     }
 
-    /// Opens the password for this call. The access seal stays in the database.
+    /// Opens the password for this call. The access or API-key seal stays in the database.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Expired`] after one hour, and [`StoreError::InvalidToken`]
-    /// when the token is unknown.
+    /// Returns [`StoreError::Expired`] after one hour for an access token,
+    /// [`StoreError::InvalidGrant`] when the grant was revoked, and
+    /// [`StoreError::InvalidToken`] when the token is unknown.
     pub async fn open_for_call(
         &self,
         access: &str,
@@ -267,6 +283,36 @@ impl Store {
         let result = record_success(&mut tx, &grant.0).await;
         settle(tx, result).await
     }
+
+    /// Mints a personal API key after `validator` accepts the password.
+    ///
+    /// The key does not expire. Its seal opens only with this key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Rejected`] when no service accepts the password or
+    /// validation cannot run, and [`StoreError::Internal`] when the row cannot be written.
+    pub async fn mint_api_key(
+        &self,
+        credentials: &Credentials,
+        name: &str,
+        scope: Scope,
+        validator: &impl Validator,
+        now: SystemTime,
+    ) -> Result<ApiKey, StoreError> {
+        let report = match validator.validate().await {
+            Ok(report) => report,
+            Err(_err) => return Err(StoreError::Rejected),
+        };
+        if !report.any_service_ok() {
+            return Err(StoreError::Rejected);
+        }
+        let now = unix(now)?;
+        let asp = credentials.with_secret(|secret| SecretString::from(secret));
+        let mut tx = begin(&self.pool).await?;
+        let result = mint_key_in(&mut tx, &credentials.apple_id, &asp, name, scope, now).await;
+        settle(tx, result).await
+    }
 }
 
 async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
@@ -292,9 +338,11 @@ const ACCESS_TTL_SECS: u64 = 3_600;
 const PREFIX_CODE: &str = "ibc_";
 const PREFIX_ACCESS: &str = "iba_";
 const PREFIX_REFRESH: &str = "ibf_";
+const PREFIX_API: &str = "ibr_";
 
 const PURPOSE_CODE: &str = "code";
 const PURPOSE_ACCESS: &str = "access";
+const PURPOSE_API_KEY: &str = "api_key";
 const PURPOSE_REFRESH: &str = "refresh";
 const PURPOSE_GRACE: &str = "refresh_grace";
 const PURPOSE_SPENT: &str = "refresh_spent";
@@ -302,6 +350,7 @@ const PURPOSE_SPENT: &str = "refresh_spent";
 const STATUS_ACTIVE: &str = "active";
 const STATUS_REVOKED: &str = "revoked";
 const KIND_OAUTH: &str = "oauth";
+const KIND_API_KEY: &str = "api_key";
 const FAILURES_TO_REVOKE: i64 = 3;
 const FAILURE_WINDOW: i64 = 15 * 60;
 
@@ -336,7 +385,7 @@ struct Outgoing<'a> {
     purpose: &'a str,
     token: &'a str,
     plaintext: &'a str,
-    expires_at: i64,
+    expires_at: Option<i64>,
     now: i64,
 }
 
@@ -401,7 +450,7 @@ async fn seal_in(
             purpose: PURPOSE_CODE,
             token: code.expose_secret(),
             plaintext: asp.expose_secret(),
-            expires_at: later(now, CODE_TTL)?,
+            expires_at: Some(later(now, CODE_TTL)?),
             now,
         },
     )
@@ -409,6 +458,52 @@ async fn seal_in(
     Ok(IssuedCode {
         grant_id: GrantId(grant),
         code,
+    })
+}
+
+async fn mint_key_in(
+    tx: &mut WriteTx,
+    apple_id: &AppleId,
+    asp: &SecretString,
+    name: &str,
+    scope: Scope,
+    now: i64,
+) -> Result<ApiKey, StoreError> {
+    sweep(tx, now).await?;
+    let account = upsert_account(tx, apple_id, now).await?;
+    let grant = random_bytes::<16>()?;
+    sqlx::query(
+        "INSERT INTO grants (id, account_id, kind, name, scope, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(grant.as_slice())
+    .bind(account)
+    .bind(KIND_API_KEY)
+    .bind(name)
+    .bind(scope.as_str())
+    .bind(STATUS_ACTIVE)
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .map_err(internal)?;
+    let key = mint(PREFIX_API)?;
+    insert_seal(
+        tx,
+        &Outgoing {
+            grant: &grant,
+            apple_id: apple_id.as_str(),
+            purpose: PURPOSE_API_KEY,
+            token: key.expose_secret(),
+            plaintext: asp.expose_secret(),
+            expires_at: None,
+            now,
+        },
+    )
+    .await?;
+    Ok(ApiKey {
+        grant_id: GrantId(grant),
+        key,
+        scope,
     })
 }
 
@@ -428,7 +523,7 @@ async fn exchange_in(tx: &mut WriteTx, code: &str, now: i64) -> Result<IssuedTok
 
 async fn open_in(tx: &mut WriteTx, access: &str, now: i64) -> Result<CallSecret, StoreError> {
     let hit = load(tx, access, now).await?;
-    if hit.purpose != PURPOSE_ACCESS {
+    if hit.purpose != PURPOSE_ACCESS && hit.purpose != PURPOSE_API_KEY {
         return Err(StoreError::InvalidToken);
     }
     if let Some(err) = refusal(&hit, now) {
@@ -601,7 +696,7 @@ async fn issue_pair(
             purpose: PURPOSE_ACCESS,
             token: access.expose_secret(),
             plaintext,
-            expires_at: later(now, ACCESS_TTL)?,
+            expires_at: Some(later(now, ACCESS_TTL)?),
             now,
         },
     )
@@ -614,7 +709,7 @@ async fn issue_pair(
             purpose: PURPOSE_REFRESH,
             token: refresh.expose_secret(),
             plaintext,
-            expires_at: later(now, REFRESH_TTL)?,
+            expires_at: Some(later(now, REFRESH_TTL)?),
             now,
         },
     )
@@ -794,6 +889,7 @@ fn later(now: i64, ttl: i64) -> Result<i64, StoreError> {
 mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    use ibridge_auth::{AuthError, Credentials, ServiceCheck, ValidationReport, Validator};
     use ibridge_core::AppleId;
     use secrecy::{ExposeSecret, SecretString};
 
@@ -1195,5 +1291,188 @@ mod tests {
             matches!(again, Err(StoreError::InvalidGrant)),
             "the revoked grant stays revoked, got {again:?}"
         );
+    }
+
+    struct FixedValidator {
+        result: Result<ValidationReport, AuthError>,
+    }
+
+    impl Validator for FixedValidator {
+        #[expect(
+            clippy::unused_async_trait_impl,
+            reason = "the scripted validator returns a prepared report"
+        )]
+        async fn validate(&self) -> Result<ValidationReport, AuthError> {
+            self.result.clone()
+        }
+    }
+
+    fn accepted_report() -> ValidationReport {
+        ValidationReport {
+            mail: ServiceCheck::Ok,
+            calendar: ServiceCheck::Failed {
+                reason: "calendar is off".to_owned(),
+            },
+            contacts: ServiceCheck::Failed {
+                reason: "contacts are off".to_owned(),
+            },
+        }
+    }
+
+    fn rejected_report() -> ValidationReport {
+        ValidationReport {
+            mail: ServiceCheck::Failed {
+                reason: "mail is off".to_owned(),
+            },
+            calendar: ServiceCheck::Failed {
+                reason: "calendar is off".to_owned(),
+            },
+            contacts: ServiceCheck::Failed {
+                reason: "contacts are off".to_owned(),
+            },
+        }
+    }
+
+    async fn mint_key(store: &Store, apple: &str, asp: &str, scope: Scope) -> super::ApiKey {
+        let id = AppleId::try_from(apple).unwrap();
+        store
+            .mint_api_key(
+                &Credentials::new(id, SecretString::from(asp)),
+                "laptop",
+                scope,
+                &FixedValidator {
+                    result: Ok(accepted_report()),
+                },
+                at(0),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn mint_requires_validated_asp() {
+        let store = Store::memory().await.unwrap();
+        let ada = AppleId::try_from("ada@icloud.com").unwrap();
+        let denied = store
+            .mint_api_key(
+                &Credentials::new(ada.clone(), SecretString::from(ASP)),
+                "laptop",
+                Scope::Read,
+                &FixedValidator {
+                    result: Ok(rejected_report()),
+                },
+                at(0),
+            )
+            .await;
+        assert!(
+            matches!(denied, Err(StoreError::Rejected)),
+            "a password no service accepts is rejected, got {denied:?}"
+        );
+        let broken = store
+            .mint_api_key(
+                &Credentials::new(ada.clone(), SecretString::from(ASP)),
+                "laptop",
+                Scope::Read,
+                &FixedValidator {
+                    result: Err(AuthError::Validation),
+                },
+                at(0),
+            )
+            .await;
+        assert!(
+            matches!(broken, Err(StoreError::Rejected)),
+            "a validator that cannot run is rejected, got {broken:?}"
+        );
+        let stored = purposes(&store).await;
+        assert!(
+            stored.iter().all(|purpose| purpose != "api_key"),
+            "a rejected mint must not store an api key, got {stored:?}"
+        );
+        let minted = store
+            .mint_api_key(
+                &Credentials::new(ada, SecretString::from(ASP)),
+                "laptop",
+                Scope::ReadWrite,
+                &FixedValidator {
+                    result: Ok(accepted_report()),
+                },
+                at(0),
+            )
+            .await
+            .expect("one accepting service is enough to mint");
+        assert!(
+            minted.key.expose_secret().starts_with("ibr_"),
+            "api keys use the ibr_ prefix"
+        );
+    }
+
+    #[tokio::test]
+    async fn apikey_opens_only_its_copy() {
+        let store = Store::memory().await.unwrap();
+        let ada = mint_key(&store, "ada@icloud.com", ASP, Scope::ReadWrite).await;
+        let bea = mint_key(
+            &store,
+            "bea@icloud.com",
+            "zzzz-zzzz-zzzz-zzzz",
+            Scope::ReadWrite,
+        )
+        .await;
+        let first = store
+            .open_for_call(ada.key.expose_secret(), at(1))
+            .await
+            .unwrap();
+        let second = store
+            .open_for_call(ada.key.expose_secret(), at(2))
+            .await
+            .unwrap();
+        assert_eq!(first.secret.expose_secret(), ASP);
+        assert_eq!(second.secret.expose_secret(), ASP);
+        let other = store
+            .open_for_call(bea.key.expose_secret(), at(2))
+            .await
+            .unwrap();
+        assert_eq!(other.secret.expose_secret(), "zzzz-zzzz-zzzz-zzzz");
+        let later = 90 * 24 * 60 * 60 * 2;
+        store
+            .open_for_call(ada.key.expose_secret(), at(later))
+            .await
+            .expect("an api key does not expire on its own");
+    }
+
+    #[tokio::test]
+    async fn revoked_apikey_rejected() {
+        let store = Store::memory().await.unwrap();
+        let key = mint_key(&store, "ada@icloud.com", ASP, Scope::ReadWrite).await;
+        for at_secs in [0, 60, FIFTEEN_MIN] {
+            store
+                .note_auth_failure(key.grant_id, at(at_secs))
+                .await
+                .unwrap();
+        }
+        let opened = store
+            .open_for_call(key.key.expose_secret(), at(FIFTEEN_MIN))
+            .await;
+        assert!(
+            matches!(opened, Err(StoreError::InvalidGrant)),
+            "a revoked api key is rejected, got {opened:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apikey_scope_read_only() {
+        let store = Store::memory().await.unwrap();
+        let key = mint_key(&store, "ada@icloud.com", ASP, Scope::Read).await;
+        let opened = store
+            .open_for_call(key.key.expose_secret(), at(1))
+            .await
+            .unwrap();
+        assert_eq!(opened.scope, Scope::Read);
+        assert_eq!(opened.secret.expose_secret(), ASP);
+        let write = mint_key(&store, "ada@icloud.com", ASP, Scope::ReadWrite).await;
+        let opened = store
+            .open_for_call(write.key.expose_secret(), at(1))
+            .await
+            .unwrap();
+        assert_eq!(opened.scope, Scope::ReadWrite);
     }
 }

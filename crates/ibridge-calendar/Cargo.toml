@@ -10,6 +10,8 @@ description = "Calendar and reminders providers."
 [dependencies]
 calcard.workspace = true
 chrono.workspace = true
+chrono-tz.workspace = true
+getrandom.workspace = true
 http.workspace = true
 ibridge-core.workspace = true
 ibridge-dav.workspace = true
@@ -19,6 +21,7 @@ roxmltree.workspace = true
 ibridge-auth.workspace = true
 ibridge-dav = { workspace = true, features = ["test-hosts"] }
 ibridge-testkit.workspace = true
+proptest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

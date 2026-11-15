@@ -2,6 +2,8 @@
 
 //! The calendar home and its collections.
 
+use std::fmt::Write as _;
+
 use http::{Request, StatusCode};
 use ibridge_core::{CoreError, ResourcePath};
 use ibridge_dav::Exchange;
@@ -19,18 +21,23 @@ pub(crate) struct Home {
 }
 
 impl Home {
-    /// Absolute URL of the resource at `path`, relative to the home.
+    /// Absolute URL of the resource at `path`, which is relative to the home
+    /// and not percent-encoded.
     pub(crate) fn url_of(&self, path: &str) -> String {
-        format!("{}/{path}", self.url.trim_end_matches('/'))
+        format!("{}/{}", self.url.trim_end_matches('/'), encode(path))
     }
 
-    /// The path of `href` relative to the home, or `None` outside the home.
+    /// The decoded path of `href` relative to the home, or `None` outside the
+    /// home. Servers differ in what they percent-encode (`@` for one), so the
+    /// comparison is on decoded text.
     pub(crate) fn relative(&self, href: &str) -> Option<String> {
         let href_path = href.find("://").map_or(href, |scheme_end| {
             let rest = &href[scheme_end + 3..];
             rest.find('/').map_or("", |slash| &rest[slash..])
         });
-        let rest = href_path.strip_prefix(self.path.trim_end_matches('/'))?;
+        let href_path = decode(href_path)?;
+        let home_path = decode(&self.path)?;
+        let rest = href_path.strip_prefix(home_path.trim_end_matches('/'))?;
         let rest = rest.strip_prefix('/')?;
         (!rest.is_empty()).then(|| rest.to_owned())
     }
@@ -109,6 +116,35 @@ impl CalDavProvider {
         }
         Ok(collections)
     }
+}
+
+fn decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        if byte == b'%' {
+            let pair = text.get(index + 1..index + 3)?;
+            out.push(u8::from_str_radix(pair, 16).ok()?);
+            index += 3;
+        } else {
+            out.push(byte);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~@:!$&'()*+,;=/".contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
 }
 
 pub(crate) fn protocol() -> CoreError {

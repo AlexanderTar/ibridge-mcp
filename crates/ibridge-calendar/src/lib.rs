@@ -7,6 +7,9 @@ mod events;
 mod ical;
 mod recurrence;
 
+#[cfg(test)]
+mod integration;
+
 use ibridge_dav::DavClient;
 
 /// iCloud calendars and reminders through one `CalDAV` client.

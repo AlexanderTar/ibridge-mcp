@@ -1803,11 +1803,14 @@ version = "0.1.0"
 dependencies = [
  "calcard",
  "chrono",
+ "chrono-tz",
+ "getrandom 0.4.3",
  "http",
  "ibridge-auth",
  "ibridge-core",
  "ibridge-dav",
  "ibridge-testkit",
+ "proptest",
  "roxmltree",
  "tokio",
 ]

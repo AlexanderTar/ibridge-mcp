@@ -2,6 +2,8 @@
 
 //! Event reads and writes.
 
+use std::fmt::Write as _;
+
 use calcard::icalendar::{ICalendar, ICalendarProperty};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use http::{Method, Request};
@@ -17,7 +19,7 @@ use crate::recurrence::{self, Occurrence, Window, format_instant, zone_name};
 
 #[expect(
     clippy::unused_async_trait_impl,
-    reason = "list_calendars and the writes arrive in the next units"
+    reason = "list_calendars arrives with the reminders unit"
 )]
 impl CalendarProvider for CalDavProvider {
     async fn list_calendars(&self) -> Result<Vec<Calendar>, CoreError> {
@@ -50,6 +52,90 @@ impl CalendarProvider for CalDavProvider {
     }
 
     async fn get_event(&self, path: &ResourcePath) -> Result<Event, CoreError> {
+        let fetched = self.fetch(path).await?;
+        let ical = ical::parse(&fetched.text).ok_or_else(protocol)?;
+        let occurrences = recurrence::expand(&ical, None).occurrences;
+        let first = occurrences.first().ok_or_else(protocol)?;
+        Ok(to_event(&ical, first, path.clone(), fetched.etag))
+    }
+
+    async fn create_event(
+        &self,
+        calendar: &ResourcePath,
+        draft: &EventDraft,
+    ) -> Result<ResourcePath, CoreError> {
+        let home = self.home().await?;
+        let collections = self.collections(&home).await?;
+        let key = calendar.as_str().trim_end_matches('/');
+        let collection = collections
+            .iter()
+            .find(|c| c.path.as_str().trim_end_matches('/') == key)
+            .ok_or(CoreError::NotFound)?;
+        if !collection.holds_events {
+            return Err(CoreError::InvalidInput(
+                "this calendar holds reminders only; pick a calendar that holds events".to_owned(),
+            ));
+        }
+        let uid = new_uid()?;
+        let text = ical::new_event_text(&uid, Utc::now(), draft)?;
+        let path =
+            ResourcePath::try_from(format!("{key}/{uid}.ics").as_str()).map_err(|_| protocol())?;
+        self.client
+            .put_new(&home.url_of(path.as_str()), &text, ICS_TYPE)
+            .await?;
+        Ok(path)
+    }
+
+    async fn update_event(
+        &self,
+        path: &ResourcePath,
+        etag: &ETag,
+        draft: &EventDraft,
+        scope: &UpdateScope,
+    ) -> Result<ETag, CoreError> {
+        let current = self.fetch(path).await?;
+        if &current.etag != etag {
+            return Err(CoreError::Conflict);
+        }
+        let text = ical::update_event_text(&current.text, draft, scope)?;
+        let home = self.home().await?;
+        Ok(self
+            .client
+            .put_if_match(&home.url_of(path.as_str()), &text, ICS_TYPE, etag)
+            .await?)
+    }
+
+    async fn delete_event(&self, path: &ResourcePath, etag: &ETag) -> Result<(), CoreError> {
+        let home = self.home().await?;
+        Ok(self
+            .client
+            .delete_if_match(&home.url_of(path.as_str()), etag)
+            .await?)
+    }
+}
+
+/// A resource as the server holds it.
+struct Fetched {
+    etag: ETag,
+    text: String,
+}
+
+const ICS_TYPE: &str = "text/calendar; charset=utf-8";
+
+/// A random identifier that is safe in a file name.
+fn new_uid() -> Result<String, CoreError> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| protocol())?;
+    let mut uid = String::with_capacity(32);
+    for byte in bytes {
+        let _ = write!(uid, "{byte:02x}");
+    }
+    Ok(uid)
+}
+
+impl CalDavProvider {
+    /// Reads one resource with its `ETag`.
+    async fn fetch(&self, path: &ResourcePath) -> Result<Fetched, CoreError> {
         let home = self.home().await?;
         let request = Request::builder()
             .method(Method::GET)
@@ -66,37 +152,10 @@ impl CalendarProvider for CalDavProvider {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| ETag::try_from(value).ok())
             .ok_or_else(protocol)?;
-        let text = std::str::from_utf8(&exchange.body).map_err(|_| protocol())?;
-        let ical = ical::parse(text).ok_or_else(protocol)?;
-        let occurrences = recurrence::expand(&ical, None).occurrences;
-        let first = occurrences.first().ok_or_else(protocol)?;
-        Ok(to_event(&ical, first, path.clone(), etag))
+        let text = String::from_utf8(exchange.body.to_vec()).map_err(|_| protocol())?;
+        Ok(Fetched { etag, text })
     }
 
-    async fn create_event(
-        &self,
-        _calendar: &ResourcePath,
-        _draft: &EventDraft,
-    ) -> Result<ResourcePath, CoreError> {
-        Err(CoreError::Unsupported("create_event"))
-    }
-
-    async fn update_event(
-        &self,
-        _path: &ResourcePath,
-        _etag: &ETag,
-        _draft: &EventDraft,
-        _scope: &UpdateScope,
-    ) -> Result<ETag, CoreError> {
-        Err(CoreError::Unsupported("update_event"))
-    }
-
-    async fn delete_event(&self, _path: &ResourcePath, _etag: &ETag) -> Result<(), CoreError> {
-        Err(CoreError::Unsupported("delete_event"))
-    }
-}
-
-impl CalDavProvider {
     /// Runs one `calendar-query` and adds the expanded events to `list`.
     async fn read_collection(
         &self,
@@ -219,7 +278,10 @@ fn to_event(ical: &ICalendar, occurrence: &Occurrence, path: ResourcePath, etag:
 #[cfg(test)]
 mod tests {
     use ibridge_auth::Credentials;
-    use ibridge_core::{AppleId, CalendarProvider, EventQuery, ResourcePath};
+    use ibridge_core::{
+        AppleId, CalendarProvider, CoreError, ETag, EventDraft, EventQuery, ResourcePath,
+        UpdateScope,
+    };
     use ibridge_dav::DavClient;
     use ibridge_testkit::dav_mock::FakeCalDav;
 
@@ -397,5 +459,239 @@ mod tests {
             );
         }
         let _ = ResourcePath::try_from("work/one.ics").expect("path shape");
+    }
+
+    const ALARM_EVENT: &str = "BEGIN:VEVENT\nUID:alarm-1\nDTSTAMP:20261101T000000Z\n\
+        DTSTART:20261116T090000Z\nDTEND:20261116T100000Z\nSUMMARY:Review\n\
+        ORGANIZER;CN=Ada:mailto:ada@icloud.com\n\
+        ATTENDEE;CN=Grace;PARTSTAT=ACCEPTED:mailto:grace@icloud.com\n\
+        X-APPLE-TRAVEL-ADVISORY-BEHAVIOR:AUTOMATIC\n\
+        BEGIN:VALARM\nACTION:DISPLAY\nDESCRIPTION:Reminder\nTRIGGER:-PT15M\nEND:VALARM\n\
+        END:VEVENT";
+
+    fn draft(summary: &str, start: &str, end: &str) -> EventDraft {
+        EventDraft {
+            summary: summary.to_owned(),
+            description: String::new(),
+            start: start.to_owned(),
+            end: end.to_owned(),
+            time_zone: None,
+        }
+    }
+
+    fn work() -> ResourcePath {
+        ResourcePath::try_from("work/").expect("collection path")
+    }
+
+    #[tokio::test]
+    async fn create_always_writes_dtend() {
+        let (fake, provider) = setup().await;
+        let utc = provider
+            .create_event(&work(), &draft("Lunch", "2026-11-16T12:00:00Z", ""))
+            .await
+            .expect("create without an end");
+        let file = utc
+            .as_str()
+            .strip_prefix("work/")
+            .expect("under the collection");
+        let body = fake.body("work", file).expect("stored");
+        assert!(
+            body.contains("DTEND:20261116T130000Z"),
+            "default end is an hour later: {body}"
+        );
+        assert!(body.contains("DTSTART:20261116T120000Z"), "{body}");
+        assert!(body.contains("SUMMARY:Lunch"), "{body}");
+        let put = fake
+            .requests()
+            .into_iter()
+            .find(|request| request.method == "PUT")
+            .expect("one PUT");
+        assert_eq!(
+            put.if_none_match.as_deref(),
+            Some("*"),
+            "create never overwrites"
+        );
+
+        let zoned = EventDraft {
+            time_zone: Some("Europe/Berlin".to_owned()),
+            ..draft("Berlin", "2026-11-16T09:00:00", "2026-11-16T10:30:00")
+        };
+        let path = provider
+            .create_event(&work(), &zoned)
+            .await
+            .expect("create zoned");
+        let body = fake
+            .body("work", path.as_str().strip_prefix("work/").expect("prefix"))
+            .expect("stored");
+        assert!(
+            body.contains("DTSTART;TZID=Europe/Berlin:20261116T090000"),
+            "{body}"
+        );
+        assert!(
+            body.contains("DTEND;TZID=Europe/Berlin:20261116T103000"),
+            "{body}"
+        );
+
+        let day = provider
+            .create_event(&work(), &draft("Offsite", "2026-11-20", ""))
+            .await
+            .expect("create all-day");
+        let body = fake
+            .body("work", day.as_str().strip_prefix("work/").expect("prefix"))
+            .expect("stored");
+        assert!(body.contains("DTSTART;VALUE=DATE:20261120"), "{body}");
+        assert!(body.contains("DTEND;VALUE=DATE:20261121"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn update_requires_etag() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put("work", "a.ics", &vcalendar(ALARM_EVENT));
+        let path = ResourcePath::try_from("work/a.ics").expect("path");
+        let stale = ETag::try_from("\"stale\"").expect("etag");
+        let error = provider
+            .update_event(
+                &path,
+                &stale,
+                &draft("Changed", "2026-11-16T11:00:00Z", "2026-11-16T12:00:00Z"),
+                &UpdateScope::Series,
+            )
+            .await
+            .expect_err("a stale ETag is a conflict");
+        assert_eq!(error, CoreError::Conflict);
+        assert!(
+            fake.body("work", "a.ics")
+                .expect("stored")
+                .contains("SUMMARY:Review"),
+            "the stored event is untouched"
+        );
+        let fresh = ETag::try_from(etag.as_str()).expect("etag");
+        provider
+            .update_event(
+                &path,
+                &fresh,
+                &draft("Changed", "2026-11-16T11:00:00Z", "2026-11-16T12:00:00Z"),
+                &UpdateScope::Series,
+            )
+            .await
+            .expect("matching ETag updates");
+        let put = fake
+            .requests()
+            .into_iter()
+            .rev()
+            .find(|request| request.method == "PUT")
+            .expect("a PUT was sent");
+        assert_eq!(put.if_match.as_deref(), Some(etag.as_str()));
+        assert!(
+            fake.body("work", "a.ics")
+                .expect("stored")
+                .contains("SUMMARY:Changed")
+        );
+    }
+
+    #[tokio::test]
+    async fn update_single_occurrence_adds_recurrence_id() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put(
+            "work",
+            "daily.ics",
+            &vcalendar(
+                "BEGIN:VEVENT\nUID:daily-1\nDTSTAMP:20261101T000000Z\n\
+                 DTSTART:20261116T090000Z\nDTEND:20261116T100000Z\n\
+                 RRULE:FREQ=DAILY;COUNT=3\nSUMMARY:Standup\nEND:VEVENT",
+            ),
+        );
+        let path = ResourcePath::try_from("work/daily.ics").expect("path");
+        provider
+            .update_event(
+                &path,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &draft("Moved", "2026-11-17T10:00:00Z", "2026-11-17T11:00:00Z"),
+                &UpdateScope::Occurrence {
+                    recurrence_id: "2026-11-17T09:00:00Z".to_owned(),
+                },
+            )
+            .await
+            .expect("update one occurrence");
+        let body = fake.body("work", "daily.ics").expect("stored");
+        assert!(body.contains("RECURRENCE-ID:20261117T090000Z"), "{body}");
+        assert!(
+            body.contains("RRULE:FREQ=DAILY;COUNT=3"),
+            "the series is kept: {body}"
+        );
+        assert!(
+            body.contains("SUMMARY:Standup"),
+            "the series name is kept: {body}"
+        );
+        let list = provider
+            .list_events(&query("2026-11-16T00:00:00Z", "2026-11-20T00:00:00Z"))
+            .await
+            .expect("list");
+        let summaries: Vec<(&str, &str)> = list
+            .events
+            .iter()
+            .map(|e| (e.start.as_str(), e.summary.as_str()))
+            .collect();
+        assert_eq!(
+            summaries,
+            [
+                ("2026-11-16T09:00:00Z", "Standup"),
+                ("2026-11-17T10:00:00Z", "Moved"),
+                ("2026-11-18T09:00:00Z", "Standup"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_with_etag() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put("work", "a.ics", &vcalendar(ALARM_EVENT));
+        let path = ResourcePath::try_from("work/a.ics").expect("path");
+        let error = provider
+            .delete_event(&path, &ETag::try_from("\"stale\"").expect("etag"))
+            .await
+            .expect_err("stale ETag");
+        assert_eq!(error, CoreError::Conflict);
+        assert_eq!(fake.files("work"), ["a.ics"], "nothing was deleted");
+        provider
+            .delete_event(&path, &ETag::try_from(etag.as_str()).expect("etag"))
+            .await
+            .expect("matching ETag deletes");
+        assert_eq!(fake.files("work"), Vec::<String>::new());
+        let delete = fake
+            .requests()
+            .into_iter()
+            .rev()
+            .find(|request| request.method == "DELETE")
+            .expect("a DELETE was sent");
+        assert_eq!(delete.if_match.as_deref(), Some(etag.as_str()));
+    }
+
+    #[tokio::test]
+    async fn update_event_preserves_alarms_and_x_props() {
+        let (fake, provider) = setup().await;
+        let etag = fake.put("work", "a.ics", &vcalendar(ALARM_EVENT));
+        let path = ResourcePath::try_from("work/a.ics").expect("path");
+        provider
+            .update_event(
+                &path,
+                &ETag::try_from(etag.as_str()).expect("etag"),
+                &draft("Changed", "2026-11-16T11:00:00Z", "2026-11-16T12:00:00Z"),
+                &UpdateScope::Series,
+            )
+            .await
+            .expect("update");
+        let body = fake.body("work", "a.ics").expect("stored");
+        for kept in [
+            "BEGIN:VALARM",
+            "TRIGGER:-PT15M",
+            "X-APPLE-TRAVEL-ADVISORY-BEHAVIOR:AUTOMATIC",
+            "PARTSTAT=ACCEPTED",
+            "mailto:grace@icloud.com",
+            "ORGANIZER",
+        ] {
+            assert!(body.contains(kept), "lost {kept} in {body}");
+        }
+        assert!(body.contains("DTSTART:20261116T110000Z"), "{body}");
     }
 }

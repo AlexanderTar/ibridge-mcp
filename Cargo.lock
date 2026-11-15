@@ -1878,6 +1878,11 @@ dependencies = [
 [[package]]
 name = "ibridge-contacts"
 version = "0.1.0"
+dependencies = [
+ "calcard",
+ "ibridge-core",
+ "proptest",
+]
 
 [[package]]
 name = "ibridge-core"

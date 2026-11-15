@@ -6,9 +6,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ibridge_core::{
-    AppleId, Contact, ContactDraft, ContactList, ContactQuery, ContactsProvider, CoreError, Draft,
-    ETag, FlagChange, GroupChange, GroupRef, LabeledValue, MailSearch, Mailbox, MessageId,
-    ResourcePath, decode_resource, encode_resource,
+    AppleId, Contact, ContactDraft, ContactList, ContactQuery, ContactUpdate, ContactsProvider,
+    CoreError, Draft, ETag, FlagChange, GroupChange, GroupRef, LabeledValue, MailSearch, Mailbox,
+    MessageId, ResourcePath, decode_resource, encode_resource,
 };
 use ibridge_server::{
     AccountSnapshot, IbridgeServer, MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail,
@@ -93,11 +93,13 @@ fn labeled(value: &str, label: &str) -> LabeledValue {
 struct Fake {
     contacts: Mutex<Vec<Contact>>,
     /// Every draft an update received.
-    updates: Mutex<Vec<ContactDraft>>,
+    updates: Mutex<Vec<ContactUpdate>>,
     /// Every group change received, as `(group, contact, change)`.
     memberships: Mutex<Vec<(String, String, GroupChange)>>,
     /// The last search the fake received.
     searches: Mutex<Vec<ContactQuery>>,
+    /// How many times `get` was called.
+    gets: std::sync::atomic::AtomicUsize,
 }
 
 impl Fake {
@@ -142,6 +144,7 @@ impl ContactsProvider for Fake {
     }
 
     async fn get(&self, target: &ResourcePath) -> Result<Contact, CoreError> {
+        self.gets.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.lock()
             .iter()
             .find(|contact| &contact.path == target)
@@ -169,7 +172,7 @@ impl ContactsProvider for Fake {
         &self,
         target: &ResourcePath,
         expected: &ETag,
-        draft: &ContactDraft,
+        draft: &ContactUpdate,
     ) -> Result<ETag, CoreError> {
         self.updates
             .lock()
@@ -184,7 +187,9 @@ impl ContactsProvider for Fake {
             return Err(CoreError::Conflict);
         }
         contact.etag = etag(2);
-        draft.full_name.clone_into(&mut contact.full_name);
+        if let Some(name) = &draft.full_name {
+            name.clone_into(&mut contact.full_name);
+        }
         Ok(contact.etag.clone())
     }
 
@@ -496,9 +501,14 @@ async fn create_then_update_keeps_what_is_omitted() {
         .last()
         .cloned()
         .expect("an update");
-    assert_eq!(sent.full_name, "Ada King");
-    assert_eq!(sent.emails, ["ada@example.com"], "omitted emails are kept");
-    assert_eq!(sent.phones, ["+1 555 0100"], "omitted phones are kept");
+    assert_eq!(sent.full_name.as_deref(), Some("Ada King"));
+    assert_eq!(sent.emails, None, "omitted emails are left to the provider");
+    assert_eq!(sent.phones, None, "omitted phones are left to the provider");
+    assert_eq!(
+        fake.gets.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "an update does not read the contact first"
+    );
 
     let changed = call(
         &client,
@@ -514,8 +524,12 @@ async fn create_then_update_keeps_what_is_omitted() {
         .last()
         .cloned()
         .expect("an update");
-    assert!(sent.phones.is_empty(), "an empty list clears the phones");
-    assert_eq!(sent.full_name, "Ada King", "the name is kept");
+    assert_eq!(
+        sent.phones,
+        Some(Vec::new()),
+        "an empty list clears the phones"
+    );
+    assert_eq!(sent.full_name, None, "the name is left to the provider");
 }
 
 #[tokio::test]

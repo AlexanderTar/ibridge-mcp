@@ -4,7 +4,7 @@
 
 use std::fmt::Write as _;
 
-use ibridge_core::{ContactDraft, CoreError, ETag, ResourcePath};
+use ibridge_core::{ContactDraft, ContactUpdate, CoreError, ETag, ResourcePath};
 
 use crate::CardDavProvider;
 use crate::books::{VCARD_TYPE, protocol};
@@ -39,12 +39,29 @@ impl CardDavProvider {
         &self,
         path: &ResourcePath,
         etag: &ETag,
-        draft: &ContactDraft,
+        update: &ContactUpdate,
     ) -> Result<ETag, CoreError> {
         let current = self.fetch(path).await?;
         if &current.etag != etag {
             return Err(CoreError::Conflict);
         }
+        let fields = vcard::read(&vcard::parse(&current.text).ok_or_else(protocol)?);
+        refuse_group(&fields)?;
+        let values = |list: &[ibridge_core::LabeledValue]| -> Vec<String> {
+            list.iter().map(|item| item.value.clone()).collect()
+        };
+        let draft = ContactDraft {
+            full_name: update.full_name.clone().unwrap_or(fields.full_name),
+            emails: update
+                .emails
+                .clone()
+                .unwrap_or_else(|| values(&fields.emails)),
+            phones: update
+                .phones
+                .clone()
+                .unwrap_or_else(|| values(&fields.phones)),
+        };
+        let draft = &draft;
         let text = vcard::update_card_text(&current.text, draft)?;
         let home = self.home().await?;
         Ok(self
@@ -65,12 +82,26 @@ impl CardDavProvider {
         if &current.etag != etag {
             return Err(CoreError::Conflict);
         }
+        refuse_group(&vcard::read(
+            &vcard::parse(&current.text).ok_or_else(protocol)?,
+        ))?;
         let home = self.home().await?;
         Ok(self
             .client
             .delete_if_match(&home.url_of(path.as_str()), etag)
             .await?)
     }
+}
+
+/// Groups change only through their membership lists, never as contacts.
+fn refuse_group(fields: &vcard::Fields) -> Result<(), CoreError> {
+    if fields.is_group {
+        return Err(CoreError::InvalidInput(
+            "that card is a group; use contacts_set_group_membership, groups cannot be changed or deleted here"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// A random UUID, the way Apple names its cards.
@@ -95,7 +126,9 @@ fn new_uid() -> Result<String, CoreError> {
 
 #[cfg(test)]
 mod tests {
-    use ibridge_core::{ContactDraft, ContactsProvider, CoreError, ETag, ResourcePath};
+    use ibridge_core::{
+        ContactDraft, ContactUpdate, ContactsProvider, CoreError, ETag, ResourcePath,
+    };
 
     use crate::test_support::{setup, vcard};
 
@@ -108,6 +141,19 @@ mod tests {
             full_name: name.to_owned(),
             emails: emails.iter().map(|e| (*e).to_owned()).collect(),
             phones: phones.iter().map(|p| (*p).to_owned()).collect(),
+        }
+    }
+
+    const GROUP: &str = "UID:group-uid\nN:Pioneers;;;;\nFN:Pioneers\n\
+        X-ADDRESSBOOKSERVER-KIND:group\nX-ABUID:group-uid\n\
+        X-ADDRESSBOOKSERVER-MEMBER:urn:uuid:ada-uid";
+
+    fn change(name: &str, emails: &[&str], phones: &[&str]) -> ContactUpdate {
+        let all = draft(name, emails, phones);
+        ContactUpdate {
+            full_name: Some(all.full_name),
+            emails: Some(all.emails),
+            phones: Some(all.phones),
         }
     }
 
@@ -125,7 +171,7 @@ mod tests {
         let first = fake.put("card", "ada.vcf", &vcard(ADA));
         // Someone else saves the card after we read it.
         let second = fake.put("card", "ada.vcf", &vcard(ADA));
-        let changed = draft("Ada King", &["ada@example.com"], &["+1 555 0100"]);
+        let changed = change("Ada King", &["ada@example.com"], &["+1 555 0100"]);
 
         let stale = provider.update(&ada_path(), &etag(&first), &changed).await;
         assert_eq!(stale, Err(CoreError::Conflict));
@@ -217,6 +263,74 @@ mod tests {
         assert!(get < delete, "re-read before delete");
         assert_eq!(requests[delete].if_match.as_deref(), Some(second.as_str()));
         assert!(fake.body("card", "ada.vcf").is_none());
+    }
+
+    #[tokio::test]
+    async fn update_keeps_the_fields_it_leaves_out() {
+        let (fake, provider) = setup().await;
+        let tag = fake.put("card", "ada.vcf", &vcard(ADA));
+        let only_name = ContactUpdate {
+            full_name: Some("Ada King".to_owned()),
+            ..ContactUpdate::default()
+        };
+        provider
+            .update(&ada_path(), &etag(&tag), &only_name)
+            .await
+            .expect("update");
+        let stored = fake.body("card", "ada.vcf").expect("stored");
+        assert!(stored.contains("FN:Ada King\r\n"), "{stored:?}");
+        assert!(
+            stored.contains(
+                "item1.EMAIL;type=INTERNET;type=pref:ada@example.com\r\nitem1.X-ABLabel:_$!<Home>!$_\r\n"
+            ),
+            "{stored:?}"
+        );
+        assert!(
+            stored.contains("TEL;type=CELL:+1 555 0100\r\n"),
+            "{stored:?}"
+        );
+        assert!(
+            fake.requests().iter().all(|r| r.method != "REPORT"),
+            "an update must not read the whole address book"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_refuses_a_group_card() {
+        let (fake, provider) = setup().await;
+        let tag = fake.put("card", "pioneers.vcf", &vcard(GROUP));
+        let group = ResourcePath::try_from("card/pioneers.vcf").expect("path");
+        let result = provider
+            .update(
+                &group,
+                &etag(&tag),
+                &change("Renamed", &["x@example.com"], &[]),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(CoreError::InvalidInput(_))),
+            "{result:?}"
+        );
+        assert!(fake.requests().iter().all(|r| r.method != "PUT"));
+        let stored = fake.body("card", "pioneers.vcf").expect("stored");
+        assert!(stored.contains("FN:Pioneers"), "{stored:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_refuses_a_group_card() {
+        let (fake, provider) = setup().await;
+        let tag = fake.put("card", "pioneers.vcf", &vcard(GROUP));
+        let group = ResourcePath::try_from("card/pioneers.vcf").expect("path");
+        let result = provider.delete(&group, &etag(&tag)).await;
+        assert!(
+            matches!(result, Err(CoreError::InvalidInput(_))),
+            "{result:?}"
+        );
+        assert!(
+            fake.requests().iter().all(|r| r.method != "DELETE"),
+            "no DELETE for a group"
+        );
+        assert!(fake.body("card", "pioneers.vcf").is_some());
     }
 
     #[tokio::test]

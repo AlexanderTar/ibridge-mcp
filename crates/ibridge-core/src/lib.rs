@@ -16,8 +16,8 @@ pub use calendar::{
     UpdateScope,
 };
 pub use contacts::{
-    Contact, ContactDraft, ContactList, ContactQuery, ContactsProvider, GroupChange, GroupRef,
-    LabeledValue,
+    Contact, ContactDraft, ContactList, ContactQuery, ContactUpdate, ContactsProvider, GroupChange,
+    GroupRef, LabeledValue,
 };
 pub use error::{CoreError, IdError, ParseError};
 pub use ids::{ETag, ResourcePath, decode, decode_resource, encode, encode_resource};
@@ -187,7 +187,7 @@ mod provider_tests {
             &self,
             _path: &super::ResourcePath,
             _etag: &super::ETag,
-            _draft: &super::ContactDraft,
+            _update: &super::ContactUpdate,
         ) -> Result<super::ETag, CoreError> {
             Err(CoreError::Unsupported("null"))
         }

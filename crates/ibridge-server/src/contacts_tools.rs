@@ -3,8 +3,9 @@
 //! Contacts tools.
 
 use ibridge_core::{
-    CalendarProvider, Contact, ContactDraft, ContactList, ContactQuery, ContactsProvider,
-    CoreError, ETag, GroupChange, LabeledValue, RemindersProvider, ResourcePath, encode_resource,
+    CalendarProvider, Contact, ContactDraft, ContactList, ContactQuery, ContactUpdate,
+    ContactsProvider, CoreError, ETag, GroupChange, LabeledValue, RemindersProvider, ResourcePath,
+    encode_resource,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ErrorData};
@@ -63,7 +64,7 @@ impl ContactsProvider for NoContacts {
         &self,
         _path: &ResourcePath,
         _etag: &ETag,
-        _draft: &ContactDraft,
+        _update: &ContactUpdate,
     ) -> Result<ETag, CoreError> {
         off()
     }
@@ -215,15 +216,13 @@ where
         let path = require_path(&params.id)?;
         let etag = require_etag(&params.etag)?;
         let _permit = self.permit().await?;
-        // What the caller leaves out stays as the card has it.
-        let current = try_contacts!(self.contacts.get(&path).await);
-        let values = |list: &[LabeledValue]| list.iter().map(|v| v.value.clone()).collect();
-        let draft = ContactDraft {
-            full_name: params.full_name.unwrap_or(current.full_name.clone()),
-            emails: params.emails.unwrap_or_else(|| values(&current.emails)),
-            phones: params.phones.unwrap_or_else(|| values(&current.phones)),
+        // What the caller leaves out stays as the card has it; the provider fills it in.
+        let changes = ContactUpdate {
+            full_name: params.full_name,
+            emails: params.emails,
+            phones: params.phones,
         };
-        let new_etag = try_contacts!(self.contacts.update(&path, &etag, &draft).await);
+        let new_etag = try_contacts!(self.contacts.update(&path, &etag, &changes).await);
         respond(
             &WriteOut {
                 id: params.id,

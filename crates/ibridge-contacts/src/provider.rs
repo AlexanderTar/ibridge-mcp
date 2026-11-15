@@ -3,8 +3,8 @@
 //! The [`ContactsProvider`] implementation.
 
 use ibridge_core::{
-    Contact, ContactDraft, ContactList, ContactQuery, ContactsProvider, CoreError, ETag,
-    GroupChange, ResourcePath,
+    Contact, ContactDraft, ContactList, ContactQuery, ContactUpdate, ContactsProvider, CoreError,
+    ETag, GroupChange, ResourcePath,
 };
 
 use crate::CardDavProvider;
@@ -26,9 +26,9 @@ impl ContactsProvider for CardDavProvider {
         &self,
         path: &ResourcePath,
         etag: &ETag,
-        draft: &ContactDraft,
+        update: &ContactUpdate,
     ) -> Result<ETag, CoreError> {
-        self.update_contact(path, etag, draft).await
+        self.update_contact(path, etag, update).await
     }
 
     async fn delete(&self, path: &ResourcePath, etag: &ETag) -> Result<(), CoreError> {

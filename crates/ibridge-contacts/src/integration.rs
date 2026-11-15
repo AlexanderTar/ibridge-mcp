@@ -5,7 +5,7 @@
 use http::{Method, Request};
 use ibridge_auth::Credentials;
 use ibridge_core::{
-    AppleId, ContactDraft, ContactQuery, ContactsProvider, CoreError, GroupChange, ResourcePath,
+    AppleId, ContactQuery, ContactUpdate, ContactsProvider, CoreError, GroupChange, ResourcePath,
 };
 use ibridge_dav::DavClient;
 
@@ -125,13 +125,13 @@ async fn radicale_vcard_edit_preserves_props() {
         .update(
             &ada.path,
             &ada.etag,
-            &ContactDraft {
-                full_name: "Ada King".to_owned(),
-                emails: vec![
+            &ContactUpdate {
+                full_name: Some("Ada King".to_owned()),
+                emails: Some(vec![
                     "ada@example.com".to_owned(),
                     "countess@example.org".to_owned(),
-                ],
-                phones: vec!["+1 555 0100".to_owned()],
+                ]),
+                phones: Some(vec!["+1 555 0100".to_owned()]),
             },
         )
         .await

@@ -77,6 +77,17 @@ pub struct ContactDraft {
     pub phones: Vec<String>,
 }
 
+/// Changes to a contact. A field left as `None` stays as the card has it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ContactUpdate {
+    /// New full name.
+    pub full_name: Option<String>,
+    /// New email addresses, replacing the current ones.
+    pub emails: Option<Vec<String>>,
+    /// New phone numbers, replacing the current ones.
+    pub phones: Option<Vec<String>>,
+}
+
 /// Add or remove a contact in an existing group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -120,7 +131,7 @@ pub trait ContactsProvider {
         &self,
         path: &ResourcePath,
         etag: &ETag,
-        draft: &ContactDraft,
+        update: &ContactUpdate,
     ) -> Result<ETag, CoreError>;
 
     /// Deletes a contact.

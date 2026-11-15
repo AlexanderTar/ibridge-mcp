@@ -12,7 +12,8 @@ mod mail;
 pub use account::AppleId;
 pub use calendar::{
     Calendar, CalendarProvider, CompletedFilter, Event, EventDraft, EventList, EventQuery,
-    Reminder, ReminderDraft, ReminderList, RemindersProvider, UPGRADED_LISTS_NOTE, UpdateScope,
+    Reminder, ReminderDraft, ReminderList, ReminderPage, RemindersProvider, UPGRADED_LISTS_NOTE,
+    UpdateScope,
 };
 pub use contacts::{Contact, ContactDraft, ContactQuery, ContactsProvider, GroupChange};
 pub use error::{CoreError, IdError, ParseError};
@@ -132,7 +133,10 @@ mod provider_tests {
             &self,
             _list: Option<&super::ResourcePath>,
             _completed: CompletedFilter,
-        ) -> Result<Vec<super::Reminder>, CoreError> {
+        ) -> Result<super::ReminderPage, CoreError> {
+            Err(CoreError::Unsupported("null"))
+        }
+        async fn get(&self, _path: &super::ResourcePath) -> Result<super::Reminder, CoreError> {
             Err(CoreError::Unsupported("null"))
         }
         async fn create(

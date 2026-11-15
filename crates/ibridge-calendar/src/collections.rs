@@ -47,10 +47,8 @@ impl Home {
 #[derive(Clone, Debug)]
 pub(crate) struct Collection {
     pub(crate) path: ResourcePath,
-    #[expect(dead_code, reason = "read by list_calendars in the reminders unit")]
     pub(crate) name: String,
     pub(crate) holds_events: bool,
-    #[expect(dead_code, reason = "read by the reminders reads in the next unit")]
     pub(crate) holds_tasks: bool,
 }
 
@@ -145,6 +143,26 @@ fn encode(text: &str) -> String {
         }
     }
     out
+}
+
+impl CalDavProvider {
+    /// Runs a `calendar-query` report on `collection` and returns its responses.
+    pub(crate) async fn query(
+        &self,
+        home: &Home,
+        collection: &Collection,
+        body: String,
+    ) -> Result<Vec<Entry>, CoreError> {
+        let request = Request::builder()
+            .method("REPORT")
+            .uri(home.url_of(collection.path.as_str()))
+            .header("Depth", "1")
+            .header("Content-Type", "application/xml; charset=utf-8")
+            .body(body)
+            .map_err(|_| protocol())?;
+        let exchange = self.client.request(request).await?;
+        multistatus(&exchange)
+    }
 }
 
 pub(crate) fn protocol() -> CoreError {

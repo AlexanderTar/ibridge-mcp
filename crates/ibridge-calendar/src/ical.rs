@@ -5,10 +5,12 @@
 use calcard::common::PartialDateTime;
 use calcard::icalendar::{
     ICalendar, ICalendarComponent, ICalendarComponentType, ICalendarEntry, ICalendarParameter,
-    ICalendarProperty, ICalendarValue, ICalendarValueType,
+    ICalendarProperty, ICalendarStatus, ICalendarValue, ICalendarValueType,
 };
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
-use ibridge_core::{CoreError, EventDraft, UpdateScope};
+use chrono::{
+    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc,
+};
+use ibridge_core::{CoreError, EventDraft, ReminderDraft, UpdateScope};
 
 /// Parses an iCalendar object. `None` when the text is not one.
 pub(crate) fn parse(text: &str) -> Option<ICalendar> {
@@ -446,6 +448,199 @@ fn floating_text(text: &str) -> Result<When, CoreError> {
         .or_else(|_| NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S"))
         .map(When::Floating)
         .map_err(|_| CoreError::InvalidInput(format!("'{text}' is not an ISO-8601 timestamp")))
+}
+
+/// What the reminders API shows of a `VTODO`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct TodoFields {
+    pub(crate) title: String,
+    pub(crate) notes: String,
+    pub(crate) due: Option<String>,
+    pub(crate) priority: Option<u8>,
+    pub(crate) completed: bool,
+}
+
+/// The first `VTODO` of `ical`, or `None` when it holds no reminder.
+pub(crate) fn read_todo(ical: &ICalendar) -> Option<TodoFields> {
+    let todo = ical
+        .components
+        .iter()
+        .find(|component| component.component_type == ICalendarComponentType::VTodo)?;
+    let priority = todo
+        .property(&ICalendarProperty::Priority)
+        .and_then(|entry| entry.values.first())
+        .and_then(|value| match value {
+            ICalendarValue::Integer(number) => u8::try_from(*number).ok(),
+            _ => None,
+        });
+    Some(TodoFields {
+        title: text(todo, &ICalendarProperty::Summary).unwrap_or_default(),
+        notes: text(todo, &ICalendarProperty::Description).unwrap_or_default(),
+        due: todo.property(&ICalendarProperty::Due).and_then(due_text),
+        priority,
+        completed: is_completed(todo),
+    })
+}
+
+fn is_completed(todo: &ICalendarComponent) -> bool {
+    todo.has_property(&ICalendarProperty::Completed)
+        || text(todo, &ICalendarProperty::Status)
+            .is_some_and(|s| s.eq_ignore_ascii_case("COMPLETED"))
+}
+
+/// ISO-8601 text for a `DUE` value: a date, `Z` for UTC, an offset for a
+/// named zone and a bare local time for a floating one.
+fn due_text(entry: &ICalendarEntry) -> Option<String> {
+    let moment = entry.values.first()?.as_partial_date_time()?;
+    let date = NaiveDate::from_ymd_opt(
+        i32::from(moment.year?),
+        u32::from(moment.month?),
+        u32::from(moment.day?),
+    )?;
+    if !moment.has_time() {
+        return Some(date.format("%Y-%m-%d").to_string());
+    }
+    let naive = date.and_hms_opt(
+        u32::from(moment.hour?),
+        u32::from(moment.minute?),
+        u32::from(moment.second.unwrap_or(0)),
+    )?;
+    if moment.has_zone() {
+        return Some(naive.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+    }
+    let local = naive.format("%Y-%m-%dT%H:%M:%S");
+    let zoned = entry
+        .tz_id()
+        .and_then(|name| name.parse::<chrono_tz::Tz>().ok())
+        .and_then(|zone| zone.from_local_datetime(&naive).single());
+    Some(match zoned {
+        Some(zoned) => zoned.format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+        None => local.to_string(),
+    })
+}
+
+/// New `VCALENDAR` text for one reminder.
+///
+/// # Errors
+///
+/// Returns [`CoreError::InvalidInput`] when the due date cannot be read or the
+/// priority is outside 1 to 9.
+pub(crate) fn new_todo_text(
+    uid: &str,
+    now: DateTime<Utc>,
+    draft: &ReminderDraft,
+) -> Result<String, CoreError> {
+    let mut root = ICalendarComponent::new(ICalendarComponentType::VCalendar);
+    root.entries
+        .push(text_entry(ICalendarProperty::Version, "2.0"));
+    root.entries.push(text_entry(
+        ICalendarProperty::Prodid,
+        "-//ibridge//calendar//EN",
+    ));
+    root.component_ids.push(1);
+    let mut todo = ICalendarComponent::new(ICalendarComponentType::VTodo);
+    todo.add_uid(uid);
+    todo.add_dtstamp(partial(now.naive_utc(), Part::UtcTime));
+    apply_todo(&mut todo, draft, now)?;
+    Ok(ICalendar {
+        components: vec![root, todo],
+    }
+    .to_string())
+}
+
+/// Applies `draft` to the reminder in `text` and returns the new text. Other
+/// properties are left as they were.
+///
+/// # Errors
+///
+/// Returns [`CoreError::InvalidInput`] for an unreadable due date or priority
+/// and [`CoreError::Protocol`] when `text` holds no reminder.
+pub(crate) fn update_todo_text(
+    text: &str,
+    draft: &ReminderDraft,
+    now: DateTime<Utc>,
+) -> Result<String, CoreError> {
+    let mut ical = parse(text).ok_or_else(|| CoreError::Protocol(String::new()))?;
+    let todo = ical
+        .components
+        .iter_mut()
+        .find(|component| component.component_type == ICalendarComponentType::VTodo)
+        .ok_or_else(|| CoreError::Protocol(String::new()))?;
+    apply_todo(todo, draft, now)?;
+    Ok(ical.to_string())
+}
+
+fn apply_todo(
+    todo: &mut ICalendarComponent,
+    draft: &ReminderDraft,
+    now: DateTime<Utc>,
+) -> Result<(), CoreError> {
+    let due = draft
+        .due
+        .as_deref()
+        .map(|text| parse_when(text, None))
+        .transpose()?;
+    if draft
+        .priority
+        .is_some_and(|priority| !(1..=9).contains(&priority))
+    {
+        return Err(invalid("priority is from 1 (highest) to 9"));
+    }
+    set_text(todo, &ICalendarProperty::Summary, Some(&draft.title));
+    let notes = Some(draft.notes.as_str()).filter(|text| !text.is_empty());
+    set_text(todo, &ICalendarProperty::Description, notes);
+    todo.entries.retain(|entry| {
+        !matches!(
+            entry.name,
+            ICalendarProperty::Due | ICalendarProperty::Priority
+        )
+    });
+    if let Some(due) = due {
+        todo.entries.push(due.entry(ICalendarProperty::Due));
+    }
+    if let Some(priority) = draft.priority {
+        todo.entries.push(
+            ICalendarEntry::new(ICalendarProperty::Priority)
+                .with_value(ICalendarValue::Integer(i64::from(priority))),
+        );
+    }
+    let was_completed = is_completed(todo);
+    if draft.completed && !was_completed {
+        set_status(todo, ICalendarStatus::Completed);
+        todo.entries.push(
+            ICalendarEntry::new(ICalendarProperty::Completed).with_value(
+                ICalendarValue::PartialDateTime(Box::new(partial(now.naive_utc(), Part::UtcTime))),
+            ),
+        );
+        set_percent(todo, Some(100));
+    } else if !draft.completed && was_completed {
+        set_status(todo, ICalendarStatus::NeedsAction);
+        todo.entries
+            .retain(|entry| entry.name != ICalendarProperty::Completed);
+        set_percent(todo, None);
+    } else if !draft.completed && !todo.has_property(&ICalendarProperty::Status) {
+        set_status(todo, ICalendarStatus::NeedsAction);
+    }
+    Ok(())
+}
+
+fn set_status(todo: &mut ICalendarComponent, status: ICalendarStatus) {
+    todo.entries
+        .retain(|entry| entry.name != ICalendarProperty::Status);
+    todo.entries.push(
+        ICalendarEntry::new(ICalendarProperty::Status).with_value(ICalendarValue::Status(status)),
+    );
+}
+
+fn set_percent(todo: &mut ICalendarComponent, percent: Option<i64>) {
+    todo.entries
+        .retain(|entry| entry.name != ICalendarProperty::PercentComplete);
+    if let Some(percent) = percent {
+        todo.entries.push(
+            ICalendarEntry::new(ICalendarProperty::PercentComplete)
+                .with_value(ICalendarValue::Integer(percent)),
+        );
+    }
 }
 
 #[cfg(test)]

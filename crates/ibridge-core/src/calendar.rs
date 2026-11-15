@@ -190,11 +190,23 @@ pub struct Reminder {
     pub notes: String,
     /// Due date, when the reminder has one.
     pub due: Option<String>,
+    /// Priority from 1 (highest) to 9, when set.
+    pub priority: Option<u8>,
     /// The reminder is completed.
     pub completed: bool,
 }
 
-/// Fields written by create and update.
+/// Reminders from a query, with a count of items that were skipped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReminderPage {
+    /// The reminders, in the order the lists returned them.
+    pub reminders: Vec<Reminder>,
+    /// Items that could not be read and were left out.
+    pub warnings: u32,
+}
+
+/// Fields written by create and update. An update replaces all of them, so a
+/// `None` removes the property.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReminderDraft {
     /// Title.
@@ -203,6 +215,8 @@ pub struct ReminderDraft {
     pub notes: String,
     /// Due date, when the reminder has one.
     pub due: Option<String>,
+    /// Priority from 1 (highest) to 9, when set.
+    pub priority: Option<u8>,
     /// The reminder is completed.
     pub completed: bool,
 }
@@ -226,7 +240,14 @@ pub trait RemindersProvider {
         &self,
         list: Option<&ResourcePath>,
         completed: CompletedFilter,
-    ) -> Result<Vec<Reminder>, CoreError>;
+    ) -> Result<ReminderPage, CoreError>;
+
+    /// Fetches one reminder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when the reminder does not exist.
+    async fn get(&self, path: &ResourcePath) -> Result<Reminder, CoreError>;
 
     /// Creates a reminder.
     ///

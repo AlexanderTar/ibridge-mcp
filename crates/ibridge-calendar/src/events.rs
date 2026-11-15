@@ -13,17 +13,24 @@ use ibridge_core::{
 };
 
 use crate::CalDavProvider;
-use crate::collections::{Collection, Home, multistatus, protocol, status_error};
+use crate::collections::{Collection, Home, protocol, status_error};
 use crate::ical::{self, Granularity};
 use crate::recurrence::{self, Occurrence, Window, format_instant, zone_name};
 
-#[expect(
-    clippy::unused_async_trait_impl,
-    reason = "list_calendars arrives with the reminders unit"
-)]
 impl CalendarProvider for CalDavProvider {
     async fn list_calendars(&self) -> Result<Vec<Calendar>, CoreError> {
-        Err(CoreError::Unsupported("list_calendars"))
+        let home = self.home().await?;
+        Ok(self
+            .collections(&home)
+            .await?
+            .into_iter()
+            .map(|collection| Calendar {
+                path: collection.path,
+                name: collection.name,
+                holds_events: collection.holds_events,
+                holds_tasks: collection.holds_tasks,
+            })
+            .collect())
     }
 
     async fn list_events(&self, query: &EventQuery) -> Result<EventList, CoreError> {
@@ -115,15 +122,15 @@ impl CalendarProvider for CalDavProvider {
 }
 
 /// A resource as the server holds it.
-struct Fetched {
-    etag: ETag,
-    text: String,
+pub(crate) struct Fetched {
+    pub(crate) etag: ETag,
+    pub(crate) text: String,
 }
 
-const ICS_TYPE: &str = "text/calendar; charset=utf-8";
+pub(crate) const ICS_TYPE: &str = "text/calendar; charset=utf-8";
 
 /// A random identifier that is safe in a file name.
-fn new_uid() -> Result<String, CoreError> {
+pub(crate) fn new_uid() -> Result<String, CoreError> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| protocol())?;
     let mut uid = String::with_capacity(32);
@@ -135,7 +142,7 @@ fn new_uid() -> Result<String, CoreError> {
 
 impl CalDavProvider {
     /// Reads one resource with its `ETag`.
-    async fn fetch(&self, path: &ResourcePath) -> Result<Fetched, CoreError> {
+    pub(crate) async fn fetch(&self, path: &ResourcePath) -> Result<Fetched, CoreError> {
         let home = self.home().await?;
         let request = Request::builder()
             .method(Method::GET)
@@ -164,15 +171,10 @@ impl CalDavProvider {
         window: Window,
         list: &mut EventList,
     ) -> Result<(), CoreError> {
-        let request = Request::builder()
-            .method("REPORT")
-            .uri(home.url_of(collection.path.as_str()))
-            .header("Depth", "1")
-            .header("Content-Type", "application/xml; charset=utf-8")
-            .body(time_range_query(window))
-            .map_err(|_| protocol())?;
-        let exchange = self.client.request(request).await?;
-        for entry in multistatus(&exchange)? {
+        let entries = self
+            .query(home, collection, time_range_query(window))
+            .await?;
+        for entry in entries {
             let (Some(text), Some(etag)) = (entry.calendar_data.as_deref(), entry.etag.as_deref())
             else {
                 continue;
@@ -277,34 +279,11 @@ fn to_event(ical: &ICalendar, occurrence: &Occurrence, path: ResourcePath, etag:
 
 #[cfg(test)]
 mod tests {
-    use ibridge_auth::Credentials;
     use ibridge_core::{
-        AppleId, CalendarProvider, CoreError, ETag, EventDraft, EventQuery, ResourcePath,
-        UpdateScope,
+        CalendarProvider, CoreError, ETag, EventDraft, EventQuery, ResourcePath, UpdateScope,
     };
-    use ibridge_dav::DavClient;
-    use ibridge_testkit::dav_mock::FakeCalDav;
 
-    use crate::CalDavProvider;
-
-    async fn setup() -> (FakeCalDav, CalDavProvider) {
-        let fake = FakeCalDav::start().await;
-        fake.add_collection("work", "Work", &["VEVENT"]);
-        let credentials = Credentials::new(
-            AppleId::try_from("ada@icloud.com").expect("primary address"),
-            "test-secret",
-        );
-        let client =
-            DavClient::for_test_server(credentials, &fake.base_url()).expect("test client");
-        (fake, CalDavProvider::new(client))
-    }
-
-    fn vcalendar(body: &str) -> String {
-        format!(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ibridge//test//EN\r\n{}\r\nEND:VCALENDAR\r\n",
-            body.replace('\n', "\r\n")
-        )
-    }
+    use crate::test_support::{setup, vcalendar};
 
     fn query(start: &str, end: &str) -> EventQuery {
         EventQuery {

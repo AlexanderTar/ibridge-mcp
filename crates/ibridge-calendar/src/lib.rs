@@ -6,6 +6,9 @@ mod collections;
 mod events;
 mod ical;
 mod recurrence;
+mod reminders;
+#[cfg(test)]
+mod test_support;
 
 #[cfg(test)]
 mod integration;

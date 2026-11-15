@@ -41,7 +41,8 @@ struct Observed {
 /// The greeting advertises `IMAP4REV1` and `AUTH=PLAIN` only. After `LOGIN`,
 /// `CAPABILITY` adds `SPECIAL-USE` and `UIDPLUS`. `MOVE` and `IDLE` are never
 /// advertised. `LIST` returns the iCloud special-use set, unless
-/// [`FakeScript::throttle_list`] is set. `INBOX` holds three messages.
+/// [`FakeScript::throttle_list`] is set. `INBOX` holds three readable
+/// messages and one that does not parse.
 #[derive(Clone, Debug)]
 pub struct FakeImap {
     script: FakeScript,
@@ -94,7 +95,9 @@ impl FakeImap {
     /// Opens one client half of a duplex and serves IMAP on the other half.
     #[must_use]
     pub fn connect(&self) -> DuplexStream {
-        let (client, server) = tokio::io::duplex(64 * 1024);
+        // One FETCH of the inbox is about 110 KiB. The buffer has to hold it
+        // while the client is still sending the command.
+        let (client, server) = tokio::io::duplex(512 * 1024);
         let script = self.script.clone();
         let observed = Arc::clone(&self.observed);
         tokio::spawn(async move {
@@ -211,7 +214,7 @@ fn encode_reply(command: &Command<'_>, script: &FakeScript, selected: &str) -> V
         CommandBody::List { .. } => list_reply(tag),
         CommandBody::Status { mailbox, .. } => status_reply(tag, mailbox),
         CommandBody::Select { .. } => select_reply(tag, selected),
-        CommandBody::Search { .. } if selected == "INBOX" => search_reply(tag, &[4, 2, 50]),
+        CommandBody::Search { .. } if selected == "INBOX" => search_reply(tag, &[4, 2, 50, 7]),
         CommandBody::Search { .. } => search_reply(tag, &[]),
         CommandBody::Fetch { .. } if selected == "INBOX" => fetch_inbox(tag),
         _ => tagged(Status::bad(Some(tag.clone()), None, "unknown").expect("bad text")),
@@ -301,15 +304,70 @@ fn search_reply(tag: &Tag<'_>, uids: &[u32]) -> Vec<u8> {
 
 fn fetch_inbox(tag: &Tag<'_>) -> Vec<u8> {
     let mut bytes = Vec::new();
-    for line in [
-        r#"* 1 FETCH (UID 4 INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "newer" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL))"#,
-        r#"* 2 FETCH (UID 2 INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS (\Seen) ENVELOPE (NIL "older-same-day" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL))"#,
-        r#"* 3 FETCH (UID 50 INTERNALDATE "01-Nov-2026 00:00:00 +0000" FLAGS (\Seen \Flagged) ENVELOPE (NIL "oldest" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL))"#,
-    ] {
-        bytes.extend(line.as_bytes());
-        bytes.extend(b"\r\n");
+    let mut long = vec![b'x'; 40_000];
+    long.extend(b"0123456789");
+    let messages: [(u32, &str, Vec<u8>); 4] = [
+        (
+            4,
+            r#"INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "newer" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#,
+            single_part("text/html; charset=utf-8", b"<p>Hello <b>there</b></p>"),
+        ),
+        (
+            2,
+            r#"INTERNALDATE "03-Nov-2026 00:00:00 +0000" FLAGS (\Seen) ENVELOPE (NIL "older-same-day" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#,
+            single_part("text/plain; charset=utf-8", &long),
+        ),
+        (
+            50,
+            r#"INTERNALDATE "01-Nov-2026 00:00:00 +0000" FLAGS (\Seen \Flagged) ENVELOPE (NIL "oldest" (("Ada" NIL "ada" "icloud.com")) NIL NIL NIL NIL NIL NIL NIL)"#,
+            note_and_blob(),
+        ),
+        (
+            7,
+            r#"INTERNALDATE "01-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "bad" NIL NIL NIL NIL NIL NIL NIL NIL)"#,
+            b"not-a-message".to_vec(),
+        ),
+    ];
+    for (seq, (uid, head, body)) in messages.into_iter().enumerate() {
+        let seq = u32::try_from(seq.saturating_add(1)).unwrap_or(1);
+        push_fetch(&mut bytes, seq, uid, head, &body);
     }
     bytes.extend(tagged_ok(tag));
+    bytes
+}
+
+fn push_fetch(out: &mut Vec<u8>, seq: u32, uid: u32, head: &str, body: &[u8]) {
+    let prefix = format!(
+        "* {seq} FETCH (UID {uid} {head} BODY[] {{{}}}\r\n",
+        body.len()
+    );
+    out.extend(prefix.as_bytes());
+    out.extend_from_slice(body);
+    out.extend_from_slice(b")\r\n");
+}
+
+fn single_part(content_type: &str, body: &[u8]) -> Vec<u8> {
+    let mut bytes = format!("Content-Type: {content_type}\r\n\r\n").into_bytes();
+    bytes.extend_from_slice(body);
+    bytes
+}
+
+fn note_and_blob() -> Vec<u8> {
+    let mut bytes = b"MIME-Version: 1.0\r\n\
+        Content-Type: multipart/mixed; boundary=\"b\"\r\n\
+        \r\n\
+        --b\r\n\
+        Content-Type: text/plain; charset=utf-8\r\n\
+        Content-Disposition: attachment; filename=\"note.txt\"\r\n\
+        \r\n\
+        note\r\n\
+        --b\r\n\
+        Content-Type: application/octet-stream\r\n\
+        Content-Disposition: attachment; filename=\"blob.bin\"\r\n\
+        \r\n"
+        .to_vec();
+    bytes.extend(std::iter::repeat_n(1_u8, 65_537));
+    bytes.extend(b"\r\n--b--");
     bytes
 }
 

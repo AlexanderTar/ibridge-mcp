@@ -5,8 +5,19 @@
 use async_imap::types::Flag;
 use futures::StreamExt;
 use ibridge_core::{
-    CoreError, MailPage, MailSearch, MailboxPath, MessageId, MessageSummary, Uid, UidValidity,
+    CoreError, MailSearch, MailboxPath, MessageId, MessageSummary, Uid, UidValidity,
 };
+
+/// One page of search hits. `warnings` counts messages skipped because they did not parse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchPage {
+    /// Hits, newest first.
+    pub messages: Vec<MessageSummary>,
+    /// Present when another page exists.
+    pub next_cursor: Option<String>,
+    /// Messages skipped while building this page.
+    pub warnings: u32,
+}
 
 use super::pool::{Connect, ImapPool, map_command};
 
@@ -19,7 +30,7 @@ impl<C: Connect> ImapPool<C> {
     /// # Errors
     ///
     /// Returns [`CoreError`] when the search cannot be run.
-    pub async fn search(&self, query: &MailSearch) -> Result<MailPage, CoreError> {
+    pub async fn search(&self, query: &MailSearch) -> Result<SearchPage, CoreError> {
         let path = mailbox_path(self, query).await?;
         let mut lease = self.checkout().await?;
         let searched = search_with(&mut lease, query, &path).await;
@@ -50,7 +61,7 @@ async fn search_with<C: Connect>(
     lease: &mut super::pool::Lease<'_, C>,
     query: &MailSearch,
     path: &MailboxPath,
-) -> Result<MailPage, CoreError> {
+) -> Result<SearchPage, CoreError> {
     let criteria = criteria(query)?;
     let Some(session) = lease.session_mut() else {
         return Err(CoreError::Network);
@@ -69,9 +80,10 @@ async fn search_with<C: Connect>(
         .await
         .map_err(|error| map_command(&error))?;
     if uids.is_empty() {
-        return Ok(MailPage {
+        return Ok(SearchPage {
             messages: Vec::new(),
             next_cursor: None,
+            warnings: 0,
         });
     }
     let set = uids
@@ -79,16 +91,22 @@ async fn search_with<C: Connect>(
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(",");
+    // ponytail: each hit's body is downloaded so one bad message can be skipped. Use BODYSTRUCTURE when mailboxes get large.
     let mut fetches = session
-        .uid_fetch(set, "(UID INTERNALDATE FLAGS ENVELOPE)")
+        .uid_fetch(set, "(UID INTERNALDATE FLAGS ENVELOPE BODY.PEEK[])")
         .await
         .map_err(|error| map_command(&error))?;
     let mut hits = Vec::new();
+    let mut warnings = 0_u32;
     while let Some(item) = fetches.next().await {
         let fetch = item.map_err(|error| map_command(&error))?;
         let Some(uid) = fetch.uid else {
             continue;
         };
+        if !fetch.body().is_some_and(super::mime::parses) {
+            warnings = warnings.saturating_add(1);
+            continue;
+        }
         let Some(internal) = fetch.internal_date() else {
             continue;
         };
@@ -103,7 +121,7 @@ async fn search_with<C: Connect>(
     }
     drop(fetches);
     hits.sort_by(|left, right| right.day.cmp(&left.day).then(right.uid.cmp(&left.uid)));
-    page(path, validity, &hits, query)
+    page(path, validity, &hits, query, warnings)
 }
 
 struct Hit {
@@ -120,7 +138,8 @@ fn page(
     validity: UidValidity,
     hits: &[Hit],
     query: &MailSearch,
-) -> Result<MailPage, CoreError> {
+    warnings: u32,
+) -> Result<SearchPage, CoreError> {
     let limit = page_limit(query.limit);
     let start = match &query.cursor {
         None => 0,
@@ -156,9 +175,10 @@ fn page(
     } else {
         None
     };
-    Ok(MailPage {
+    Ok(SearchPage {
         messages,
         next_cursor,
+        warnings,
     })
 }
 

@@ -20,6 +20,7 @@ ibridge-core = { path = "crates/ibridge-core" }
 ibridge-testkit = { path = "crates/ibridge-testkit" }
 imap-codec = "1.0.0"
 keyring-core = "1"
+mail-parser = "1.0"
 proptest = "1"
 secrecy = "0.10"
 serde = "1"

@@ -2,7 +2,9 @@
 
 //! IMAP session handling.
 
+mod fetch;
 mod mailbox;
+mod mime;
 mod pool;
 mod search;
 

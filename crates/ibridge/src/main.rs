@@ -8,6 +8,7 @@ mod cli;
 mod contacts;
 #[cfg(feature = "http")]
 mod daemon;
+mod doctor;
 mod login;
 mod mail;
 mod platform;

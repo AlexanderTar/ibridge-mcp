@@ -73,7 +73,7 @@ pub(crate) fn init_logging() {
 }
 
 /// Reads the account from the environment, then from the keychain.
-async fn credentials() -> anyhow::Result<(Credentials, Option<State>)> {
+pub(crate) async fn credentials() -> anyhow::Result<(Credentials, Option<State>)> {
     if let Ok(credentials) = EnvSource::new().credentials().await {
         return Ok((credentials, None));
     }

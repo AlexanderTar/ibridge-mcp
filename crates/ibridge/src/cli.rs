@@ -20,6 +20,8 @@ enum Command {
     Login,
     /// Removes the stored password and account state.
     Logout,
+    /// Checks the keychain, the network and the sign-in for each service.
+    Doctor,
     /// Installs, removes or checks the background service that serves MCP on loopback.
     #[cfg(feature = "http")]
     Daemon {
@@ -63,6 +65,7 @@ enum DaemonAction {
 pub(crate) async fn run() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Login => crate::login::run().await,
+        Command::Doctor => crate::doctor::run().await,
         Command::Logout => {
             crate::platform::install_keychain()?;
             crate::login::logout()

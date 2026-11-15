@@ -73,12 +73,22 @@ pub(crate) struct Identity {
     pub(crate) names: Vec<String>,
 }
 
+/// Who named a mailbox.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MailboxKind {
+    /// A special-use mailbox such as Trash: the server's own name.
+    SpecialUse,
+    /// A folder someone on the account made.
+    User,
+}
+
 /// Scrubs recordings. One scrubber numbers Message-IDs across every recording
 /// it sees, so reply threads keep pointing at the same placeholder.
 #[derive(Debug)]
 pub(crate) struct Scrubber {
     identity: Identity,
     ids: HashMap<String, String>,
+    folders: HashMap<String, String>,
     /// The highest placeholder number handed out or seen in the input.
     highest: usize,
 }
@@ -88,6 +98,7 @@ impl Scrubber {
         Self {
             identity,
             ids: HashMap::new(),
+            folders: HashMap::new(),
             highest: 0,
         }
     }
@@ -165,6 +176,20 @@ impl Scrubber {
         out
     }
 
+    /// The name to record for a mailbox. INBOX and special-use mailboxes (Apple's
+    /// own names) are kept; a folder the user made becomes `Folder-N`, since its
+    /// name may say who or what the account is about.
+    pub(crate) fn mailbox_name(&mut self, name: &str, kind: MailboxKind) -> String {
+        if kind == MailboxKind::SpecialUse || name.eq_ignore_ascii_case("INBOX") {
+            return self.scrub(name);
+        }
+        let next = self.folders.len() + 1;
+        self.folders
+            .entry(name.to_owned())
+            .or_insert_with(|| format!("Folder-{next}"))
+            .clone()
+    }
+
     fn placeholder(&mut self, id: &str) -> String {
         if id.ends_with(&format!("@{MESSAGE_ID_HOST}>")) {
             return id.to_owned();
@@ -186,7 +211,7 @@ fn replace_ignore_case(text: &str, needle: &str, with: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Identity, Scrubber};
+    use super::{Identity, MailboxKind, Scrubber};
 
     const RECORDING: &str = "\
 Received: from [192.168.1.20] (unknown [203.0.113.77])\r\n\
@@ -298,5 +323,36 @@ In-Reply-To: <fresh999@mail.icloud.com>\r\n\
             "a new id numbers past the existing placeholder:\n{scrubbed}"
         );
         assert_eq!(Scrubber::new(identity()).scrub(&scrubbed), scrubbed);
+    }
+
+    #[test]
+    fn scrub_covers_list_and_capability() {
+        let mut scrubber = Scrubber::new(identity());
+
+        assert_eq!(scrubber.mailbox_name("INBOX", MailboxKind::User), "INBOX");
+        assert_eq!(
+            scrubber.mailbox_name("Deleted Messages", MailboxKind::SpecialUse),
+            "Deleted Messages",
+            "special-use names are Apple's own"
+        );
+        assert_eq!(
+            scrubber.mailbox_name("Ada Lovelace taxes", MailboxKind::User),
+            "Folder-1",
+            "a user folder is numbered, not copied"
+        );
+        assert_eq!(
+            scrubber.mailbox_name("Other", MailboxKind::User),
+            "Folder-2"
+        );
+        assert_eq!(
+            scrubber.mailbox_name("Ada Lovelace taxes", MailboxKind::User),
+            "Folder-1",
+            "the same folder keeps its number"
+        );
+        assert_eq!(
+            scrubber.mailbox_name("Ada Lovelace", MailboxKind::SpecialUse),
+            "Test User",
+            "a special-use name still goes through the identity rules"
+        );
     }
 }

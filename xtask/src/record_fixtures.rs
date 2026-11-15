@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_imap::Session;
-use async_imap::types::NameAttribute;
+use async_imap::imap_proto::{Outcome, Response, ResponseCode};
+use async_imap::types::{Capability, NameAttribute};
 use futures::StreamExt;
 use ibridge_auth::{CredentialSource, Credentials, FileSource};
 use ibridge_mail::{Connect, OutgoingMail, SmtpClient};
@@ -17,7 +18,7 @@ use mail_parser::MessageParser;
 use tokio::io::{AsyncRead, AsyncWrite};
 use zeroize::Zeroizing;
 
-use crate::scrub::{Identity, Scrubber};
+use crate::scrub::{Identity, MailboxKind, Scrubber};
 
 /// Subject prefix of every message the recorder seeds. A per-run nonce follows it.
 pub(crate) const MARKER: &str = "[ibridge-fixture]";
@@ -47,6 +48,11 @@ pub(crate) enum RecordError {
     #[error("sent {sent} marker mails but only {found} arrived")]
     MarkersMissing { sent: usize, found: usize },
 }
+
+/// Files that hold the scrubbed server responses, next to the `mail-N.eml` files.
+pub(crate) const GREETING_FILE: &str = "capability-greeting.txt";
+pub(crate) const CAPABILITY_FILE: &str = "capability-after-login.txt";
+pub(crate) const LIST_FILE: &str = "list.txt";
 
 /// One marker mail is seeded per word.
 const SEEDS: [&str; 2] = ["one", "two"];
@@ -95,8 +101,12 @@ pub(crate) async fn record_mail<C: Connect, S: MarkerSender>(
             )
             .await?;
     }
-    let mut session = login(connector, credentials).await?;
-    let result = record_inbox(&mut session, address, out_dir, wait, &prefix, SEEDS.len()).await;
+    let (mut session, greeting) = login(connector, credentials).await?;
+    let result = async {
+        capture_server_replies(&mut session, &greeting, address, out_dir).await?;
+        record_inbox(&mut session, address, out_dir, wait, &prefix, SEEDS.len()).await
+    }
+    .await;
     let _ = session.logout().await;
     result
 }
@@ -282,19 +292,148 @@ fn display_names(raw: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// Connects, reads the greeting's capability list, and logs in.
 async fn login<C: Connect>(
     connector: &C,
     credentials: &Credentials,
-) -> Result<Session<C::Stream>, RecordError> {
+) -> Result<(Session<C::Stream>, Vec<String>), RecordError> {
     let stream = connector
         .connect()
         .await
         .map_err(|_| RecordError::Connect)?;
+    let mut client = async_imap::Client::new(stream);
+    let greeting = client
+        .read_response()
+        .await
+        .map_err(|_| RecordError::Connect)?
+        .ok_or(RecordError::Connect)?;
+    let advertised: Vec<Capability> = match greeting.parsed() {
+        Response::Data {
+            outcome:
+                Outcome {
+                    code: Some(ResponseCode::Capabilities(capabilities)),
+                    ..
+                },
+            ..
+        } => capabilities.iter().map(Capability::from).collect(),
+        _ => Vec::new(),
+    };
+    let greeting = capability_names(advertised.iter());
     let password = credentials.with_secret(|secret| Zeroizing::new(secret.to_owned()));
-    async_imap::Client::new(stream)
+    let session = client
         .login(credentials.apple_id.as_str(), (*password).as_str())
         .await
-        .map_err(|_| RecordError::Login)
+        .map_err(|_| RecordError::Login)?;
+    Ok((session, greeting))
+}
+
+/// Capability names, sorted so a recording does not depend on hash order.
+fn capability_names<'a>(capabilities: impl Iterator<Item = &'a Capability>) -> Vec<String> {
+    let mut names: Vec<String> = capabilities
+        .map(|capability| match capability {
+            Capability::Imap4rev1 => "IMAP4REV1".to_owned(),
+            Capability::Auth(mechanism) => format!("AUTH={mechanism}"),
+            Capability::Atom(atom) => atom.clone(),
+        })
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+/// Writes the greeting's capabilities, the capabilities asked for again after
+/// login, and the `LIST` rows. The replay tests for special-use detection and the
+/// capability re-query read these. User-made folder names are anonymised.
+async fn capture_server_replies<S>(
+    session: &mut Session<S>,
+    greeting: &[String],
+    address: &str,
+    out_dir: &Path,
+) -> Result<(), RecordError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + fmt::Debug + Send,
+{
+    let after = capability_names(
+        session
+            .capabilities()
+            .await
+            .map_err(|_| RecordError::Imap("CAPABILITY"))?
+            .iter(),
+    );
+    let names = session
+        .list(Some(""), Some("*"))
+        .await
+        .map_err(|_| RecordError::Imap("LIST"))?;
+    let names: Vec<_> = names.collect().await;
+    let mut scrubber = Scrubber::new(Identity {
+        apple_id: address.to_owned(),
+        ..Identity::default()
+    });
+    let mut rows = Vec::new();
+    for name in names.iter().filter_map(|name| name.as_ref().ok()) {
+        let kind = if name
+            .attributes()
+            .iter()
+            .any(|attribute| special_use_attribute(attribute).is_some())
+        {
+            MailboxKind::SpecialUse
+        } else {
+            MailboxKind::User
+        };
+        let attributes: Vec<String> = name
+            .attributes()
+            .iter()
+            .map(|attribute| format!("\\{}", attribute_name(attribute)))
+            .collect();
+        let delimiter = name
+            .delimiter()
+            .map_or_else(|| "NIL".to_owned(), |delimiter| format!("\"{delimiter}\""));
+        rows.push(format!(
+            "* LIST ({}) {delimiter} \"{}\"\n",
+            attributes.join(" "),
+            scrubber.mailbox_name(name.name(), kind)
+        ));
+    }
+    let list = rows.concat();
+    fs::create_dir_all(out_dir)?;
+    for (file, text) in [
+        (
+            GREETING_FILE,
+            format!("* OK [CAPABILITY {}]\n", greeting.join(" ")),
+        ),
+        (
+            CAPABILITY_FILE,
+            format!("* CAPABILITY {}\n", after.join(" ")),
+        ),
+        (LIST_FILE, list),
+    ] {
+        fs::write(out_dir.join(file), scrubber.scrub(&text))?;
+    }
+    Ok(())
+}
+
+fn attribute_name(attribute: &NameAttribute<'_>) -> String {
+    match attribute {
+        NameAttribute::NoInferiors => "Noinferiors".to_owned(),
+        NameAttribute::NoSelect => "Noselect".to_owned(),
+        NameAttribute::Marked => "Marked".to_owned(),
+        NameAttribute::Unmarked => "Unmarked".to_owned(),
+        NameAttribute::Extension(extension) => extension.trim_start_matches('\\').to_owned(),
+        other => special_use_attribute(other).unwrap_or("Unknown").to_owned(),
+    }
+}
+
+/// The RFC 6154 attribute names. Anything else is not special-use.
+fn special_use_attribute(attribute: &NameAttribute<'_>) -> Option<&'static str> {
+    match attribute {
+        NameAttribute::All => Some("All"),
+        NameAttribute::Archive => Some("Archive"),
+        NameAttribute::Drafts => Some("Drafts"),
+        NameAttribute::Flagged => Some("Flagged"),
+        NameAttribute::Junk => Some("Junk"),
+        NameAttribute::Sent => Some("Sent"),
+        NameAttribute::Trash => Some("Trash"),
+        _ => None,
+    }
 }
 
 /// The `\Trash` mailbox. A name that cannot be quoted safely is refused.
@@ -358,7 +497,10 @@ mod tests {
     use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
     use tokio::io::DuplexStream;
 
-    use super::{MARKER, MarkerSender, RecordError, Wait, record_mail, run_mail};
+    use super::{
+        CAPABILITY_FILE, GREETING_FILE, LIST_FILE, MARKER, MarkerSender, RecordError, Wait,
+        record_mail, run_mail,
+    };
 
     struct Fake(FakeImap);
 
@@ -444,8 +586,15 @@ mod tests {
                 file.display()
             );
         }
-        let entries = fs::read_dir(&out).expect("out dir").count();
-        assert_eq!(entries, 2, "nothing else is written to the fixture dir");
+        let emls = fs::read_dir(&out)
+            .expect("out dir")
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .is_ok_and(|entry| entry.path().extension().is_some_and(|ext| ext == "eml"))
+            })
+            .count();
+        assert_eq!(emls, 2, "only the two marker mails are written as mail");
         let sent = outbox.0.lock().expect("outbox").clone();
         assert_eq!(sent.len(), 2, "one marker per expected fixture");
         for (to, subject) in sent {
@@ -495,6 +644,57 @@ mod tests {
             !lines.iter().any(|line| line.contains(" 62 ")),
             "the stale marker must not be moved or flagged, saw {lines:?}"
         );
+        let _ = fs::remove_dir_all(&out);
+    }
+
+    #[tokio::test]
+    async fn recorder_captures_list_and_capability_pre_and_post_login() {
+        let fake = FakeImap::spawn(markers_script());
+        let out = scratch("capture");
+
+        record_mail(
+            &Fake(fake),
+            &credentials(),
+            &Outbox::default(),
+            &out,
+            ONCE,
+            NONCE,
+        )
+        .await
+        .expect("recording succeeds");
+
+        let read = |name: &str| {
+            fs::read_to_string(out.join(name)).unwrap_or_else(|error| panic!("{name}: {error}"))
+        };
+        let greeting = read(GREETING_FILE);
+        assert!(
+            greeting.contains("[CAPABILITY")
+                && greeting.contains("AUTH=PLAIN")
+                && !greeting.contains("SPECIAL-USE"),
+            "the greeting advertises the short set:\n{greeting}"
+        );
+        let after = read(CAPABILITY_FILE);
+        assert!(
+            after.starts_with("* CAPABILITY ")
+                && after.contains("SPECIAL-USE")
+                && after.contains("UIDPLUS"),
+            "the re-query after login advertises more:\n{after}"
+        );
+        let list = read(LIST_FILE);
+        for expected in [
+            "* LIST (\\Trash) \"/\" \"Deleted Messages\"",
+            "* LIST (\\Sent) \"/\" \"Sent Messages\"",
+            "* LIST () \"/\" \"INBOX\"",
+        ] {
+            assert!(list.contains(expected), "missing {expected}:\n{list}");
+        }
+        assert!(
+            !list.contains("Notes") && list.contains("\"Folder-1\""),
+            "a user folder is anonymised:\n{list}"
+        );
+        for text in [&greeting, &after, &list] {
+            assert!(!text.contains("ada@icloud.com"), "unscrubbed:\n{text}");
+        }
         let _ = fs::remove_dir_all(&out);
     }
 

@@ -193,6 +193,11 @@ impl fmt::Debug for Shared {
 
 /// Routes for discovery, registration, sign-in and tokens.
 ///
+/// Serve the router with `into_make_service_with_connect_info::<SocketAddr>()`.
+/// Rate limits key on the peer address, and without it every request shares
+/// one "unknown" budget. Behind a proxy, call [`OAuthConfig::behind_proxy`]
+/// instead.
+///
 /// # Errors
 ///
 /// Returns [`StoreError`] when the client table cannot be created or the

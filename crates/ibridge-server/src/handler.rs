@@ -12,7 +12,7 @@ use ibridge_core::{
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ErrorData, Tool};
-use rmcp::{tool, tool_router};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::account::{AccountSnapshot, ServiceStatus};
@@ -577,3 +577,10 @@ fn status_summary(status: &AccountStatusOut) -> String {
     parts.push(format!("version {}", status.version));
     parts.join("; ")
 }
+
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the generated tool listing returns without waiting"
+)]
+#[tool_handler(router = self.router)]
+impl<M> ServerHandler for IbridgeServer<M> where M: MailApi + Send + Sync + 'static {}

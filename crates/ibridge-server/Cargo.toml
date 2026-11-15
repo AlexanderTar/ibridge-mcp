@@ -19,6 +19,7 @@ trait-variant.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+rmcp = { workspace = true, features = ["client"] }
 
 [lints]
 workspace = true

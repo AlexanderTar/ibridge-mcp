@@ -108,6 +108,15 @@ impl OAuthConfig {
         self.public_url.as_str().trim_end_matches('/').to_owned()
     }
 
+    /// The `host` or `host:port` clients send as the `Host` header.
+    pub(crate) fn host(&self) -> String {
+        match (self.public_url.host_str(), self.public_url.port()) {
+            (Some(host), Some(port)) => format!("{host}:{port}"),
+            (Some(host), None) => host.to_owned(),
+            (None, _) => String::new(),
+        }
+    }
+
     /// An absolute URL on this server.
     pub(crate) fn url(&self, path: &str) -> String {
         format!("{}{path}", self.issuer())
@@ -207,7 +216,9 @@ impl fmt::Debug for Shared {
     }
 }
 
-/// Routes for discovery, registration, sign-in and tokens.
+/// Routes for discovery, registration, sign-in and tokens, with `mcp` behind the token check.
+///
+/// `mcp` holds the `/mcp` route. Every request to it needs a valid access token or API key.
 ///
 /// Serve the router with `into_make_service_with_connect_info::<SocketAddr>()`.
 /// Rate limits key on the peer address, and without it every request shares
@@ -222,6 +233,7 @@ pub async fn router(
     config: OAuthConfig,
     store: &Store,
     checker: impl SignInCheck,
+    mcp: Router,
 ) -> Result<Router, StoreError> {
     let transport = cimd::HttpsTransport::new().map_err(|_| StoreError::Rejected)?;
     router_with(
@@ -229,6 +241,7 @@ pub async fn router(
         store,
         Arc::new(cimd::CimdFetcher::new(transport)),
         Arc::new(checker),
+        mcp,
     )
     .await
 }
@@ -239,7 +252,9 @@ pub(crate) async fn router_with(
     store: &Store,
     clients: Arc<dyn cimd::ClientSource>,
     checker: Arc<dyn SignInCheck>,
+    mcp: Router,
 ) -> Result<Router, StoreError> {
+    let metadata_url = config.url(metadata::PRM_MCP_PATH);
     let registry = dcr::ClientRegistry::open(store).await?;
     let shared = Arc::new(Shared {
         config,
@@ -255,6 +270,7 @@ pub(crate) async fn router_with(
         codes: codes::PendingCodes::default(),
     });
     Ok(Router::new()
+        .merge(crate::middleware::protect(mcp, store.clone(), metadata_url))
         .merge(metadata::routes(&shared))
         .merge(dcr::routes(&shared))
         .merge(authorize::routes(&shared))
@@ -267,7 +283,7 @@ pub(crate) async fn router_with(
 /// Tokens are keys here, and they travel in the `Authorization` header, in
 /// query strings and in form bodies. This layer never records a header, a query or a
 /// body, and it scrubs the path in case a client puts a token there.
-fn tracing_layer<B>() -> tower_http::trace::TraceLayer<
+pub(crate) fn tracing_layer<B>() -> tower_http::trace::TraceLayer<
     tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
     impl tower_http::trace::MakeSpan<B> + Clone,
 > {

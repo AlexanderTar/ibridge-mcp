@@ -148,6 +148,7 @@ pub(crate) async fn harness_at(public_url: &str, access: Access) -> Harness {
         &store,
         Arc::new(FakeClients),
         Arc::new(checker),
+        Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK })),
     )
     .await
     .expect("router");

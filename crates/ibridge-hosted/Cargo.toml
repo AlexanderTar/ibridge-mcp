@@ -21,6 +21,8 @@ hyper-rustls.workspace = true
 hyper-util.workspace = true
 ibridge-auth.workspace = true
 ibridge-core.workspace = true
+ibridge-server.workspace = true
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

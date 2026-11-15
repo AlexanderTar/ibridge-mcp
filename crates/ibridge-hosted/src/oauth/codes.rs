@@ -38,10 +38,6 @@ impl PendingCodes {
     }
 
     /// Removes and returns the binding. A code can be looked up once.
-    #[expect(
-        dead_code,
-        reason = "the token endpoint consumes codes in the next unit"
-    )]
     pub(crate) fn take(&self, code: &str, now: Instant) -> Option<PendingCode> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let (issued, pending) = inner.remove(&key(code))?;

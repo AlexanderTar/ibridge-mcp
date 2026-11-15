@@ -9,6 +9,7 @@ mod client;
 mod codes;
 mod dcr;
 mod metadata;
+mod token;
 
 #[cfg(test)]
 mod test_support;
@@ -233,5 +234,27 @@ pub(crate) async fn router_with(
     Ok(Router::new()
         .merge(metadata::routes(&shared))
         .merge(dcr::routes(&shared))
-        .merge(authorize::routes(&shared)))
+        .merge(authorize::routes(&shared))
+        .merge(token::routes(&shared))
+        .layer(tracing_layer()))
+}
+
+/// Request logging that records the method, the path and the outcome, and nothing else.
+///
+/// Tokens are keys here, and they travel in the `Authorization` header, in
+/// query strings and in form bodies. This layer never records a header, a query or a
+/// body, and it scrubs the path in case a client puts a token there.
+fn tracing_layer<B>() -> tower_http::trace::TraceLayer<
+    tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
+    impl tower_http::trace::MakeSpan<B> + Clone,
+> {
+    tower_http::trace::TraceLayer::new_for_http().make_span_with(
+        |request: &axum::http::Request<B>| {
+            tracing::info_span!(
+                "http",
+                method = %request.method(),
+                path = %crate::store::redact(request.uri().path()),
+            )
+        },
+    )
 }

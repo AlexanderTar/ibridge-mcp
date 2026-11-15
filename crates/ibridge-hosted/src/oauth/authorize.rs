@@ -506,8 +506,8 @@ mod tests {
 
     use crate::oauth::Access;
     use crate::oauth::test_support::{
-        ADA, ASP_ALL, ASP_CALDAV_ONLY, ASP_MAIL_ONLY, CLIENT_ID, Harness, LOOPBACK_REDIRECT,
-        MARKUP_CLIENT_ID, PUBLIC, harness,
+        ADA, ASP_ALL, ASP_CALDAV_ONLY, ASP_MAIL_ONLY, Harness, LOOPBACK_REDIRECT, MARKUP_CLIENT_ID,
+        PUBLIC, harness,
     };
     use crate::store::Scope;
 
@@ -1003,6 +1003,5 @@ mod tests {
             StatusCode::SEE_OTHER,
             "multi-tenant lets anyone try"
         );
-        let _ = CLIENT_ID;
     }
 }

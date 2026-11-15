@@ -24,7 +24,6 @@ pub(crate) const PUBLIC: &str = "https://ibridge.example";
 pub(crate) const CLIENT_ID: &str = "https://client.example/oauth/client.json";
 pub(crate) const MARKUP_CLIENT_ID: &str = "https://markup.example/oauth/client.json";
 pub(crate) const LOOPBACK_REDIRECT: &str = "http://127.0.0.1:53682/callback";
-#[expect(dead_code, reason = "the token tests use it in the next unit")]
 pub(crate) const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 pub(crate) const CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 pub(crate) const ADA: &str = "ada@icloud.com";
@@ -119,6 +118,11 @@ pub(crate) struct Harness {
 }
 
 pub(crate) async fn harness(access: Access) -> Harness {
+    harness_at(PUBLIC, access).await
+}
+
+/// A harness whose server believes it lives at `public_url`.
+pub(crate) async fn harness_at(public_url: &str, access: Access) -> Harness {
     let store = Store::memory().await.expect("store");
     let calls = Arc::new(AtomicUsize::new(0));
     let inner = validated_by(|credentials: &Credentials| {
@@ -140,7 +144,7 @@ pub(crate) async fn harness(access: Access) -> Harness {
         inner: Box::new(inner),
     };
     let app = router_with(
-        OAuthConfig::new(PUBLIC, access).expect("public url"),
+        OAuthConfig::new(public_url, access).expect("public url"),
         &store,
         Arc::new(FakeClients),
         Arc::new(checker),
@@ -269,6 +273,43 @@ impl Harness {
         .await
     }
 
+    /// Signs in as `ADA` with `ASP_ALL` and returns the authorization code.
+    pub(crate) async fn sign_in_for_code(&self, ip: &str) -> String {
+        let page = self
+            .get_authorize(&Self::authorize_path(&[], &[]), ip)
+            .await;
+        let reply = self.post_form(&page, ip, ADA, ASP_ALL, None).await;
+        reply
+            .location()
+            .query_pairs()
+            .find(|(name, _)| name == "code")
+            .map(|(_, value)| value.into_owned())
+            .expect("a code")
+    }
+
+    /// POSTs `/token` with `pairs` as a form body.
+    pub(crate) async fn post_token(&self, pairs: &[(&str, &str)]) -> Reply {
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(pairs)
+            .finish();
+        let request = Request::post("/token")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .expect("request");
+        self.send(request, "203.0.113.50").await
+    }
+
+    /// The token request that redeems `code` with the usual client and redirect.
+    pub(crate) fn exchange_pairs<'a>(code: &'a str, verifier: &'a str) -> Vec<(&'a str, &'a str)> {
+        vec![
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", LOOPBACK_REDIRECT),
+            ("client_id", CLIENT_ID),
+            ("code_verifier", verifier),
+        ]
+    }
+
     #[expect(clippy::too_many_arguments, reason = "a test driver mirrors the form")]
     pub(crate) async fn post_raw(
         &self,
@@ -303,6 +344,11 @@ impl Harness {
 }
 
 impl Reply {
+    /// The body as JSON.
+    pub(crate) fn json(&self) -> serde_json::Value {
+        serde_json::from_str(&self.text).expect("a JSON body")
+    }
+
     /// The hidden OAuth fields on the page, for posting back.
     pub(crate) fn form_fields(&self) -> Vec<(String, String)> {
         [

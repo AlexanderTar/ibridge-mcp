@@ -58,7 +58,7 @@ pub enum Scope {
 }
 
 impl Scope {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Read => "icloud.read",
             Self::ReadWrite => "icloud.read icloud.write",

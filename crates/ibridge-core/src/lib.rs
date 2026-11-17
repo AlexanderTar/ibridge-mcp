@@ -273,6 +273,14 @@ mod tests {
     }
 
     #[test]
+    fn apple_id_spellings_that_differ_only_in_case_are_one_id() {
+        let mixed = AppleId::try_from("Ada.Lovelace@iCloud.com").expect("mixed case");
+        let lower = AppleId::try_from("ada.lovelace@icloud.com").expect("lower case");
+        assert_eq!(mixed, lower, "Apple does not tell the spellings apart");
+        assert_eq!(mixed.as_str(), "ada.lovelace@icloud.com");
+    }
+
+    #[test]
     fn uid_rejects_zero() {
         assert!(Uid::try_from(0).is_err(), "zero uid must be rejected");
         assert!(

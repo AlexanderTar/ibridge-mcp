@@ -115,8 +115,8 @@ pub(crate) struct CallLimit {
 ///
 /// Only `tools/call` messages spend the budget, so a client can still list tools and
 /// say who it is when it is out of calls. The count reads the body, so it sits behind
-/// the same size limit as everything else. The key is the lowercased address: the
-/// store keeps `Ada@icloud.com` and `ada@icloud.com` apart, but Apple does not.
+/// the same size limit as everything else. The key is the account's address, which is
+/// lowercase, so every spelling of it shares one budget.
 pub(crate) fn limit_calls(mcp: Router, guards: &Guards) -> Router {
     let limit = Arc::new(CallLimit {
         limiter: Limiter::new(guards.calls_per_minute, Duration::from_mins(1)),

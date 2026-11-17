@@ -231,11 +231,10 @@ impl<B: Backend> std::fmt::Debug for AccountCache<B> {
     }
 }
 
-/// Providers for every account with recent calls, keyed by the exact Apple ID the store holds
-/// and by what the grant's sign-in found out about each service.
+/// Providers for every account with recent calls, keyed by the Apple ID and by what the
+/// grant's sign-in found out about each service.
 ///
-/// Not by the lowercased address: the store treats `Ada@icloud.com` and `ada@icloud.com`
-/// as two accounts, and a pool logs in as the one spelling it was built for. Two grants of
+/// An `AppleId` is lowercase, so every spelling of an address is one account. Two grants of
 /// one account that found different services on get separate entries, because their tool lists differ.
 pub struct AccountCache<B: Backend> {
     backend: B,
@@ -902,9 +901,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spellings_of_one_address_are_separate_accounts() {
-        // The store keys accounts by the exact Apple ID, so these are two accounts; each
-        // needs a pool that logs in as its own spelling.
+    async fn spellings_of_one_address_are_one_account() {
+        // `AppleId` is lowercase, so both spellings are one account: one cache entry and one
+        // pool, as the store and Apple see it.
         let rig = rig(FakeScript::default(), None, Duration::from_mins(5)).await;
         let upper = token(&rig.store, "Ada@icloud.com", "pw-1", Scope::Read).await;
         let lower = token(&rig.store, "ada@icloud.com", "pw-2", Scope::Read).await;
@@ -914,11 +913,11 @@ mod tests {
 
         assert!(succeeded(&one), "Ada@icloud.com: {one}");
         assert!(succeeded(&two), "ada@icloud.com: {two}");
-        assert_eq!(rig.cache.len(), 2, "one cache entry per stored account");
+        assert_eq!(rig.cache.len(), 1, "one cache entry for the one account");
         assert_eq!(
             rig.fake.connection_count(),
-            2,
-            "each spelling opens its own connection with its own pool"
+            1,
+            "both spellings share one pool and its connection"
         );
     }
 

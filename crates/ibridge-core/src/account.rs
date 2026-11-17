@@ -7,11 +7,14 @@ use std::fmt;
 use crate::error::ParseError;
 
 /// A primary iCloud address (`@icloud.com`, `@me.com` or `@mac.com`).
+///
+/// Held in lowercase: Apple does not tell `Ada@icloud.com` from `ada@icloud.com`, so
+/// neither does an account lookup, a cache key or a keychain entry.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct AppleId(String);
 
 impl AppleId {
-    /// Returns the address, with the domain in lowercase.
+    /// Returns the address in lowercase.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -32,7 +35,7 @@ impl TryFrom<&str> for AppleId {
         if !matches!(domain.as_str(), "icloud.com" | "me.com" | "mac.com") {
             return Err(ParseError::AppleId);
         }
-        Ok(Self(format!("{local}@{domain}")))
+        Ok(Self(format!("{}@{domain}", local.to_ascii_lowercase())))
     }
 }
 

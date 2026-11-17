@@ -1273,6 +1273,23 @@ mod tests {
             .unwrap()
     }
 
+    #[tokio::test]
+    async fn address_spellings_that_differ_only_in_case_share_one_account_and_signup_slot() {
+        let store = Store::memory().await.unwrap().with_signup_cap(1);
+        for spelling in ["Ada@icloud.com", "ada@icloud.com", "ADA@iCloud.com"] {
+            let apple = AppleId::try_from(spelling).unwrap();
+            store
+                .seal_under_code(&apple, &SecretString::from(ASP), Scope::ReadWrite, at(0))
+                .await
+                .unwrap_or_else(|error| panic!("{spelling} is the one account, got {error:?}"));
+        }
+        let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(accounts, 1, "one account, one sign-up slot");
+    }
+
     async fn exchange(store: &Store, now: SystemTime) -> IssuedTokens {
         let code = seal_code(store, now).await;
         store

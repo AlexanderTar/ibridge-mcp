@@ -20,6 +20,9 @@ pub const CONTACT: &str = "IBRIDGE_CONTACT";
 /// The environment variable that sets how many accounts an open service holds.
 pub const SIGNUP_CAP: &str = "IBRIDGE_SIGNUP_CAP";
 
+/// The environment variable that says a trusted proxy fronts the server: `true` or `false` (the default).
+pub const BEHIND_PROXY: &str = "IBRIDGE_BEHIND_PROXY";
+
 /// Accounts an open service holds unless `IBRIDGE_SIGNUP_CAP` says otherwise.
 const DEFAULT_SIGNUP_CAP: usize = 50;
 
@@ -34,6 +37,8 @@ pub struct HostedOptions {
     pub data_dir: PathBuf,
     /// Run the public service, open to any iCloud account.
     pub multi_tenant: bool,
+    /// A proxy that appends the client address to `X-Forwarded-For` fronts the server.
+    pub behind_proxy: bool,
 }
 
 /// A hosted configuration that is safe to start with.
@@ -70,6 +75,9 @@ pub enum StartError {
     /// `IBRIDGE_SIGNUP_CAP` is not a whole number of at least 1.
     #[error("{SIGNUP_CAP} must be a whole number of at least 1")]
     BadSignupCap,
+    /// `IBRIDGE_BEHIND_PROXY` is neither `true` nor `false`.
+    #[error("{BEHIND_PROXY} must be true or false")]
+    BadBehindProxy,
     /// `IBRIDGE_CONTACT` is longer than 200 characters or holds a control character.
     #[error("{CONTACT} must be one line of at most 200 characters")]
     BadContact,
@@ -94,6 +102,7 @@ impl HostedConfig {
             public_url,
             data_dir,
             multi_tenant,
+            behind_proxy,
         } = options;
         let listed = allowed_apple_ids(env(ALLOWED_APPLE_IDS).as_deref().unwrap_or_default())?;
         let closed = match env(SIGNUPS).as_deref() {
@@ -113,6 +122,9 @@ impl HostedConfig {
             return Err(StartError::NoAccessPolicy);
         };
         let mut oauth = OAuthConfig::new(&public_url, access)?;
+        if behind_proxy || behind_proxy_env(env(BEHIND_PROXY).as_deref())? {
+            oauth = oauth.behind_proxy();
+        }
         if let Some(contact) = env(CONTACT)
             .map(|text| text.trim().to_owned())
             .filter(|text| !text.is_empty())
@@ -129,6 +141,15 @@ impl HostedConfig {
             signup_cap,
             guards: Guards::default(),
         })
+    }
+}
+
+/// Whether `IBRIDGE_BEHIND_PROXY` turns proxy trust on. Unset means off.
+fn behind_proxy_env(value: Option<&str>) -> Result<bool, StartError> {
+    match value.map(str::trim) {
+        None | Some("" | "false" | "0") => Ok(false),
+        Some("true" | "1") => Ok(true),
+        Some(_) => Err(StartError::BadBehindProxy),
     }
 }
 
@@ -158,7 +179,9 @@ fn allowed_apple_ids(list: &str) -> Result<Vec<AppleId>, StartError> {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{ALLOWED_APPLE_IDS, CONTACT, HostedConfig, HostedOptions, StartError};
+    use super::{
+        ALLOWED_APPLE_IDS, BEHIND_PROXY, CONTACT, HostedConfig, HostedOptions, StartError,
+    };
 
     #[derive(Clone, Copy)]
     enum Mode {
@@ -172,6 +195,7 @@ mod tests {
             public_url: "https://ibridge.example".to_owned(),
             data_dir: "/data".into(),
             multi_tenant: matches!(mode, Mode::Public),
+            behind_proxy: false,
         }
     }
 
@@ -316,5 +340,37 @@ mod tests {
         bad.public_url = "http://ibridge.example".to_owned();
         let error = HostedConfig::resolve(bad, |_| None).expect_err("http is not an issuer");
         assert!(matches!(error, StartError::PublicUrl(_)), "{error}");
+    }
+
+    #[test]
+    fn behind_proxy_env_reaches_peer() {
+        for on in ["true", " true ", "1"] {
+            let config = resolve(Mode::Public, &[(BEHIND_PROXY, on)]).expect("resolves");
+            assert!(config.oauth.is_behind_proxy(), "{on:?} trusts the proxy");
+        }
+        for off in ["false", "0", ""] {
+            let config = resolve(Mode::Public, &[(BEHIND_PROXY, off)]).expect("resolves");
+            assert!(!config.oauth.is_behind_proxy(), "{off:?} does not");
+        }
+        let mut flagged = options(Mode::Public);
+        flagged.behind_proxy = true;
+        let config = HostedConfig::resolve(flagged, |_| None).expect("resolves");
+        assert!(config.oauth.is_behind_proxy(), "--behind-proxy trusts it");
+        for bad in ["yes", "on", "2"] {
+            let error = resolve(Mode::Public, &[(BEHIND_PROXY, bad)]).expect_err("refused");
+            assert!(
+                matches!(error, StartError::BadBehindProxy),
+                "{bad:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn behind_proxy_off_by_default() {
+        let config = resolve(Mode::Public, &[]).expect("resolves");
+        assert!(
+            !config.oauth.is_behind_proxy(),
+            "nobody opts in by accident"
+        );
     }
 }

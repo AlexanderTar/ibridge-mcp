@@ -55,12 +55,12 @@ Start closed, so only you can sign in while you run the datacenter check in step
 ```sh
 railway variable set --service ibridge --skip-deploys \
   PORT=8080 RAILWAY_RUN_UID=0 \
-  IBRIDGE_SIGNUPS=closed IBRIDGE_SIGNUP_CAP=50 \
+  IBRIDGE_SIGNUPS=closed IBRIDGE_SIGNUP_CAP=50 IBRIDGE_BEHIND_PROXY=true \
   IBRIDGE_ALLOWED_APPLE_IDS=<your iCloud address>
 printf '%s' '<contact address>' | railway variable set IBRIDGE_CONTACT --stdin --service ibridge --skip-deploys
 ```
 
-`RAILWAY_RUN_UID=0` is needed because Railway mounts volumes as root, while the image runs as uid 65532. `IBRIDGE_CONTACT` is the address `/privacy` and `/terms` show; the legal review supplies it. To check what is set without showing values, use the dashboard's Variables tab. `railway variable list` prints values, and `--kv` and `--json` print them raw, so none of those forms is safe on a shared screen.
+`RAILWAY_RUN_UID=0` is needed because Railway mounts volumes as root, while the image runs as uid 65532. `IBRIDGE_BEHIND_PROXY=true` makes the server rate-limit by the client address Railway's proxy forwards instead of the proxy's own, so visitors get separate sign-in budgets (see [Behind a proxy](self-host.md#behind-a-proxy)). `IBRIDGE_CONTACT` is the address `/privacy` and `/terms` show; the legal review supplies it. To check what is set without showing values, use the dashboard's Variables tab. `railway variable list` prints values, and `--kv` and `--json` print them raw, so none of those forms is safe on a shared screen.
 
 ## 5. Deploy and check
 
@@ -151,5 +151,5 @@ Your own account was created while the instance was closed, so it counts toward 
 
 - **Suspend or delete an account:** `railway ssh --service ibridge -- ibridge admin suspend <address>` or `... delete <address>`. Then tell the person to revoke the app-specific password at Apple.
 - **Deploy a new version:** pick the commit as in step 2, then `railway up --service ibridge --detach`. A deploy restarts the service and ends open sessions; people reconnect without signing in again.
-- **Rate limits behind Railway's proxy:** see Known limits in [self-host.md](self-host.md). All visitors currently share one sign-in budget.
+- **Rate limits behind Railway's proxy:** `IBRIDGE_BEHIND_PROXY=true` is part of the variables in step 4. If sign-in limits ever lock everyone out together, check it is set with the dashboard's Variables tab, and see [Behind a proxy](self-host.md#behind-a-proxy).
 - **Roll back:** redeploy the previous sha with `railway up`, or use Railway's deployment history. The database is forward-only: `/readyz` fails if a snapshot or a rollback meets a different schema, so restore a snapshot taken by the older build.

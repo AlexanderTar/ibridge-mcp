@@ -39,7 +39,8 @@ pub use admin::{AdminAction, AdminError, admin};
 pub use app::app;
 pub use backup::{BackupError, KEEP as BACKUPS_KEPT, spawn_daily as spawn_daily_backups};
 pub use config::{
-    ALLOWED_APPLE_IDS, CONTACT, HostedConfig, HostedOptions, SIGNUP_CAP, SIGNUPS, StartError,
+    ALLOWED_APPLE_IDS, BEHIND_PROXY, CONTACT, HostedConfig, HostedOptions, SIGNUP_CAP, SIGNUPS,
+    StartError,
 };
 pub use icloud::{IcloudBackend, SessionMail};
 pub use limits::Guards;

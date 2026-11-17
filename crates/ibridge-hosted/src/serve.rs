@@ -88,6 +88,7 @@ mod tests {
                 public_url: "https://ibridge.example".to_owned(),
                 data_dir: data_dir.clone(),
                 multi_tenant: true,
+                behind_proxy: false,
             },
             |_| None,
         )

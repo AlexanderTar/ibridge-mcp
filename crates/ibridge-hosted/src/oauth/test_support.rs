@@ -118,6 +118,9 @@ pub(crate) struct Harness {
     pub(crate) checks: Arc<AtomicUsize>,
     /// The accounts whose pooled sessions the pages asked to close, in order.
     pub(crate) evicted: Arc<Mutex<Vec<AppleId>>>,
+    /// When set, every request reaches the server through this proxy address: the
+    /// socket peer is the proxy and the caller's address rides in `X-Forwarded-For`.
+    pub(crate) proxy: Option<IpAddr>,
 }
 
 pub(crate) async fn harness(access: Access) -> Harness {
@@ -202,6 +205,7 @@ pub(crate) async fn harness_configured(
         store,
         checks: calls,
         evicted: Arc::new(Mutex::new(Vec::new())),
+        proxy: None,
     }
 }
 
@@ -255,10 +259,20 @@ impl Reply {
 
 impl Harness {
     pub(crate) async fn send(&self, mut request: Request<Body>, ip: &str) -> Reply {
-        let ip: IpAddr = ip.parse().expect("an ip");
+        let client: IpAddr = ip.parse().expect("an ip");
+        let socket_peer = match self.proxy {
+            Some(proxy) => {
+                request.headers_mut().insert(
+                    "x-forwarded-for",
+                    client.to_string().parse().expect("a header value"),
+                );
+                proxy
+            }
+            None => client,
+        };
         request
             .extensions_mut()
-            .insert(ConnectInfo(SocketAddr::new(ip, 40_000)));
+            .insert(ConnectInfo(SocketAddr::new(socket_peer, 40_000)));
         let response = self.app.clone().oneshot(request).await.expect("response");
         let status = response.status();
         let headers = response.headers().clone();

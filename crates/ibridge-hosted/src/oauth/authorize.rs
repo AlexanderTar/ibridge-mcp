@@ -442,7 +442,7 @@ mod tests {
     use crate::oauth::Access;
     use crate::oauth::test_support::{
         ADA, ASP_ALL, ASP_CALDAV_ONLY, ASP_MAIL_ONLY, Harness, LOOPBACK_REDIRECT, MARKUP_CLIENT_ID,
-        PUBLIC, harness,
+        PUBLIC, Reply, harness,
     };
     use crate::store::Scope;
 
@@ -891,6 +891,95 @@ mod tests {
             "the address is spent, in any letter case"
         );
         assert_eq!(locked.error_text().as_deref(), Some(GENERIC));
+    }
+
+    /// Ten failed sign-ins from `ip`, which spend its per-IP budget.
+    async fn spend_budget(h: &Harness, page: &Reply, ip: &str, tag: &str) {
+        for n in 0..10 {
+            let reply = h
+                .post_form(
+                    page,
+                    ip,
+                    &format!("{tag}{n}@icloud.com"),
+                    "wrong-wrong",
+                    None,
+                )
+                .await;
+            assert_eq!(reply.status, StatusCode::BAD_REQUEST, "attempt {n}");
+        }
+    }
+
+    /// Whether the server is told to trust `X-Forwarded-For`.
+    #[derive(Clone, Copy)]
+    enum Trust {
+        Proxy,
+        Nobody,
+    }
+
+    /// A harness behind a proxy at 10.0.0.1, built the way `ibridge serve --hosted` builds it.
+    async fn proxied(trusts_proxy: Trust) -> Harness {
+        let config = crate::config::HostedConfig::resolve(
+            crate::config::HostedOptions {
+                addr: "127.0.0.1:0".parse().expect("address"),
+                public_url: "https://ibridge.example".to_owned(),
+                data_dir: "/data".into(),
+                multi_tenant: true,
+                behind_proxy: matches!(trusts_proxy, Trust::Proxy),
+            },
+            |_| None,
+        )
+        .expect("config");
+        let mcp =
+            axum::Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
+        let evict: super::super::Evict = std::sync::Arc::new(|_| {});
+        let store = crate::store::Store::memory().await.expect("store");
+        let mut h =
+            super::super::test_support::harness_configured(config.oauth, store, evict, mcp).await;
+        h.proxy = Some("10.0.0.1".parse().expect("proxy address"));
+        h
+    }
+
+    #[tokio::test]
+    async fn two_clients_behind_proxy_get_separate_budgets() {
+        let h = proxied(Trust::Proxy).await;
+        let page = h
+            .get_authorize(&Harness::authorize_path(&[], &[]), "198.51.100.1")
+            .await;
+        spend_budget(&h, &page, "198.51.100.1", "first").await;
+        let limited = h
+            .post_form(&page, "198.51.100.1", "x@icloud.com", ASP_ALL, None)
+            .await;
+        assert_eq!(
+            limited.status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "client one is spent"
+        );
+        let other = h
+            .post_form(&page, "198.51.100.2", "other@icloud.com", ASP_ALL, None)
+            .await;
+        assert_eq!(
+            other.status,
+            StatusCode::SEE_OTHER,
+            "client two, behind the same proxy, has its own budget"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_behind_proxy_forwarded_for_is_ignored() {
+        let h = proxied(Trust::Nobody).await;
+        let page = h
+            .get_authorize(&Harness::authorize_path(&[], &[]), "198.51.100.1")
+            .await;
+        spend_budget(&h, &page, "198.51.100.1", "first").await;
+        // A direct client cannot pick a fresh budget by sending its own header.
+        let spoofed = h
+            .post_form(&page, "198.51.100.2", "other@icloud.com", ASP_ALL, None)
+            .await;
+        assert_eq!(
+            spoofed.status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "the proxy's address is the peer, so the header buys nothing"
+        );
     }
 
     #[tokio::test]

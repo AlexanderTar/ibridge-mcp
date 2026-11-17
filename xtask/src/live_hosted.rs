@@ -464,6 +464,7 @@ mod tests {
                 public_url: url.clone(),
                 data_dir: data.path().join("data"),
                 multi_tenant: allowed.is_none(),
+                behind_proxy: false,
             },
             |name| {
                 (name == ibridge_hosted::ALLOWED_APPLE_IDS)

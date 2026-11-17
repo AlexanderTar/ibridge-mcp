@@ -110,6 +110,11 @@ impl OAuthConfig {
         self
     }
 
+    /// Whether the client address comes from `X-Forwarded-For`.
+    pub(crate) fn is_behind_proxy(&self) -> bool {
+        self.behind_proxy
+    }
+
     /// The address the privacy policy and terms give for questions and deletion requests.
     #[must_use]
     pub fn contact(mut self, contact: impl Into<String>) -> Self {
@@ -171,7 +176,7 @@ impl FromRequestParts<Arc<Shared>> for Peer {
     ) -> Result<Self, Self::Rejection> {
         let forwarded = shared
             .config
-            .behind_proxy
+            .is_behind_proxy()
             .then(|| {
                 parts
                     .headers

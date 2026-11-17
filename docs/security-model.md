@@ -35,7 +35,7 @@ Sealing protects data at rest. It does not stop the running server from seeing t
 - **Tokens are bearer secrets.** Whoever holds a valid token can use the account until it expires or is revoked: access tokens last one hour, refresh tokens 90 days of non-use, API keys until revoked. Sign-in codes last 60 seconds.
 - **The only complete revocation is at Apple.** Revoking the app-specific password at account.apple.com makes it useless everywhere, whatever anyone holds. Deleting an account on the server removes its sealed copies but cannot revoke the password for you. Backups keep deleted data for up to seven days, sealed.
 - **Single point of trust in TLS.** The public URL is served by the hosting platform's TLS. The platform and anyone who controls the domain can read traffic. Self-hosting on your own domain moves that trust to you.
-- **Rate limiting depends on client addresses.** Sign-in attempts are limited by client address. Behind a platform proxy the server does not yet read the forwarded address, so visitors share one budget (see [self-host.md](self-host.md), Known limits).
+- **Rate limiting depends on client addresses.** Sign-in attempts are limited by client address. Behind a platform proxy the operator must set `IBRIDGE_BEHIND_PROXY=true`, so the server reads the forwarded address. Without it, every visitor shares the proxy's budget. With it on and no proxy in front, a client could choose its own address, so it is off by default (see [self-host.md](self-host.md#behind-a-proxy)).
 
 ## Threat model
 

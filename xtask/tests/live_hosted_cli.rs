@@ -27,6 +27,7 @@ async fn live_hosted_check_passes_against_a_local_instance_and_never_prints_the_
             public_url: url.clone(),
             data_dir: dir.path().join("data"),
             multi_tenant: true,
+            behind_proxy: false,
         },
         |_| None,
     )

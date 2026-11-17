@@ -30,10 +30,12 @@ docker run --rm --name ibridge -p 8080:8080 -v ibridge-data:/data \
 | `--public-url URL` | The https origin clients reach. |
 | `--data-dir DIR` | Holds the database `ibridge.db` and the `backups/` folder. |
 | `--multi-tenant` | Lets any iCloud account sign in. Leave it off when you self-host. |
+| `--behind-proxy` | Reads the client address from the last `X-Forwarded-For` entry. Same as `IBRIDGE_BEHIND_PROXY=true`. See [Behind a proxy](#behind-a-proxy). |
 | `IBRIDGE_ALLOWED_APPLE_IDS` | Comma-separated iCloud addresses that may sign in. |
 | `IBRIDGE_SIGNUPS` | `open` (default) or `closed`. `closed` needs the allowlist. |
 | `IBRIDGE_SIGNUP_CAP` | Accounts an open public service holds. Default 50. Whole number, at least 1. |
 | `IBRIDGE_CONTACT` | Contact address shown on the privacy and terms pages. One line, at most 200 characters. |
+| `IBRIDGE_BEHIND_PROXY` | `true` or `false` (default). Turn it on behind Fly's or Railway's proxy. See [Behind a proxy](#behind-a-proxy). |
 | `IBRIDGE_LOG` | Log level: `error`, `warn`, `info` (default), `debug` or `trace`. Logs are JSON on stdout. |
 
 The server refuses to start with neither an allowlist nor `--multi-tenant`.
@@ -109,10 +111,15 @@ RAILWAY_RUN_UID=0
 
 Set the start command to `ibridge serve --hosted --http 0.0.0.0:8080 --public-url https://<your domain> --data-dir /data`, the health check path to `/readyz`, and generate a domain. `RAILWAY_RUN_UID=0` is there because Railway mounts volumes as root. `docs/deploy-railway.md` has the full runbook the public instance follows, including the account checks.
 
+## Behind a proxy
+
+The server rate-limits sign-in, client lookups and client registration by client address. Behind Fly's or Railway's edge proxy every connection comes from the proxy, so without help all visitors share one budget, and one person's failed sign-ins can lock everyone out for a few minutes.
+
+Set `IBRIDGE_BEHIND_PROXY=true` (or pass `--behind-proxy`) and the server takes the client address from the last `X-Forwarded-For` entry, which the proxy appends. It is off by default, and it must stay off when clients reach the server directly: with it on, a direct client could pick its own address by sending that header. Turn it on only when the proxy is the only way in. Any value other than `true`, `1`, `false` or `0` stops the server starting. Railway's runbook sets it ([deploy-railway.md](deploy-railway.md)).
+
 ## Known limits
 
 - **One instance only.** The database is one SQLite file, and the rate limits and session cache live in memory.
-- **Client addresses behind a proxy.** The server rate-limits sign-in attempts by client address. The code that reads the proxy's `X-Forwarded-For` header exists (`OAuthConfig::behind_proxy`) but nothing in the `ibridge` binary turns it on yet, so behind Fly's or Railway's proxy every visitor shares one address budget. A burst of failed sign-ins from one person can lock others out of sign-in for a short time. Tracked as a follow-up.
 - **Passwords in memory.** See [security-model.md](security-model.md).
 
 ## Check it with Claude.ai from your laptop

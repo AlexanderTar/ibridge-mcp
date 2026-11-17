@@ -69,6 +69,10 @@ enum Command {
         #[cfg(feature = "hosted")]
         #[arg(long, requires = "hosted")]
         multi_tenant: bool,
+        /// Trust `X-Forwarded-For` from the platform's proxy (Railway, Fly). Also `IBRIDGE_BEHIND_PROXY=true`.
+        #[cfg(feature = "hosted")]
+        #[arg(long, requires = "hosted")]
+        behind_proxy: bool,
     },
 }
 
@@ -152,6 +156,8 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             data_dir,
             #[cfg(feature = "hosted")]
             multi_tenant,
+            #[cfg(feature = "hosted")]
+            behind_proxy,
         } => {
             #[cfg(feature = "hosted")]
             if hosted {
@@ -165,6 +171,7 @@ pub(crate) async fn run() -> anyhow::Result<()> {
                     public_url,
                     data_dir,
                     multi_tenant,
+                    behind_proxy,
                 })
                 .await;
             }

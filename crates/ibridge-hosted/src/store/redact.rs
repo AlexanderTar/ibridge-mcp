@@ -4,43 +4,49 @@
 
 use std::fmt;
 
-/// Formats tracing fields through [`redact`].
-///
-/// Plug it into a subscriber's `event` method so every recorded value is scrubbed
-/// before it reaches the log.
-pub struct RedactingFields<W> {
-    writer: W,
-}
+use serde_json::{Map, Value};
+use tracing::field::{Field, Visit};
 
-impl<W> RedactingFields<W> {
-    /// Formats later fields into `writer`.
+/// Collects a record's fields into a JSON object, each text value passed through [`redact`].
+///
+/// This is the JSON log's field formatter, for events and spans alike: every value that
+/// reaches a log line goes through it.
+pub struct RedactingFields<'a>(&'a mut Map<String, Value>);
+
+impl<'a> RedactingFields<'a> {
+    /// Records later fields into `fields`.
     #[must_use]
-    pub fn new(writer: W) -> Self {
-        Self { writer }
+    pub fn new(fields: &'a mut Map<String, Value>) -> Self {
+        Self(fields)
     }
 }
 
-impl<W> fmt::Debug for RedactingFields<W> {
+impl fmt::Debug for RedactingFields<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("RedactingFields")
     }
 }
 
-impl<W: fmt::Write> tracing::field::Visit for RedactingFields<W> {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
-        let rendered = format!("{value:?}");
-        self.write_field(field.name(), &rendered);
+impl Visit for RedactingFields<'_> {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.record_str(field, &format!("{value:?}"));
     }
 
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.write_field(field.name(), value);
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0
+            .insert(field.name().to_owned(), Value::String(redact(value)));
     }
-}
 
-impl<W: fmt::Write> RedactingFields<W> {
-    fn write_field(&mut self, name: &str, value: &str) {
-        let scrubbed = redact(value);
-        let _ = write!(self.writer, " {name}={scrubbed}");
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.0.insert(field.name().to_owned(), value.into());
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.0.insert(field.name().to_owned(), value.into());
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.0.insert(field.name().to_owned(), value.into());
     }
 }
 
@@ -279,6 +285,7 @@ fn is_token_byte(byte: u8) -> bool {
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use serde_json::{Map, Value};
     use tracing::Subscriber;
     use tracing::span::{Attributes, Id, Record};
     use tracing::{Event, Metadata};
@@ -336,7 +343,7 @@ calendar stays";
     }
 
     struct Capture {
-        buf: Arc<Mutex<String>>,
+        buf: Arc<Mutex<Map<String, Value>>>,
     }
 
     impl Subscriber for Capture {
@@ -353,8 +360,8 @@ calendar stays";
         fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
 
         fn event(&self, event: &Event<'_>) {
-            let mut buf = self.buf.lock().expect("redaction buffer");
-            event.record(&mut RedactingFields::new(&mut *buf));
+            let mut fields = self.buf.lock().expect("redaction buffer");
+            event.record(&mut RedactingFields::new(&mut fields));
         }
 
         fn enter(&self, _span: &Id) {}
@@ -364,7 +371,7 @@ calendar stays";
 
     #[test]
     fn tracing_field_formatter_redacts_values() {
-        let buf = Arc::new(Mutex::new(String::new()));
+        let buf = Arc::new(Mutex::new(Map::new()));
         let capture = Capture {
             buf: Arc::clone(&buf),
         };
@@ -376,7 +383,7 @@ calendar stays";
                 "opened"
             );
         });
-        let text = buf.lock().expect("redaction buffer").clone();
+        let text = Value::Object(buf.lock().expect("redaction buffer").clone()).to_string();
         assert!(
             !text.contains("iba_SECRETVALUE"),
             "the tracing field must not contain the token, got {text}"
@@ -397,7 +404,7 @@ calendar stays";
 
     #[test]
     fn tracing_debug_field_redacts_string_json() {
-        let buf = Arc::new(Mutex::new(String::new()));
+        let buf = Arc::new(Mutex::new(Map::new()));
         let capture = Capture {
             buf: Arc::clone(&buf),
         };
@@ -405,7 +412,7 @@ calendar stays";
         tracing::subscriber::with_default(capture, || {
             tracing::info!(body = ?body, note = "libc_start", "posted");
         });
-        let text = buf.lock().expect("redaction buffer").clone();
+        let text = Value::Object(buf.lock().expect("redaction buffer").clone()).to_string();
         assert!(
             !text.contains("hunter2"),
             "a String logged with Debug must not keep the password, got {text}"

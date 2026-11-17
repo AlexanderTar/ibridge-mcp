@@ -71,6 +71,13 @@ static SHARD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bp[0-9]+-([a-z]+)\.icloud\.com").expect("shard pattern"));
 static DSID_PATH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/[0-9]{8,}/").expect("dsid path pattern"));
+/// A collection id in a path: a UUID (`CalDAV` calendars) or 64 hex digits (shared calendars).
+static COLLECTION_ID: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)/(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})/",
+    )
+    .expect("collection id pattern")
+});
 static DSID_LABEL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)(dsid[=: ]+)[0-9]{6,}").expect("dsid label pattern"));
 
@@ -101,6 +108,7 @@ pub(crate) struct Scrubber {
     identity: Identity,
     ids: HashMap<String, String>,
     folders: HashMap<String, String>,
+    collections: HashMap<String, String>,
     /// The highest placeholder number handed out or seen in the input.
     highest: usize,
 }
@@ -111,6 +119,7 @@ impl Scrubber {
             identity,
             ids: HashMap::new(),
             folders: HashMap::new(),
+            collections: HashMap::new(),
             highest: 0,
         }
     }
@@ -122,6 +131,14 @@ impl Scrubber {
         for (needle, with) in self.literals() {
             out = replace_ignore_case(&out, &needle, with);
         }
+        let out = COLLECTION_ID.replace_all(&out, |found: &regex::Captures<'_>| {
+            let next = self.collections.len() + 1;
+            let id = self
+                .collections
+                .entry(found[0].to_ascii_lowercase())
+                .or_insert_with(|| format!("collection-{next}"));
+            format!("/{id}/")
+        });
         let out = DSID_PATH.replace_all(&out, NoExpand(&format!("/{DSID}/")));
         let out = DSID_LABEL.replace_all(&out, format!("${{1}}{DSID}"));
         let out = IPV4_ADDR.replace_all(&out, NoExpand(IPV4));
@@ -248,7 +265,10 @@ Subject: [ibridge-fixture] one\r\n\
 Hello Ada Lovelace, this is ada.lovelace@icloud.com.\r\n\
 PROPFIND https://p57-caldav.icloud.com:443/12345678901/principal/\r\n\
 Also https://p09-contacts.icloud.com/12345678901/carddavhome/\r\n\
-dsid 12345678901\r\n";
+dsid 12345678901\r\n\
+PROPFIND /12345678901/calendars/0F4E0B88-139D-450D-BE3C-4465D5934570/ and\r\n\
+/12345678901/calendars/0f4e0b88-139d-450d-be3c-4465d5934570/event.ics and\r\n\
+/12345678901/calendars/41002b3148bb83695b21d52e47dd663a05a67d821a21b21704e7d7c165c48bac/\r\n";
 
     fn identity() -> Identity {
         Identity {
@@ -276,6 +296,9 @@ dsid 12345678901\r\n";
             "proofpointtoken",
             "X-CLX-Spam",
             "continued",
+            "0F4E0B88",
+            "0f4e0b88",
+            "41002b31",
         ] {
             assert!(
                 !scrubbed.contains(leaked),
@@ -300,6 +323,12 @@ dsid 12345678901\r\n";
             scrubbed.contains("p00-caldav.icloud.com")
                 && scrubbed.contains("p00-contacts.icloud.com"),
             "shard numbers become p00, hosts stay recognisable:\n{scrubbed}"
+        );
+        assert!(
+            scrubbed.contains("/collection-1/ and")
+                && scrubbed.contains("/collection-1/event.ics")
+                && scrubbed.contains("/collection-2/"),
+            "one collection keeps one placeholder, whatever the case:\n{scrubbed}"
         );
         let header = |name: &str| {
             scrubbed

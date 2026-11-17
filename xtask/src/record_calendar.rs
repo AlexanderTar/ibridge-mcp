@@ -140,13 +140,16 @@ async fn record(
     created: &mut Vec<Created>,
 ) -> Result<usize, RecordError> {
     let home = raw.calendar_home().await.map_err(dav)?;
+    let listing = send(raw, "PROPFIND", &home.url, Some("1"), PROPFIND_BODY).await?;
+    let mut names = private_names(provider).await?;
+    // The home collection is named after the account holder.
+    names.extend(home_name(&listing));
     let mut scrubber = Scrubber::new(Identity {
         apple_id: credentials.apple_id.as_str().to_owned(),
         dsid: dsid_of(&home.url),
-        names: private_names(provider).await?,
+        names,
     });
     let mut fixtures: Vec<(&str, String)> = Vec::new();
-    let listing = send(raw, "PROPFIND", &home.url, Some("1"), PROPFIND_BODY).await?;
     fixtures.push(("propfind-home.xml", listing));
 
     let event = provider
@@ -242,6 +245,15 @@ pub(crate) fn dsid_of(url: &str) -> Option<String> {
     let segment = path.split('/').nth(1)?;
     (segment.len() >= 6 && segment.bytes().all(|byte| byte.is_ascii_digit()))
         .then(|| segment.to_owned())
+}
+
+/// The display name of the first response in a home listing, which is the home itself.
+fn home_name(listing: &str) -> Option<String> {
+    let (_, rest) = listing.split_once("<displayname")?;
+    let (_, rest) = rest.split_once('>')?;
+    let (name, _) = rest.split_once("</displayname>")?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 /// Display names of the account's other calendars and lists: private, and part
@@ -353,7 +365,7 @@ mod tests {
     use ibridge_dav::{DavClient, DavError};
     use ibridge_testkit::dav_mock::FakeCalDav;
 
-    use super::{check_calendar, run_calendar};
+    use super::{check_calendar, home_name, run_calendar};
     use crate::record_fixtures::RecordError;
 
     const ACCOUNT: &str =
@@ -364,6 +376,15 @@ mod tests {
     const LEFTOVER: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//other//app//EN\r\n\
         BEGIN:VEVENT\r\nUID:keep-1\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:20261117T090000Z\r\n\
         DTEND:20261117T100000Z\r\nSUMMARY:Not ours\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn home_name_is_the_first_display_name() {
+        let listing = "<multistatus><response><href>/1/calendars/</href><propstat><prop>\
+            <displayname xmlns=\"DAV:\">Ada Lovelace</displayname></prop></propstat></response>\
+            <response><displayname>Work</displayname></response></multistatus>";
+        assert_eq!(home_name(listing).as_deref(), Some("Ada Lovelace"));
+        assert_eq!(home_name("<displayname xmlns=\"DAV:\"/>"), None);
+    }
 
     async fn account_with_test_collections() -> FakeCalDav {
         let fake = FakeCalDav::start().await;

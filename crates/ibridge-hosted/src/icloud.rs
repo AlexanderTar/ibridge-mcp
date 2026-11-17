@@ -223,6 +223,7 @@ mod tests {
     use ibridge_auth::{Credentials, LoginLog, with_call_credentials};
     use ibridge_core::{
         AppleId, CalendarProvider, ContactQuery, ContactsProvider, CoreError, Draft,
+        RemindersProvider,
     };
     use ibridge_mail::Connect;
     use ibridge_server::MailApi;
@@ -357,6 +358,7 @@ mod tests {
         let imap = FakeImap::spawn(FakeScript::default());
         let calendar = FakeCalDav::start().await;
         calendar.add_collection("home", "Home", &["VEVENT"]);
+        calendar.add_collection("tasks", "Tasks", &["VTODO"]);
         let contacts = FakeCardDav::start().await;
         contacts.add_book("main", "Main");
         let smtp = Smtp::start().await;
@@ -405,6 +407,11 @@ mod tests {
             assert!(
                 calendars.iter().any(|calendar| calendar.name == "Home"),
                 "calendar reaches the fake CalDAV, got {calendars:?}"
+            );
+            let lists = providers.calendar.list_lists().await.expect("reminders");
+            assert!(
+                lists.iter().any(|list| list.name == "Tasks"),
+                "reminders reach the fake CalDAV task list, got {lists:?}"
             );
             providers
                 .contacts

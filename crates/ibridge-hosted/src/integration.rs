@@ -99,6 +99,12 @@ async fn hosted_e2e_calendar_and_contacts_radicale() {
         "caldav",
     )
     .await;
+    mkcol(
+        &raw,
+        &format!("{}/tasks/", calendar_home.url.trim_end_matches('/')),
+        "caldav",
+    )
+    .await;
     let contacts_home = raw.contacts_home().await.expect("carddav home");
     mkcol(
         &raw,
@@ -145,6 +151,24 @@ async fn hosted_e2e_calendar_and_contacts_radicale() {
     assert!(
         events.to_string().contains("Hosted standup"),
         "the event made through the hosted server is listed, got {events}"
+    );
+
+    let lists = tool(&app, &bearer, "reminders_list_lists", json!({})).await;
+    let list = lists["lists"][0]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a reminder list, got {lists}"))
+        .to_owned();
+    tool(
+        &app,
+        &bearer,
+        "reminders_create",
+        json!({"list": list, "title": "Hosted groceries"}),
+    )
+    .await;
+    let reminders = tool(&app, &bearer, "reminders_list", json!({"list": list})).await;
+    assert!(
+        reminders.to_string().contains("Hosted groceries"),
+        "the reminder made through the hosted server is listed, got {reminders}"
     );
 
     tool(

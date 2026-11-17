@@ -22,16 +22,16 @@ use crate::testing::{FakeImapBackend, accept_all, info};
 const REDIRECT: &str = "http://127.0.0.1:53682/callback";
 const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 const CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-const PASSWORD: &str = "abcd-efgh-ijkl-mnop";
+pub(crate) const PASSWORD: &str = "abcd-efgh-ijkl-mnop";
 
-struct Reply {
-    status: StatusCode,
-    headers: HeaderMap,
-    text: String,
+pub(crate) struct Reply {
+    pub(crate) status: StatusCode,
+    pub(crate) headers: HeaderMap,
+    pub(crate) text: String,
 }
 
 impl Reply {
-    fn json(&self) -> Value {
+    pub(crate) fn json(&self) -> Value {
         serde_json::from_str(&self.text)
             .unwrap_or_else(|error| panic!("a JSON body ({error}): {}", self.text))
     }
@@ -45,7 +45,7 @@ impl Reply {
     }
 }
 
-async fn send(app: &Router, mut request: Request<Body>) -> Reply {
+pub(crate) async fn send(app: &Router, mut request: Request<Body>) -> Reply {
     let ip: IpAddr = "203.0.113.9".parse().expect("an ip");
     request
         .extensions_mut()
@@ -65,11 +65,16 @@ async fn send(app: &Router, mut request: Request<Body>) -> Reply {
 
 /// A hosted app over `imap`, open to any address.
 async fn hosted(imap: &FakeImap) -> Router {
+    hosted_over(FakeImapBackend(imap.clone())).await
+}
+
+/// A hosted app over `backend`, open to any address.
+pub(crate) async fn hosted_over(backend: impl crate::provider::Backend) -> Router {
     let store = Store::memory().await.expect("store");
     crate::app::app(
         config(Access::MultiTenant),
         store,
-        FakeImapBackend(imap.clone()),
+        backend,
         accept_all(),
         info(),
         &Guards::default(),
@@ -79,7 +84,7 @@ async fn hosted(imap: &FakeImap) -> Router {
 }
 
 /// Registers a client, signs in with `password` and trades the code for an access token.
-async fn sign_in(app: &Router, apple_id: &str, password: &str) -> String {
+pub(crate) async fn sign_in(app: &Router, apple_id: &str, password: &str) -> String {
     let client_id = register(app).await;
     let code = authorize(app, &client_id, apple_id, password).await;
     redeem(app, &client_id, &code).await

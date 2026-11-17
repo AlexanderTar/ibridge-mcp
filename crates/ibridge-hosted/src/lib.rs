@@ -9,6 +9,8 @@ mod config;
 mod e2e;
 mod health;
 mod icloud;
+#[cfg(test)]
+mod integration;
 mod limits;
 pub mod logging;
 mod middleware;

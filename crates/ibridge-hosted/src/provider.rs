@@ -7,7 +7,7 @@
 //! holds a password. A call's password lives in the call's credentials scope and
 //! reaches a provider only through `ibridge_auth::call_credentials`.
 //!
-//! Two limits to know about:
+//! Things to know about:
 //!
 //! - A pooled session serves every grant of its account, so a grant whose password was
 //!   revoked at Apple keeps working while another grant keeps the pool warm, and is not

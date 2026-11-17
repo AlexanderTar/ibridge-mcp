@@ -6,6 +6,18 @@
 //! per-account limit of four calls at once, and the tool servers built on them. It never
 //! holds a password. A call's password lives in the call's credentials scope and
 //! reaches a provider only through `ibridge_auth::call_credentials`.
+//!
+//! Two limits to know about:
+//!
+//! - A pooled session serves every grant of its account, so a grant whose password was
+//!   revoked at Apple keeps working while another grant keeps the pool warm, and is not
+//!   counted toward revocation. Users must also revoke the grant on the account page.
+//! - Dropping an account (a revoked grant, a deletion) removes the entry at once, but calls
+//!   already running keep the old entry until they finish. A call that arrives meanwhile
+//!   builds a new entry, so for that short while the account can briefly exceed its two
+//!   IMAP connections and four calls. The old connections close when the last such call ends.
+//! - The tool servers each carry their own four-call gate inside `IbridgeServer`. The
+//!   account gate here is the one that counts; the inner ones never block.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};

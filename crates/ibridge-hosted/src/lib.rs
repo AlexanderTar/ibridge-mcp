@@ -15,12 +15,14 @@ mod limits;
 pub mod logging;
 mod middleware;
 mod oauth;
+mod pages;
 mod provider;
 mod serve;
 mod server;
 mod store;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+mod web;
 
 #[cfg(test)]
 mod test_app;
@@ -28,7 +30,8 @@ mod test_app;
 mod test_mail;
 
 pub use oauth::{
-    Access, Combined, ConfigError, OAuthConfig, SignInCheck, ValidatedBy, router, validated_by,
+    Access, Combined, ConfigError, Evict, OAuthConfig, SignInCheck, ValidatedBy, router,
+    validated_by,
 };
 
 pub use app::app;

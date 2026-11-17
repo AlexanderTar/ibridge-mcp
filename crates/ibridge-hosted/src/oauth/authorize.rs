@@ -8,27 +8,22 @@ use std::time::{Instant, SystemTime};
 use askama::Template;
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Form, Router};
-use base64::Engine;
 use ibridge_auth::Credentials;
 use ibridge_core::AppleId;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
-use subtle::ConstantTimeEq;
 use url::Url;
 
 use super::client::ClientInfo;
 use super::codes::PendingCode;
 use super::{Peer, Shared, address_key};
 use crate::store::Scope;
+use crate::web::{GENERIC_FAILURE, csrf_matches, harden, html, message, random_token, set_cookie};
 
 const CSRF_COOKIE: &str = "__Host-ibridge_csrf";
-/// The one message every failed or refused sign-in shows, so the page cannot be
-/// used to learn which addresses exist, are allowed or are locked out.
-const GENERIC_FAILURE: &str =
-    "Sign-in failed. Check the address and app-specific password, then try again in a few minutes.";
 const CSRF_LIFETIME_SECS: u32 = 30 * 60;
 const MAX_FORM: usize = 8 * 1024;
 const MAX_STATE: usize = 512;
@@ -106,13 +101,6 @@ struct AuthorizePage<'a> {
     error: Option<&'a str>,
 }
 
-#[derive(Template)]
-#[template(path = "message.html")]
-struct MessagePage<'a> {
-    heading: &'a str,
-    message: &'a str,
-}
-
 async fn show(
     State(shared): State<Arc<Shared>>,
     peer: Peer,
@@ -128,7 +116,7 @@ async fn show(
     match validate(&shared, &params).await {
         Err(refusal) => refuse(&shared, refusal),
         Ok(valid) => {
-            let Some(token) = new_csrf_token() else {
+            let Some(token) = random_token() else {
                 tracing::error!("random source failed while making a sign-in token");
                 return message(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -156,7 +144,7 @@ async fn submit(
     headers: HeaderMap,
     Form(form): Form<SignIn>,
 ) -> Response {
-    if !csrf_matches(&headers, &form.csrf) {
+    if !csrf_matches(&headers, CSRF_COOKIE, &form.csrf) {
         return message(
             StatusCode::FORBIDDEN,
             "This page expired",
@@ -426,49 +414,6 @@ fn form_page(valid: &Valid, fill: &Fill<'_>, status: StatusCode) -> Response {
     html(status, page.render())
 }
 
-fn message(status: StatusCode, heading: &str, text: &str) -> Response {
-    html(
-        status,
-        MessagePage {
-            heading,
-            message: text,
-        }
-        .render(),
-    )
-}
-
-fn html(status: StatusCode, rendered: Result<String, askama::Error>) -> Response {
-    let Ok(body) = rendered else {
-        let mut response = StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        harden(&mut response);
-        return response;
-    };
-    let mut response = (status, Html(body)).into_response();
-    harden(&mut response);
-    response
-}
-
-/// Headers every sign-in response carries: never cached, never framed, no referrer.
-fn harden(response: &mut Response) {
-    let headers = response.headers_mut();
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(
-            "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
-        ),
-    );
-    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-}
-
 /// What to call the place the browser returns to.
 fn redirect_host(redirect_uri: &str) -> String {
     let Ok(url) = Url::parse(redirect_uri) else {
@@ -481,35 +426,8 @@ fn redirect_host(redirect_uri: &str) -> String {
     }
 }
 
-/// A fresh token, or `None` when the system has no randomness: the page is then refused, not weakened.
-fn new_csrf_token() -> Option<String> {
-    let mut random = [0_u8; 32];
-    getrandom::fill(&mut random).ok()?;
-    Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random))
-}
-
 fn set_csrf_cookie(response: &mut Response, token: &str, max_age: u32) {
-    let cookie =
-        format!("{CSRF_COOKIE}={token}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax");
-    if let Ok(value) = HeaderValue::from_str(&cookie) {
-        response.headers_mut().append(header::SET_COOKIE, value);
-    }
-}
-
-/// Double-submit check: the form's token must equal the `__Host-` cookie's.
-fn csrf_matches(headers: &HeaderMap, from_form: &str) -> bool {
-    let cookie = headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .find_map(|pair| pair.trim().strip_prefix(CSRF_COOKIE)?.strip_prefix('='));
-    match cookie {
-        Some(cookie) if !cookie.is_empty() && !from_form.is_empty() => {
-            cookie.as_bytes().ct_eq(from_form.as_bytes()).into()
-        }
-        _ => false,
-    }
+    set_cookie(response, CSRF_COOKIE, token, max_age);
 }
 
 #[cfg(test)]

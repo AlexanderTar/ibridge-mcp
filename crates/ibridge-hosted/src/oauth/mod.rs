@@ -14,7 +14,7 @@ mod token;
 #[cfg(test)]
 mod signup_tests;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 use std::collections::HashSet;
 use std::convert::Infallible;
@@ -34,6 +34,9 @@ use crate::limits::{Limiter, SignInLimits};
 use crate::store::{Store, StoreError};
 
 pub use check::{Combined, SignInCheck, ValidatedBy, validated_by};
+
+/// Forgets an account's pooled sessions. The account page calls it when it revokes a grant or deletes an account.
+pub type Evict = Arc<dyn Fn(&AppleId) + Send + Sync>;
 
 /// Who may sign in.
 #[derive(Clone, Debug)]
@@ -200,6 +203,8 @@ pub(crate) struct Shared {
     pub(crate) lookups: Limiter,
     pub(crate) registrations: Limiter,
     pub(crate) codes: codes::PendingCodes,
+    pub(crate) sessions: crate::pages::account::Sessions,
+    pub(crate) evict: Evict,
 }
 
 impl Shared {
@@ -221,6 +226,7 @@ impl fmt::Debug for Shared {
 /// Routes for discovery, registration, sign-in and tokens, with `mcp` behind the token check.
 ///
 /// `mcp` holds the `/mcp` route. Every request to it needs a valid access token or API key.
+/// `evict` closes an account's pooled sessions when the account page revokes or deletes.
 ///
 /// Serve the router with `into_make_service_with_connect_info::<SocketAddr>()`.
 /// Rate limits key on the peer address, and without it every request shares
@@ -235,6 +241,7 @@ pub async fn router(
     config: OAuthConfig,
     store: &Store,
     checker: impl SignInCheck,
+    evict: Evict,
     mcp: Router,
 ) -> Result<Router, StoreError> {
     let transport = cimd::HttpsTransport::new().map_err(|_| StoreError::Rejected)?;
@@ -243,6 +250,7 @@ pub async fn router(
         store,
         Arc::new(cimd::CimdFetcher::new(transport)),
         Arc::new(checker),
+        evict,
         mcp,
     )
     .await
@@ -254,6 +262,7 @@ pub(crate) async fn router_with(
     store: &Store,
     clients: Arc<dyn cimd::ClientSource>,
     checker: Arc<dyn SignInCheck>,
+    evict: Evict,
     mcp: Router,
 ) -> Result<Router, StoreError> {
     let metadata_url = config.url(metadata::PRM_MCP_PATH);
@@ -264,12 +273,13 @@ pub(crate) async fn router_with(
         registry,
         clients,
         checker,
-        // ponytail: built here, so /account cannot share it yet. The /account package
-        // takes this as a parameter of `router_with` and passes the same value to both pages.
+        // One budget for every page that checks a password, so switching pages gains nothing.
         limits: SignInLimits::new(),
         lookups: Limiter::new(30, Duration::from_mins(1)),
         registrations: Limiter::new(10, Duration::from_hours(1)),
         codes: codes::PendingCodes::default(),
+        sessions: crate::pages::account::Sessions::default(),
+        evict,
     });
     Ok(Router::new()
         .merge(crate::middleware::protect(mcp, store.clone(), metadata_url))
@@ -277,6 +287,7 @@ pub(crate) async fn router_with(
         .merge(dcr::routes(&shared))
         .merge(authorize::routes(&shared))
         .merge(token::routes(&shared))
+        .merge(crate::pages::account::routes(&shared))
         .layer(tracing_layer()))
 }
 

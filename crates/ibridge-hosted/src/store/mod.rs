@@ -2,9 +2,11 @@
 
 //! SQLite credential store. Tokens are the keys; the database holds ciphertext.
 
+mod manage;
 mod redact;
 mod seal;
 
+pub(crate) use manage::{GrantKind, GrantSummary};
 pub use redact::{RedactingFields, redact};
 
 use std::error::Error;

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Your ibridge account{% endblock %}
+{% block body %}
+<h1>Your account</h1>
+<p>Signed in as <strong>{{ apple_id }}</strong>.</p>
+{% if let Some(message) = error %}<p class="error" role="alert">{{ message }}</p>{% endif %}
+<h2>Connected apps and API keys</h2>
+{% if grants.is_empty() %}
+<p>Nothing is connected.</p>
+{% else %}
+<ul class="grants">
+{% for grant in grants %}
+<li>
+<strong>{{ grant.label }}</strong><br>
+<span class="hint">{{ grant.access }}, added {{ grant.created }}{% if grant.revoked %}, revoked{% endif %}</span>
+{% if !grant.revoked %}
+<form method="post" action="/account/revoke">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="grant" value="{{ grant.id }}">
+<button class="secondary" type="submit">Revoke</button>
+</form>
+{% endif %}
+</li>
+{% endfor %}
+</ul>
+{% endif %}
+<p class="hint">Revoking cuts an app off at once. To reconnect it, sign in again from the app.</p>
+<h2>New API key</h2>
+<p>For apps that cannot sign in with OAuth. We show the key once.</p>
+<form method="post" action="/account/keys" autocomplete="off">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="name">Name</label>
+<input id="name" name="name" type="text" required maxlength="64">
+<label for="password">App-specific password</label>
+<input id="password" name="password" type="password" autocomplete="off" required maxlength="64">
+<p class="hint">The key keeps your app-specific password sealed under itself. Type it again so we can check it with iCloud and seal it.</p>
+<label class="check" for="read_only"><input id="read_only" name="read_only" type="checkbox"><span>Read-only access. The key can read but cannot send, move, change or delete anything.</span></label>
+<button type="submit">Create key</button>
+</form>
+<h2>Delete everything</h2>
+<p>Deletes your connected apps, your API keys and every encrypted copy of your app-specific password. Afterwards, revoke that password at Apple too.</p>
+<form method="post" action="/account/delete">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label class="check" for="confirm"><input id="confirm" name="confirm" type="checkbox" value="delete"><span>Yes, delete everything stored for {{ apple_id }}.</span></label>
+<button class="secondary" type="submit">Delete everything</button>
+</form>
+<form method="post" action="/account/logout">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button class="secondary" type="submit">Sign out</button>
+</form>
+{% endblock %}

@@ -9,7 +9,7 @@ use rmcp::model::ServerConfig;
 
 use crate::health;
 use crate::limits::{Guards, around, limit_calls};
-use crate::oauth::{OAuthConfig, SignInCheck, router};
+use crate::oauth::{Evict, OAuthConfig, SignInCheck, router};
 use crate::provider::{AccountCache, Backend};
 use crate::server::mcp_router;
 use crate::store::{Store, StoreError};
@@ -39,8 +39,10 @@ pub async fn app<B: Backend>(
     ));
     // The task ends when the cache, held by the handler, is dropped.
     drop(cache.spawn_sweeper());
+    let evicting = Arc::clone(&cache);
+    let evict: Evict = Arc::new(move |apple_id| evicting.drop_account(apple_id));
     let mcp = limit_calls(mcp_router(cache, info, &config), guards);
-    let oauth = router(config, &store, checker, mcp).await?;
+    let oauth = router(config, &store, checker, evict, mcp).await?;
     Ok(around(oauth.merge(health::routes(store)), guards))
 }
 

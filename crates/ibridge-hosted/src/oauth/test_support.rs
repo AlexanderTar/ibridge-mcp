@@ -3,21 +3,22 @@
 //! Shared fixtures for the OAuth tests: fake clients, a scripted iCloud check and a request driver.
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use ibridge_auth::{AuthError, Credentials, ServiceCheck, ValidationReport, Validator};
+use ibridge_core::AppleId;
 use tower::ServiceExt;
 use url::Url;
 
 use super::check::{Combined, SignInCheck, validated_by};
 use super::cimd::{BoxFuture, CimdError, ClientSource};
 use super::client::ClientInfo;
-use super::{Access, OAuthConfig, router_with};
+use super::{Access, Evict, OAuthConfig, router_with};
 use crate::store::{Store, StoreError, ValidatedCredentials};
 
 pub(crate) const PUBLIC: &str = "https://ibridge.example";
@@ -115,6 +116,8 @@ pub(crate) struct Harness {
     pub(crate) store: Store,
     /// How many times the iCloud check ran.
     pub(crate) checks: Arc<AtomicUsize>,
+    /// The accounts whose pooled sessions the pages asked to close, in order.
+    pub(crate) evicted: Arc<Mutex<Vec<AppleId>>>,
 }
 
 pub(crate) async fn harness(access: Access) -> Harness {
@@ -133,6 +136,27 @@ pub(crate) async fn harness_capped(cap: usize) -> Harness {
 }
 
 async fn harness_over(public_url: &str, access: Access, store: Store) -> Harness {
+    let evicted = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&evicted);
+    let evict: Evict = Arc::new(move |apple_id| {
+        log.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(apple_id.clone());
+    });
+    let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
+    let mut harness = harness_with(public_url, access, store, evict, mcp).await;
+    harness.evicted = evicted;
+    harness
+}
+
+/// A harness over `store` whose pages evict through `evict` and whose `/mcp` is `mcp`.
+pub(crate) async fn harness_with(
+    public_url: &str,
+    access: Access,
+    store: Store,
+    evict: Evict,
+    mcp: Router,
+) -> Harness {
     let calls = Arc::new(AtomicUsize::new(0));
     let inner = validated_by(|credentials: &Credentials| {
         credentials.with_secret(|password| Combined {
@@ -157,7 +181,8 @@ async fn harness_over(public_url: &str, access: Access, store: Store) -> Harness
         &store,
         Arc::new(FakeClients),
         Arc::new(checker),
-        Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK })),
+        evict,
+        mcp,
     )
     .await
     .expect("router");
@@ -165,6 +190,7 @@ async fn harness_over(public_url: &str, access: Access, store: Store) -> Harness
         app,
         store,
         checks: calls,
+        evicted: Arc::new(Mutex::new(Vec::new())),
     }
 }
 

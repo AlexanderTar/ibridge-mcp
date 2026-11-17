@@ -40,17 +40,39 @@ pub(crate) async fn store_if_valid<V: Validator>(
 }
 
 fn rejection(report: &ValidationReport) -> String {
-    let mut lines = vec!["iCloud did not accept this sign-in:".to_owned()];
-    for (name, check) in [
+    let checks = [
         ("mail", &report.mail),
         ("calendar", &report.calendar),
         ("contacts", &report.contacts),
-    ] {
-        if let ServiceCheck::Failed { reason } = check {
-            lines.push(format!("  {name}: {reason}"));
+    ];
+    // When no service refused, iCloud was never reached: don't say it rejected the sign-in.
+    let refused = checks
+        .iter()
+        .any(|(_, check)| matches!(check, ServiceCheck::Failed { .. }));
+    let mut lines = vec![if refused {
+        "iCloud did not accept this sign-in:".to_owned()
+    } else {
+        "Could not check this sign-in with iCloud:".to_owned()
+    }];
+    for (name, check) in checks {
+        match check {
+            ServiceCheck::Failed { reason } => lines.push(format!("  {name}: {reason}")),
+            ServiceCheck::Unreachable { reason } => {
+                lines.push(format!("  {name}: not checked ({reason})"));
+            }
+            _ => {}
         }
     }
     lines.join("\n")
+}
+
+/// One line of the per-service summary printed after a successful login.
+fn service_line(name: &str, check: &ServiceCheck) -> String {
+    match check {
+        ServiceCheck::Failed { reason } => format!("{name}: off ({reason})"),
+        ServiceCheck::Unreachable { reason } => format!("{name}: not checked ({reason})"),
+        _ => format!("{name}: ok"),
+    }
 }
 
 /// Forgets the saved password and account state.
@@ -89,10 +111,7 @@ pub(crate) async fn run() -> anyhow::Result<()> {
         ("calendar", &report.calendar),
         ("contacts", &report.contacts),
     ] {
-        match check {
-            ServiceCheck::Failed { reason } => writeln!(out, "{name}: off ({reason})")?,
-            _ => writeln!(out, "{name}: ok")?,
-        }
+        writeln!(out, "{}", service_line(name, check))?;
     }
     let exe = std::env::current_exe().context("cannot find this program's path")?;
     writeln!(
@@ -112,7 +131,7 @@ mod tests {
     use ibridge_core::AppleId;
     use ibridge_server::ServiceStatus;
 
-    use super::store_if_valid;
+    use super::{rejection, service_line, store_if_valid};
     use crate::account::{Services, State, snapshot};
     use crate::testing::{KEYCHAIN, mock_keychain};
     use crate::validate::Combined;
@@ -125,6 +144,59 @@ mod tests {
         ServiceCheck::Failed {
             reason: reason.to_owned(),
         }
+    }
+
+    fn unreachable(reason: &str) -> ServiceCheck {
+        ServiceCheck::Unreachable {
+            reason: reason.to_owned(),
+        }
+    }
+
+    #[test]
+    fn offline_login_says_the_check_could_not_run() {
+        let offline = ValidationReport {
+            mail: unreachable("network error"),
+            calendar: unreachable("network error"),
+            contacts: unreachable("network error"),
+        };
+        let message = rejection(&offline);
+        assert!(
+            !message.contains("did not accept"),
+            "iCloud was never reached, so it did not refuse anything: {message}"
+        );
+        assert!(
+            message.contains("mail: not checked (network error)"),
+            "every unreachable service is listed with its reason: {message}"
+        );
+        assert!(message.contains("calendar: not checked (network error)"));
+        assert!(message.contains("contacts: not checked (network error)"));
+    }
+
+    #[test]
+    fn mixed_rejection_lists_refusals_and_unreachable_checks() {
+        let mixed = ValidationReport {
+            mail: failed("mail rejected"),
+            calendar: unreachable("rate limited"),
+            contacts: unreachable("rate limited"),
+        };
+        let message = rejection(&mixed);
+        assert!(message.starts_with("iCloud did not accept this sign-in:"));
+        assert!(message.contains("mail: mail rejected"));
+        assert!(message.contains("calendar: not checked (rate limited)"));
+    }
+
+    #[test]
+    fn unreachable_service_is_not_printed_as_ok() {
+        assert_eq!(service_line("mail", &ServiceCheck::Ok), "mail: ok");
+        assert_eq!(
+            service_line("mail", &failed("rejected")),
+            "mail: off (rejected)"
+        );
+        assert_eq!(
+            service_line("mail", &unreachable("rate limited")),
+            "mail: not checked (rate limited)",
+            "a check that could not run must not read as ok"
+        );
     }
 
     struct Fixed(ValidationReport);

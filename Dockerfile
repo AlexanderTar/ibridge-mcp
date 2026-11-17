@@ -24,8 +24,11 @@ RUN cargo build --release --locked --features hosted -p ibridge \
     && mkdir /data-seed
 
 # The debug variant adds a busybox shell, so `railway ssh` and `docker exec` work
-# and `ibridge admin` can be run on the host.
-FROM gcr.io/distroless/cc-debian12:debug-nonroot
+# and `ibridge admin` can be run on the host. Pinned by the digest of its multi-arch
+# index (amd64 and arm64), so a rebuild never picks up a different base. To update:
+# `docker buildx imagetools inspect gcr.io/distroless/cc-debian12:debug-nonroot`,
+# copy the top-level Digest here, and rebuild.
+FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc
 COPY --from=builder /src/target/release/ibridge /usr/local/bin/ibridge
 # 65532 is the image's nonroot user. The volume starts out owned by it.
 COPY --from=builder --chown=65532:65532 /data-seed /data

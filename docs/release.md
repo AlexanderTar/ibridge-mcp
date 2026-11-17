@@ -40,6 +40,17 @@ Create the `AlexanderTar/homebrew-tap` repository on GitHub before the first tag
 
 dist generates `release.yml`, and four edits are made by hand: the tag filter is narrowed to `v*`, and the `notarize-macos`, `build-mcpb` and `docker-image` jobs are added. `docker-image` builds the `Dockerfile` and pushes `ghcr.io/<owner>/ibridge` once `host` succeeds on a `v*` tag; it needs the `packages: write` permission and uses the built-in `GITHUB_TOKEN`, so it needs no extra secret. `allow-dirty = ["ci"]` in `dist-workspace.toml` stops `dist plan` from rejecting those edits. After `dist` is upgraded, regenerate the file in a scratch copy (comment out `allow-dirty`, run `dist generate --mode ci`), then merge the difference into `release.yml` by hand. `.github/build-setup.yml` holds the step that turns on the hardened runtime. `.github/actionlint.yaml` tells actionlint to skip shellcheck style notes in the generated file.
 
+## After the first release: make the image public
+
+The first `docker-image` run creates `ghcr.io/alexandertar/ibridge` as a private package, so `docker pull` and Railway's image source cannot read it. Do this once, after the first `v*` tag has pushed it:
+
+1. Open the package from your GitHub profile (Packages, `ibridge`), then Package settings.
+2. Check it is linked to `AlexanderTar/icloud-mcp`. The workflow's metadata step labels the image with its source repository, so GitHub normally links it on its own; if the package page shows no repository, link it here.
+3. Under "Danger Zone", change the visibility to Public.
+4. Check from a machine that is not logged in to ghcr.io: `docker logout ghcr.io; docker pull ghcr.io/alexandertar/ibridge:<version>`.
+
+Later tags reuse the same package, so this is a one-time step. The visibility is a package setting, not part of `release.yml`, so the workflow cannot do it for you.
+
 ## Claude Desktop extension
 
 `cargo xtask mcpb [--dist DIR] [--out DIR]` reads `ibridge-<target>` archives from `target/distrib` and writes `ibridge-<target>.mcpb` files to `target/mcpb`. It needs `tar`, `unzip` and `zip`. The manifest follows spec 0.3 with a binary server, a sensitive `app_password` and the Apple ID, both passed to the server as `IBRIDGE_APPLE_ID` and `IBRIDGE_APP_PASSWORD`. Its snapshot is in `xtask/src/snapshots`; review the diff when you change the manifest.

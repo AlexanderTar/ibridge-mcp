@@ -4,7 +4,7 @@ The hosted server lets Claude.ai and other remote MCP clients reach your iCloud 
 
 ## The image
 
-The release workflow builds `ghcr.io/alexandertar/ibridge` when a `v*` tag is pushed. The image is `gcr.io/distroless/cc-debian12:debug-nonroot` plus one binary, so it has a busybox shell for `docker exec` and `railway ssh`. It runs as the `nonroot` user (uid 65532; the Railway setup below overrides this and runs as root) and keeps its database in `/data`. Build it yourself from a checkout:
+The release workflow builds `ghcr.io/alexandertar/ibridge` when a `v*` tag is pushed. The image is `gcr.io/distroless/cc-debian12:debug-nonroot` (pinned by digest in the `Dockerfile`) plus one binary, so it has a busybox shell for `docker exec` and `railway ssh`. It runs as the `nonroot` user (uid 65532; the Railway setup below overrides this and runs as root) and keeps its database in `/data`. Build it yourself from a checkout:
 
 ```sh
 docker build -t ibridge:test .
@@ -86,9 +86,16 @@ Then edit `fly.toml`:
   source = "ibridge_data"
   destination = "/data"
 
+[env]
+  IBRIDGE_BEHIND_PROXY = "true"
+
+[processes]
+  app = "serve --hosted --http 0.0.0.0:8080 --public-url https://<app>.fly.dev --data-dir /data"
+
 [http_service]
   internal_port = 8080
   force_https = true
+  processes = ["app"]
 
   [[http_service.checks]]
     method = "GET"
@@ -97,7 +104,7 @@ Then edit `fly.toml`:
     timeout = "5s"
 ```
 
-Fly runs the image's entrypoint, so pass the arguments as the container command: `serve --hosted --http 0.0.0.0:8080 --public-url https://<app>.fly.dev --data-dir /data`. Run one machine only, then `fly deploy`. Fly mounts the volume as root, so if the server cannot write `/data`, chown the volume once with `fly ssh console -C "chown -R 65532:65532 /data"`. This section is not tested against a live Fly account.
+Fly runs the image's entrypoint (`ibridge`) and appends the `[processes]` command to it, which is why the `app` line above starts with `serve` and not `ibridge serve`. Replace `<app>` with your app's name. `IBRIDGE_BEHIND_PROXY` makes the server rate-limit each visitor separately; see [Behind a proxy](#behind-a-proxy). Run one machine only, then `fly deploy`. Fly mounts the volume as root, so if the server cannot write `/data`, chown the volume once with `fly ssh console -C "chown -R 65532:65532 /data"`. This section is not tested against a live Fly account.
 
 ## Railway
 
@@ -105,11 +112,12 @@ Create a service from the image `ghcr.io/alexandertar/ibridge:<version>`, attach
 
 ```
 IBRIDGE_ALLOWED_APPLE_IDS=you@icloud.com
+IBRIDGE_BEHIND_PROXY=true
 PORT=8080
 RAILWAY_RUN_UID=0
 ```
 
-Set the start command to `ibridge serve --hosted --http 0.0.0.0:8080 --public-url https://<your domain> --data-dir /data`, the health check path to `/readyz`, and generate a domain. `RAILWAY_RUN_UID=0` is there because Railway mounts volumes as root. `docs/deploy-railway.md` has the full runbook the public instance follows, including the account checks.
+Set the start command to `ibridge serve --hosted --http 0.0.0.0:8080 --public-url https://<your domain> --data-dir /data`, the health check path to `/readyz`, and generate a domain. `RAILWAY_RUN_UID=0` is there because Railway mounts volumes as root. If the container fails with the command repeated (for example `ibridge ibridge serve`), Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from it, so it starts with `serve`. Step 5 of the runbook below says the same. `docs/deploy-railway.md` has the full runbook the public instance follows, including the account checks.
 
 ## Behind a proxy
 

@@ -8,14 +8,13 @@ The Railway commands below were checked against `railway` 5.62.1's `--help`. The
 
 ## 1. Check the accounts
 
-**Railway.** Use the personal token file for every Railway command in this runbook. Export it for this shell so the CLI's own login is never used, and unset it when you finish:
+**Railway.** Use the personal token file for every Railway command in this runbook, and put it on each command itself, as the examples below do. Do not rely on an `export` from an earlier command: an agent runs every command in a fresh shell, and a command without the token falls back to this machine's logged-in work account. Every command after step 3 also names the project with `--project <project id>` (the `id` that `railway init --json` prints), so a command can never act on whatever project the CLI last linked.
 
 ```sh
-export RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)"
-railway whoami --json | jq -r .email
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway whoami --json | jq -r .email
 ```
 
-The address must be the personal account's. If it prints anything else, or `Unauthorized`, stop. The variable is `RAILWAY_API_TOKEN` (an account or workspace token), not `RAILWAY_TOKEN` (a project token, which `whoami` rejects). Unset it with `unset RAILWAY_API_TOKEN` when you finish. Never run `railway login` for this work.
+The address must be the personal account's. If it prints anything else, or `Unauthorized`, stop. Check it again at the start of every new shell, and again before any step that changes something. The variable is `RAILWAY_API_TOKEN` (an account or workspace token), not `RAILWAY_TOKEN` (a project token, which `whoami` rejects). Never run `railway login` for this work, and never `export` the token into a shell you keep.
 
 **Vercel.** `ibridge.fyi` must be in the scope you are about to change:
 
@@ -41,24 +40,31 @@ Write the sha in the deploy notes. `/privacy` tells users each deployment names 
 ## 3. Create the project, service and volume
 
 ```sh
-railway init --name ibridge
-railway add --service ibridge
-railway volume --service ibridge add --mount-path /data
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway init --name ibridge --json
 ```
 
-Run these once. `railway status` must show the project you just made and the personal workspace before you continue.
+Write down the project `id` it prints: it is the `<project id>` in every command below. `railway init` also links the current directory to the project, and `railway add` takes no `--project`, so run `add` from this same directory:
+
+```sh
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway add --service ibridge
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway volume --project <project id> --service ibridge add --mount-path /data
+```
+
+Run these once. `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway status --project <project id>` must show the project you just made and the personal workspace before you continue.
 
 ## 4. Set the variables
 
 Start closed, so only you can sign in while you run the datacenter check in step 7:
 
 ```sh
-railway variable set --service ibridge --skip-deploys \
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable set --project <project id> --service ibridge --skip-deploys \
   PORT=8080 RAILWAY_RUN_UID=0 \
   IBRIDGE_SIGNUPS=closed IBRIDGE_SIGNUP_CAP=50 IBRIDGE_BEHIND_PROXY=true \
-  IBRIDGE_ALLOWED_APPLE_IDS=<your iCloud address>
-printf '%s' '<contact address>' | railway variable set IBRIDGE_CONTACT --stdin --service ibridge --skip-deploys
+  IBRIDGE_ALLOWED_APPLE_IDS=<your iCloud address>,<test Apple ID>
+printf '%s' '<contact address>' | RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable set IBRIDGE_CONTACT --stdin --project <project id> --service ibridge --skip-deploys
 ```
+
+The allowlist holds two addresses: yours, and the test Apple ID the datacenter check in step 7 signs in with (`IBRIDGE_TEST_APPLE_ID` in `~/.config/ibridge/test-account.env`). The check refuses an address that is not on the list. Step 10 removes the test account before sign-ups open.
 
 `RAILWAY_RUN_UID=0` is needed because Railway mounts volumes as root, while the image runs as uid 65532. `IBRIDGE_BEHIND_PROXY=true` makes the server rate-limit by the client address Railway's proxy forwards instead of the proxy's own, so visitors get separate sign-in budgets (see [Behind a proxy](self-host.md#behind-a-proxy)). `IBRIDGE_CONTACT` is the address `/privacy` and `/terms` show; the legal review supplies it. To check what is set without showing values, use the dashboard's Variables tab. `railway variable list` prints values, and `--kv` and `--json` print them raw, so none of those forms is safe on a shared screen.
 
@@ -72,18 +78,18 @@ Set the start command and health check in the service's settings (Railway dashbo
 Then upload the commit:
 
 ```sh
-railway up --service ibridge --detach
-railway logs --service ibridge
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project <project id> --service ibridge --detach
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway logs --project <project id> --service ibridge
 ```
 
-The logs must show a line containing `serving MCP over HTTP, hosted`. If the server refuses to start, the message names the setting (for example, closed sign-ups need `IBRIDGE_ALLOWED_APPLE_IDS`). If the container fails with the entrypoint repeated, for example `ibridge ibridge serve`, Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from the start command. Do not go on until the deployment is healthy. After the first deploy, record here whether Railway's start command replaced or was added to the image's entrypoint, and whether the apex record needed an ALIAS.
+The logs must show a line containing `serving MCP over HTTP, hosted`. If the server refuses to start, the message names the setting (for example, closed sign-ups need `IBRIDGE_ALLOWED_APPLE_IDS`). If the container fails with the entrypoint repeated, for example `ibridge ibridge serve`, Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from the start command, so it starts with `serve`. Do not go on until the deployment is healthy. After the first deploy, record here whether Railway's start command replaced or was added to the image's entrypoint, and whether the apex record needed an ALIAS.
 
 An allowlist limits sign-in even with `--multi-tenant`, so the closed instance accepts only your address.
 
 ## 6. Point ibridge.fyi at the service
 
 ```sh
-railway domain ibridge.fyi --service ibridge --port 8080
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway domain ibridge.fyi --project <project id> --service ibridge --port 8080
 ```
 
 This prints the DNS records Railway wants (a CNAME target and a `_railway-verify` TXT record). Re-run step 1's `vercel` checks, then add exactly those records, with the scope from step 1:
@@ -94,7 +100,7 @@ vercel dns add ibridge.fyi '@' ALIAS <railway target> --scope <scope>
 vercel dns add ibridge.fyi '_railway-verify' TXT '<value Railway printed>' --scope <scope>
 ```
 
-Vercel DNS takes an `ALIAS` record at the apex, where a plain CNAME is not allowed; use the type Railway prints for a subdomain. Add nothing else and do not touch existing records. Then wait for `railway domain status ibridge.fyi --service ibridge` to show the certificate issued, and:
+Vercel DNS takes an `ALIAS` record at the apex, where a plain CNAME is not allowed; use the type Railway prints for a subdomain. Add nothing else and do not touch existing records. Then wait for `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway domain --project <project id> status ibridge.fyi --service ibridge` to show the certificate issued, and:
 
 ```sh
 curl -fsS https://ibridge.fyi/readyz     # ready
@@ -109,7 +115,7 @@ Apple may refuse sign-ins that come from a datacenter address. The server makes 
 cargo xtask live-hosted-check --url https://ibridge.fyi
 ```
 
-It signs in as a client does, calls `account_status`, and prints one line per step with no password, token or code. The account address must be the one in `IBRIDGE_ALLOWED_APPLE_IDS`. Record the result with the sha and the date. If Apple refuses the sign-in, stop: the public launch cannot go on from this host. Say so, do not retry in a loop, and do not open sign-ups.
+It signs in as a client does, calls `account_status`, and prints one line per step with no password, token or code. The account address must be one of the addresses in `IBRIDGE_ALLOWED_APPLE_IDS`. Record the result with the sha and the date. If Apple refuses the sign-in, stop: the public launch cannot go on from this host. Say so, do not retry in a loop, and do not open sign-ups.
 
 This check needs the live test account, and the live recording has not run yet, so it has not run against this host.
 
@@ -122,14 +128,14 @@ You create the monitor in your own monitoring service; the runbook does not hold
 The server writes its first snapshot as soon as it starts, then one a day, and keeps seven.
 
 ```sh
-railway ssh --service ibridge -- ls -l /data/backups
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --service ibridge -- ls -l /data/backups
 ```
 
 There must be an `ibridge-<UTC time>.db` file. Download it and check it opens, without signing in to anything:
 
 ```sh
-railway volume list
-railway volume files --volume <volume name or id> download /backups/<name> ./check.db
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway volume --project <project id> list
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway volume --project <project id> files --volume <volume name or id> download /backups/<name> ./check.db
 sqlite3 ./check.db 'pragma integrity_check; pragma user_version;'
 rm ./check.db
 ```
@@ -138,18 +144,24 @@ rm ./check.db
 
 ## 10. Open sign-ups at 50
 
-Only after steps 5 to 9 pass and you have connected Claude.ai to `https://ibridge.fyi/mcp` and called `account_status` yourself. Remove the allowlist and open sign-ups at the cap:
+Only after steps 5 to 9 pass and you have connected Claude.ai to `https://ibridge.fyi/mcp` and called `account_status` yourself. First remove the test account the datacenter check created, so it does not use up one of the 50 places (it holds a sealed password for the test Apple ID until you do):
 
 ```sh
-railway variable delete IBRIDGE_ALLOWED_APPLE_IDS --service ibridge
-railway variable set IBRIDGE_SIGNUPS=open IBRIDGE_SIGNUP_CAP=50 --service ibridge
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --service ibridge -- ibridge admin delete <test Apple ID>
 ```
 
-Your own account was created while the instance was closed, so it counts toward the cap. Check `/` and `/account`, then watch `railway logs --service ibridge` for the first sign-ups. To close again, set `IBRIDGE_SIGNUPS=closed` and `IBRIDGE_ALLOWED_APPLE_IDS` back to your address. To raise the cap, change `IBRIDGE_SIGNUP_CAP`.
+It prints how many accounts it deleted; `1` is expected. If you keep the test account instead, it counts toward the cap like any other. Then remove the allowlist and open sign-ups at the cap:
+
+```sh
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable delete IBRIDGE_ALLOWED_APPLE_IDS --project <project id> --service ibridge
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable set IBRIDGE_SIGNUPS=open IBRIDGE_SIGNUP_CAP=50 --project <project id> --service ibridge
+```
+
+Your own account was created while the instance was closed, so it counts toward the cap. Check `/` and `/account`, then watch `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway logs --project <project id> --service ibridge` for the first sign-ups. To close again, set `IBRIDGE_SIGNUPS=closed` and `IBRIDGE_ALLOWED_APPLE_IDS` back to your address (and the test Apple ID, if you will run the datacenter check again). To raise the cap, change `IBRIDGE_SIGNUP_CAP`.
 
 ## Operating
 
-- **Suspend or delete an account:** `railway ssh --service ibridge -- ibridge admin suspend <address>` or `... delete <address>`. The command runs outside the server process, so the server refuses the account's tokens from the next call but its idle mail sessions close on their own within five minutes. Then tell the person to revoke the app-specific password at Apple.
-- **Deploy a new version:** pick the commit as in step 2, then `railway up --service ibridge --detach`. A deploy restarts the service and ends open sessions; people reconnect without signing in again.
+- **Suspend or delete an account:** `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --service ibridge -- ibridge admin suspend <address>` or `... delete <address>`. The command runs outside the server process, so the server refuses the account's tokens from the next call but its idle mail sessions close on their own within five minutes. Then tell the person to revoke the app-specific password at Apple.
+- **Deploy a new version:** pick the commit as in step 2, then `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project <project id> --service ibridge --detach`. A deploy restarts the service and ends open sessions; people reconnect without signing in again.
 - **Rate limits behind Railway's proxy:** `IBRIDGE_BEHIND_PROXY=true` is part of the variables in step 4. If sign-in limits ever lock everyone out together, check it is set with the dashboard's Variables tab, and see [Behind a proxy](self-host.md#behind-a-proxy).
-- **Roll back:** redeploy the previous sha with `railway up`, or use Railway's deployment history. The database is forward-only: `/readyz` fails if a snapshot or a rollback meets a different schema, so restore a snapshot taken by the older build.
+- **Roll back:** redeploy the previous sha with `railway up` (with the token and `--project`, as above), or use Railway's deployment history. The database is forward-only: `/readyz` fails if a snapshot or a rollback meets a different schema, so restore a snapshot taken by the older build.

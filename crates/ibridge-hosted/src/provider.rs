@@ -25,7 +25,6 @@ use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
 use crate::middleware::CallAuth;
-use crate::oauth::address_key;
 use crate::server::{ScopedServers, ServerSource, call_auth};
 use crate::store::{GrantId, Store};
 
@@ -217,12 +216,15 @@ impl<B: Backend> std::fmt::Debug for AccountCache<B> {
     }
 }
 
-/// Providers for every account with recent calls, keyed by Apple ID.
+/// Providers for every account with recent calls, keyed by the exact Apple ID the store holds.
+///
+/// Not by the lowercased address: the store treats `Ada@icloud.com` and `ada@icloud.com`
+/// as two accounts, and a pool logs in as the one spelling it was built for.
 pub struct AccountCache<B: Backend> {
     backend: B,
     idle: Duration,
     watch: Arc<Watch>,
-    entries: Arc<Mutex<HashMap<String, Entry<AccountServer<B>>>>>,
+    entries: Arc<Mutex<HashMap<AppleId, Entry<AccountServer<B>>>>>,
 }
 
 impl<B: Backend> AccountCache<B> {
@@ -285,7 +287,7 @@ impl<B: Backend> AccountCache<B> {
         self.entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .remove(&address_key(apple_id));
+            .remove(apple_id);
     }
 
     fn build(&self, apple_id: &AppleId) -> Entry<AccountServer<B>> {
@@ -297,7 +299,7 @@ impl<B: Backend> AccountCache<B> {
             contacts: ServiceStatus::On,
         };
         let entries = Arc::downgrade(&self.entries);
-        let key = address_key(apple_id);
+        let key = apple_id.clone();
         let gate = Arc::new(Gate::new(Box::new(move || {
             if let Some(entries) = entries.upgrade() {
                 entries
@@ -339,7 +341,7 @@ impl<B: Backend> ServerSource for AccountCache<B> {
         // nobody calls again stay open until then; a sweeper task would close them on time.
         entries.retain(|_, entry| !entry.gate.expired(self.idle));
         let entry = entries
-            .entry(address_key(call.apple_id()))
+            .entry(call.apple_id().clone())
             .or_insert_with(|| self.build(call.apple_id()));
         entry.gate.touch();
         Arc::clone(&entry.servers)
@@ -842,6 +844,27 @@ mod tests {
             rig.fake.connection_count(),
             2,
             "the next call opens a fresh connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn spellings_of_one_address_are_separate_accounts() {
+        // The store keys accounts by the exact Apple ID, so these are two accounts; each
+        // needs a pool that logs in as its own spelling.
+        let rig = rig(FakeScript::default(), None, Duration::from_mins(5)).await;
+        let upper = token(&rig.store, "Ada@icloud.com", "pw-1", Scope::Read).await;
+        let lower = token(&rig.store, "ada@icloud.com", "pw-2", Scope::Read).await;
+
+        let one = list_mailboxes(&rig.app, &upper).await;
+        let two = list_mailboxes(&rig.app, &lower).await;
+
+        assert!(succeeded(&one), "Ada@icloud.com: {one}");
+        assert!(succeeded(&two), "ada@icloud.com: {two}");
+        assert_eq!(rig.cache.len(), 2, "one cache entry per stored account");
+        assert_eq!(
+            rig.fake.connection_count(),
+            2,
+            "each spelling opens its own connection with its own pool"
         );
     }
 

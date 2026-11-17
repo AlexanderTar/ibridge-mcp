@@ -59,7 +59,7 @@ Download `ibridge-<target>.mcpb` for your platform from the releases page and op
 
 ## Security
 
-Credentials are only ever sent to Apple's iCloud hosts. Mail, event and contact text reaches Claude marked as untrusted content. See [SECURITY.md](SECURITY.md) to report a problem.
+Credentials are only ever sent to Apple's iCloud hosts. Mail, event and contact text reaches Claude marked as untrusted content. See [SECURITY.md](SECURITY.md) to report a problem. The hosted server's sealing, its limits and its threat model are in [docs/security-model.md](docs/security-model.md), and running your own copy is in [docs/self-host.md](docs/self-host.md).
 
 ## Contributing and releases
 

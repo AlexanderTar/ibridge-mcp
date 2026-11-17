@@ -37,6 +37,8 @@ Each provider crate maps protocol failures onto `Auth`, `Network`, `Protocol`, `
 
 Every secret is a `secrecy` type with no `Serialize` and no `Debug`. Secrets never appear in logs, errors or tool output. Never print, commit or put in a brief an Apple app-specific password or the Railway token.
 
+A hosted call's password is wiped after use (`Zeroizing` copies, sensitive headers). One known limit: lettre keeps the SMTP password in a plain `String` until it sends `AUTH` and does not wipe it, so that copy lives until the send finishes and its memory is freed.
+
 The live test account lives outside the repo, in `~/.config/ibridge/test-account.env` (`IBRIDGE_TEST_APPLE_ID`, `IBRIDGE_TEST_APP_PASSWORD`). CI never reads it.
 
 ## Host allowlist

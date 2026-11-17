@@ -59,7 +59,9 @@ impl Login {
 
     /// The login for one `AUTH`: this client's own, or the one the call carries.
     fn for_auth(&self) -> Result<SmtpCredentials, CoreError> {
-        // lettre keeps the password in a plain `String` until it sends `AUTH`.
+        // Known limit: lettre keeps the password in a plain `String` until it sends
+        // `AUTH`, and its `Credentials` is not zeroized on drop. Wipe it here if lettre
+        // ever exposes a way to.
         let read = |credentials: &Credentials| {
             credentials.with_secret(|secret| {
                 SmtpCredentials::new(credentials.apple_id.as_str().to_owned(), secret.to_owned())
@@ -187,11 +189,23 @@ impl SmtpClient {
             port = self.port,
             recipients = mail.to.len(),
         );
-        transport
+        let sent = transport
             .send_raw(&envelope, &message)
             .instrument(span)
-            .await
-            .map_err(|error| map_smtp(&error))?;
+            .await;
+        match sent {
+            // A send that finished got past `AUTH`.
+            Ok(_) => ibridge_auth::report_login(ibridge_auth::LoginVerdict::Accepted),
+            Err(error) => {
+                let mapped = map_smtp(&error);
+                // Only a refused password counts. A dropped connection or another
+                // refusal says nothing about it.
+                if matches!(mapped, CoreError::Auth) {
+                    ibridge_auth::report_login(ibridge_auth::LoginVerdict::Rejected);
+                }
+                return Err(mapped);
+            }
+        }
         Ok(message)
     }
 
@@ -361,6 +375,15 @@ pub(crate) mod tests {
 
         /// The first `times` connections are refused. Later ones speak SMTP.
         pub(crate) async fn start_failing(times: usize) -> Self {
+            Self::start_with(times, false).await
+        }
+
+        /// Every `AUTH` is answered 535.
+        async fn start_rejecting_auth() -> Self {
+            Self::start_with(0, true).await
+        }
+
+        async fn start_with(times: usize, reject_auth: bool) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
             let port = listener.local_addr().expect("local addr").port();
             let seen = Arc::new(Mutex::new(Seen::default()));
@@ -374,7 +397,7 @@ pub(crate) mod tests {
                     let slot = Arc::clone(&slot);
                     let fails_left = Arc::clone(&fails_left);
                     tokio::spawn(async move {
-                        let _ = serve(socket, slot, fails_left).await;
+                        let _ = serve(socket, slot, fails_left, reject_auth).await;
                     });
                 }
             });
@@ -425,6 +448,7 @@ pub(crate) mod tests {
         socket: TcpStream,
         seen: Arc<Mutex<Seen>>,
         fails_left: Arc<AtomicUsize>,
+        reject_auth: bool,
     ) -> std::io::Result<()> {
         let mut reader = BufReader::new(socket);
         let refuse = fails_left
@@ -458,7 +482,7 @@ pub(crate) mod tests {
                     (captured.username, captured.password) =
                         plain_login(initial).unwrap_or_default();
                 }
-                write_line(&mut reader, "235 ok\r\n").await?;
+                write_auth_result(&mut reader, reject_auth).await?;
             } else if let Some(initial) = strip_cmd(&line, "AUTH LOGIN") {
                 let username = if initial.is_empty() {
                     write_line(&mut reader, "334 VXNlcm5hbWU6\r\n").await?;
@@ -469,7 +493,7 @@ pub(crate) mod tests {
                 captured.username = username.unwrap_or_default();
                 write_line(&mut reader, "334 UGFzc3dvcmQ6\r\n").await?;
                 captured.password = decode_utf8(&read_line(&mut reader).await?).unwrap_or_default();
-                write_line(&mut reader, "235 ok\r\n").await?;
+                write_auth_result(&mut reader, reject_auth).await?;
             } else if let Some(rest) = strip_prefix_ignore(&line, "MAIL FROM:") {
                 captured.mail_from = angle_addr(rest);
                 write_line(&mut reader, "250 ok\r\n").await?;
@@ -490,6 +514,18 @@ pub(crate) mod tests {
             }
         }
         Ok(())
+    }
+
+    async fn write_auth_result(
+        reader: &mut BufReader<TcpStream>,
+        reject: bool,
+    ) -> std::io::Result<()> {
+        let line = if reject {
+            "535 5.7.8 authentication failed\r\n"
+        } else {
+            "235 ok\r\n"
+        };
+        write_line(reader, line).await
     }
 
     async fn read_data(reader: &mut BufReader<TcpStream>) -> std::io::Result<String> {
@@ -821,5 +857,38 @@ pub(crate) mod tests {
             capture.username().is_empty() && capture.password().is_empty(),
             "another account's password is never sent"
         );
+    }
+
+    #[tokio::test]
+    async fn smtp_per_call_reports_login_verdicts() {
+        let calls = |capture: &SmtpCapture| {
+            SmtpClient::plain_per_call(ada_id(), &capture.host, capture.port)
+                .expect("loopback host is allowed")
+        };
+        let call_with_log = |client: SmtpClient| async move {
+            let log = Arc::new(ibridge_auth::LoginLog::new());
+            let outcome = ibridge_auth::with_call_credentials(
+                Arc::new(credentials()),
+                Arc::clone(&log),
+                async { client.send(&sample("ada@icloud.com")).await },
+            )
+            .await;
+            (outcome, log)
+        };
+
+        let rejecting = SmtpCapture::start_rejecting_auth().await;
+        let (outcome, log) = call_with_log(calls(&rejecting)).await;
+        assert!(
+            matches!(outcome, Err(ibridge_core::CoreError::Auth)),
+            "a 535 is an auth failure, got {outcome:?}"
+        );
+        assert!(log.rejected(), "a refused AUTH is reported as rejected");
+        assert!(!log.accepted());
+
+        let accepting = SmtpCapture::start().await;
+        let (outcome, log) = call_with_log(calls(&accepting)).await;
+        outcome.expect("send");
+        assert!(log.accepted(), "a send that got past AUTH is accepted");
+        assert!(!log.rejected());
     }
 }

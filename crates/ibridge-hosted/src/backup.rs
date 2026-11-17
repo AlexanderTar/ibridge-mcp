@@ -234,12 +234,14 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use secrecy::SecretString;
     use tokio::time::Instant;
 
-    use super::{BackupError, KEEP, PREFIX, parse_stamp, snapshots, spawn, stamp};
+    use super::{BackupError, KEEP, PREFIX, parse_stamp, spawn, stamp};
     use crate::store::{Scope, Store};
 
     /// 2023-11-14T22:13:20Z.
@@ -247,10 +249,21 @@ mod tests {
         UNIX_EPOCH + Duration::from_secs(1_700_000_000)
     }
 
-    /// The wall clock following the paused Tokio clock, so `advance` moves both.
-    fn clock() -> impl Fn() -> SystemTime + Send + 'static {
+    /// How many times the schedule has read the clock.
+    type Reads = Arc<AtomicUsize>;
+
+    /// The wall clock following the paused Tokio clock, so `advance` moves both, and a
+    /// count of reads. The schedule reads the clock once after each directory listing
+    /// (before it sleeps) and once as it takes a copy, so the count says where it is.
+    fn clock() -> (impl Fn() -> SystemTime + Send + 'static, Reads) {
         let start = Instant::now();
-        move || base() + start.elapsed()
+        let reads = Reads::default();
+        let seen = Arc::clone(&reads);
+        let now = move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+            base() + start.elapsed()
+        };
+        (now, reads)
     }
 
     fn names(dir: &Path) -> Vec<String> {
@@ -264,10 +277,23 @@ mod tests {
         names
     }
 
-    /// Lets the spawned task run until it waits on the clock again.
-    async fn settle() {
-        for _ in 0..50 {
+    /// Waits until the schedule has read the clock `reads` times, which it does only
+    /// after its file work is done, as it goes back to waiting on the clock.
+    ///
+    /// The schedule's file work runs on Tokio's blocking pool, outside the paused clock,
+    /// so yielding a fixed number of times is not enough: the pool may not have run yet.
+    /// This yields so the paused clock never auto-advances, and bounds the wait in real
+    /// time.
+    async fn settle(seen: &Reads, reads: usize) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while seen.load(Ordering::SeqCst) < reads {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the schedule read the clock {} times, not {reads}",
+                seen.load(Ordering::SeqCst)
+            );
             tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 
@@ -300,9 +326,11 @@ mod tests {
     async fn backup_writes_vacuum_into_daily() {
         let dir = tempfile::tempdir().expect("temp dir");
         let backups = dir.path().join("backups");
-        let task = spawn(backups.clone(), clock(), marker);
+        let (now, reads) = clock();
+        let task = spawn(backups.clone(), now, marker);
 
-        settle().await;
+        // One read takes the first copy; the next starts the wait for the second.
+        settle(&reads, 2).await;
         assert_eq!(
             names(&backups),
             ["ibridge-20231114T221320Z.db"],
@@ -310,11 +338,10 @@ mod tests {
         );
 
         tokio::time::advance(Duration::from_hours(23)).await;
-        settle().await;
         assert_eq!(names(&backups).len(), 1, "nothing is due after 23 hours");
 
         tokio::time::advance(Duration::from_hours(1)).await;
-        settle().await;
+        settle(&reads, 4).await;
         assert_eq!(
             names(&backups),
             ["ibridge-20231114T221320Z.db", "ibridge-20231115T221320Z.db"],
@@ -327,13 +354,16 @@ mod tests {
     async fn a_restart_waits_for_the_newest_copy_to_age() {
         let dir = tempfile::tempdir().expect("temp dir");
         let backups = dir.path().join("backups");
-        let first = spawn(backups.clone(), clock(), marker);
-        settle().await;
+        let (now, reads) = clock();
+        let first = spawn(backups.clone(), now, marker);
+        settle(&reads, 2).await;
         first.abort();
 
         tokio::time::advance(Duration::from_hours(10)).await;
-        let second = spawn(backups.clone(), clock(), marker);
-        settle().await;
+        let (now, reads) = clock();
+        let second = spawn(backups.clone(), now, marker);
+        // The one read comes after the copy on disk is found, as the wait begins.
+        settle(&reads, 1).await;
         assert_eq!(
             names(&backups).len(),
             1,
@@ -348,27 +378,30 @@ mod tests {
         let backups = dir.path().join("backups");
         std::fs::create_dir_all(&backups).expect("dir");
         std::fs::write(backups.join("notes.txt"), "mine").expect("write");
-        let task = spawn(backups.clone(), clock(), marker);
-        settle().await;
+        let (now, reads) = clock();
+        let task = spawn(backups.clone(), now, marker);
+        settle(&reads, 2).await;
 
-        for _ in 0..9 {
+        for day in 1..=9 {
             tokio::time::advance(Duration::from_hours(24)).await;
-            settle().await;
+            settle(&reads, 2 + 2 * day).await;
         }
-        let kept = snapshots(&backups).await;
+        // Read with `std::fs`, not `snapshots`: awaiting the blocking pool here would let
+        // the paused clock jump a day ahead.
+        let mut kept: Vec<String> = names(&backups)
+            .into_iter()
+            .filter(|name| name.starts_with(PREFIX))
+            .collect();
+        kept.reverse();
         assert_eq!(kept.len(), KEEP, "ten copies were taken, seven are kept");
         let newest = stamp(base() + Duration::from_hours(24 * 9));
         let oldest = stamp(base() + Duration::from_hours(24 * 3));
         assert_eq!(
-            kept.first()
-                .and_then(|(_, path)| path.file_name())
-                .and_then(|name| name.to_str()),
+            kept.first().map(String::as_str),
             Some(format!("{PREFIX}{newest}.db").as_str())
         );
         assert_eq!(
-            kept.last()
-                .and_then(|(_, path)| path.file_name())
-                .and_then(|name| name.to_str()),
+            kept.last().map(String::as_str),
             Some(format!("{PREFIX}{oldest}.db").as_str()),
             "the oldest kept copy is the seventh newest"
         );

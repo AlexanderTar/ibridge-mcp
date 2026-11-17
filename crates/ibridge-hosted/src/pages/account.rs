@@ -518,8 +518,7 @@ mod tests {
     use std::sync::{Arc, PoisonError};
     use std::time::SystemTime;
 
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode, header};
+    use axum::http::{StatusCode, header};
     use ibridge_auth::Credentials;
     use ibridge_core::AppleId;
     use secrecy::{ExposeSecret, SecretString};
@@ -583,34 +582,6 @@ mod tests {
     }
 
     impl Harness {
-        async fn get_path(&self, path: &str, ip: &str, cookie: Option<&str>) -> Reply {
-            let mut request = Request::get(path);
-            if let Some(cookie) = cookie {
-                request = request.header(header::COOKIE, cookie);
-            }
-            self.send(request.body(Body::empty()).expect("request"), ip)
-                .await
-        }
-
-        async fn post_path(
-            &self,
-            path: &str,
-            ip: &str,
-            cookie: Option<&str>,
-            fields: &[(&str, &str)],
-        ) -> Reply {
-            let body = url::form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(fields)
-                .finish();
-            let mut request = Request::post(path)
-                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
-            if let Some(cookie) = cookie {
-                request = request.header(header::COOKIE, cookie);
-            }
-            self.send(request.body(Body::from(body)).expect("request"), ip)
-                .await
-        }
-
         /// Opens the sign-in form and posts `apple_id` and `password` with its token.
         async fn account_login(&self, ip: &str, apple_id: &str, password: &str) -> Reply {
             let form = self.get_path("/account", ip, None).await;

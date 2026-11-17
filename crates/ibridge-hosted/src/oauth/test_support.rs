@@ -157,6 +157,17 @@ pub(crate) async fn harness_with(
     evict: Evict,
     mcp: Router,
 ) -> Harness {
+    let config = OAuthConfig::new(public_url, access).expect("public url");
+    harness_configured(config, store, evict, mcp).await
+}
+
+/// A harness over `store` that serves with `config`.
+pub(crate) async fn harness_configured(
+    config: OAuthConfig,
+    store: Store,
+    evict: Evict,
+    mcp: Router,
+) -> Harness {
     let calls = Arc::new(AtomicUsize::new(0));
     let inner = validated_by(|credentials: &Credentials| {
         credentials.with_secret(|password| Combined {
@@ -177,7 +188,7 @@ pub(crate) async fn harness_with(
         inner: Box::new(inner),
     };
     let app = router_with(
-        OAuthConfig::new(public_url, access).expect("public url"),
+        config,
         &store,
         Arc::new(FakeClients),
         Arc::new(checker),
@@ -259,6 +270,34 @@ impl Harness {
             headers,
             text: String::from_utf8_lossy(&bytes).into_owned(),
         }
+    }
+
+    pub(crate) async fn get_path(&self, path: &str, ip: &str, cookie: Option<&str>) -> Reply {
+        let mut request = Request::get(path);
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
+        self.send(request.body(Body::empty()).expect("request"), ip)
+            .await
+    }
+
+    pub(crate) async fn post_path(
+        &self,
+        path: &str,
+        ip: &str,
+        cookie: Option<&str>,
+        fields: &[(&str, &str)],
+    ) -> Reply {
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(fields)
+            .finish();
+        let mut request =
+            Request::post(path).header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
+        self.send(request.body(Body::from(body)).expect("request"), ip)
+            .await
     }
 
     /// A GET `/authorize` URL with the usual parameters, minus `drop`, plus `extra`.

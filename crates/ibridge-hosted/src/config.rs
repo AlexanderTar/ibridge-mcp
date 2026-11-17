@@ -15,6 +15,8 @@ pub const ALLOWED_APPLE_IDS: &str = "IBRIDGE_ALLOWED_APPLE_IDS";
 
 /// The environment variable that closes or opens sign-ups: `closed` or `open` (the default).
 pub const SIGNUPS: &str = "IBRIDGE_SIGNUPS";
+/// The environment variable holding the contact address the privacy policy and terms show.
+pub const CONTACT: &str = "IBRIDGE_CONTACT";
 /// The environment variable that sets how many accounts an open service holds.
 pub const SIGNUP_CAP: &str = "IBRIDGE_SIGNUP_CAP";
 
@@ -68,6 +70,9 @@ pub enum StartError {
     /// `IBRIDGE_SIGNUP_CAP` is not a whole number of at least 1.
     #[error("{SIGNUP_CAP} must be a whole number of at least 1")]
     BadSignupCap,
+    /// `IBRIDGE_CONTACT` is longer than 200 characters or holds a control character.
+    #[error("{CONTACT} must be one line of at most 200 characters")]
+    BadContact,
     /// The public URL cannot be an OAuth issuer.
     #[error(transparent)]
     PublicUrl(#[from] ConfigError),
@@ -107,7 +112,16 @@ impl HostedConfig {
         } else {
             return Err(StartError::NoAccessPolicy);
         };
-        let oauth = OAuthConfig::new(&public_url, access)?;
+        let mut oauth = OAuthConfig::new(&public_url, access)?;
+        if let Some(contact) = env(CONTACT)
+            .map(|text| text.trim().to_owned())
+            .filter(|text| !text.is_empty())
+        {
+            if contact.chars().count() > 200 || contact.chars().any(char::is_control) {
+                return Err(StartError::BadContact);
+            }
+            oauth = oauth.contact(contact);
+        }
         Ok(Self {
             addr,
             data_dir,
@@ -144,7 +158,7 @@ fn allowed_apple_ids(list: &str) -> Result<Vec<AppleId>, StartError> {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{ALLOWED_APPLE_IDS, HostedConfig, HostedOptions, StartError};
+    use super::{ALLOWED_APPLE_IDS, CONTACT, HostedConfig, HostedOptions, StartError};
 
     #[derive(Clone, Copy)]
     enum Mode {
@@ -190,6 +204,30 @@ mod tests {
     }
 
     use super::{SIGNUP_CAP as CAP, SIGNUPS};
+
+    #[test]
+    fn contact_comes_from_the_environment() {
+        let config =
+            resolve(Mode::Public, &[(CONTACT, "  privacy@ibridge.example ")]).expect("resolves");
+        assert_eq!(
+            config.oauth.contact_address(),
+            Some("privacy@ibridge.example"),
+            "trimmed"
+        );
+        for blank in [vec![], vec![(CONTACT, "   ")]] {
+            let config = resolve(Mode::Public, &blank).expect("resolves");
+            assert_eq!(
+                config.oauth.contact_address(),
+                None,
+                "{blank:?}: no address is invented"
+            );
+        }
+        let too_long = "a".repeat(201);
+        for bad in [too_long.as_str(), "line one\nline two"] {
+            let error = resolve(Mode::Public, &[(CONTACT, bad)]).expect_err("refused");
+            assert!(matches!(error, StartError::BadContact), "{bad:?}: {error}");
+        }
+    }
 
     #[test]
     fn signups_closed_allows_only_allowlist() {

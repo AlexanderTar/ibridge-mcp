@@ -54,6 +54,7 @@ pub struct OAuthConfig {
     public_url: Url,
     allowed: Option<HashSet<String>>,
     behind_proxy: bool,
+    contact: Option<String>,
 }
 
 /// The public URL cannot be used as an OAuth issuer.
@@ -96,6 +97,7 @@ impl OAuthConfig {
             public_url: url,
             allowed,
             behind_proxy: false,
+            contact: None,
         })
     }
 
@@ -106,6 +108,18 @@ impl OAuthConfig {
     pub fn behind_proxy(mut self) -> Self {
         self.behind_proxy = true;
         self
+    }
+
+    /// The address the privacy policy and terms give for questions and deletion requests.
+    #[must_use]
+    pub fn contact(mut self, contact: impl Into<String>) -> Self {
+        self.contact = Some(contact.into());
+        self
+    }
+
+    /// The contact address, when the operator set one.
+    pub(crate) fn contact_address(&self) -> Option<&str> {
+        self.contact.as_deref()
     }
 
     /// The issuer identifier: the public origin with no trailing slash.
@@ -288,6 +302,7 @@ pub(crate) async fn router_with(
         .merge(authorize::routes(&shared))
         .merge(token::routes(&shared))
         .merge(crate::pages::account::routes(&shared))
+        .merge(crate::pages::landing::routes(&shared))
         .layer(tracing_layer()))
 }
 

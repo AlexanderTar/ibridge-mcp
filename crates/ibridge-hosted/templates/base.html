@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
 <title>{% block title %}{% endblock %}</title>
 <style>
 :root { color-scheme: light dark; --bg: #f6f6f4; --card: #ffffff; --ink: #1c1c1e; --muted: #5c5c63; --line: #c9c9cf; --accent: #0a5fd6; --accent-ink: #ffffff; --danger: #b3261e; }
@@ -11,6 +11,9 @@
 * { box-sizing: border-box; }
 body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 28rem; margin: 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+main.wide { max-width: 40rem; }
+footer { max-width: 28rem; margin: 16px auto 0; text-align: center; color: var(--muted); font-size: 0.9rem; }
+footer.wide { max-width: 40rem; }
 h1 { font-size: 1.35rem; line-height: 1.25; margin: 0 0 12px; }
 p { margin: 0 0 12px; }
 label { display: block; margin: 16px 0 4px; font-weight: 600; }
@@ -31,8 +34,9 @@ button { margin-top: 20px; width: 100%; padding: 12px; font: inherit; font-weigh
 </style>
 </head>
 <body>
-<main>
+<main class="{% block width %}{% endblock %}">
 {% block body %}{% endblock %}
 </main>
+<footer class="{% block footer_width %}{% endblock %}"><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>
 </body>
 </html>

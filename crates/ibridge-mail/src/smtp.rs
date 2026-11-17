@@ -34,10 +34,47 @@ pub struct OutgoingMail {
 /// Tests build a cleartext client for a loopback server only.
 #[derive(Debug)]
 pub struct SmtpClient {
-    credentials: Credentials,
+    credentials: Login,
     host: String,
     port: u16,
     starttls: bool,
+}
+
+/// Where a send gets its password.
+#[derive(Debug)]
+enum Login {
+    /// The client owns the credentials.
+    Owned(Credentials),
+    /// The client owns none. Each send reads the call's, for this account only.
+    PerCall(ibridge_core::AppleId),
+}
+
+impl Login {
+    fn apple_id(&self) -> &ibridge_core::AppleId {
+        match self {
+            Self::Owned(credentials) => &credentials.apple_id,
+            Self::PerCall(apple_id) => apple_id,
+        }
+    }
+
+    /// The login for one `AUTH`: this client's own, or the one the call carries.
+    fn for_auth(&self) -> Result<SmtpCredentials, CoreError> {
+        // lettre keeps the password in a plain `String` until it sends `AUTH`.
+        let read = |credentials: &Credentials| {
+            credentials.with_secret(|secret| {
+                SmtpCredentials::new(credentials.apple_id.as_str().to_owned(), secret.to_owned())
+            })
+        };
+        match self {
+            Self::Owned(credentials) => Ok(read(credentials)),
+            Self::PerCall(apple_id) => ibridge_auth::call_credentials(|credentials| {
+                (credentials.apple_id == *apple_id).then(|| read(credentials))
+            })
+            .flatten()
+            // A call without credentials, or with another account's, is a bug in the caller.
+            .ok_or_else(|| CoreError::Protocol("no credentials for this call".to_owned())),
+        }
+    }
 }
 
 impl SmtpClient {
@@ -45,7 +82,22 @@ impl SmtpClient {
     #[must_use]
     pub fn icloud(credentials: Credentials) -> Self {
         Self {
-            credentials,
+            credentials: Login::Owned(credentials),
+            host: "smtp.mail.me.com".to_owned(),
+            port: 587,
+            starttls: true,
+        }
+    }
+
+    /// iCloud SMTP for a server that must not keep the password between calls.
+    ///
+    /// Each send signs in with the credentials of the call that makes it
+    /// (see `ibridge_auth::with_call_credentials`). A call without credentials,
+    /// or with another account's, fails before anything leaves.
+    #[must_use]
+    pub fn icloud_per_call(apple_id: ibridge_core::AppleId) -> Self {
+        Self {
+            credentials: Login::PerCall(apple_id),
             host: "smtp.mail.me.com".to_owned(),
             port: 587,
             starttls: true,
@@ -71,17 +123,37 @@ impl SmtpClient {
             return Err(CoreError::HostNotAllowed);
         }
         Ok(Self {
-            credentials,
+            credentials: Login::Owned(credentials),
             host,
             port,
             starttls: false,
         })
     }
 
+    /// Cleartext per-call SMTP for a loopback test server. See [`Self::icloud_per_call`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::HostNotAllowed`] when `host` is not a loopback name.
+    #[cfg(test)]
+    pub(crate) fn plain_per_call(
+        apple_id: ibridge_core::AppleId,
+        host: impl Into<String>,
+        port: u16,
+    ) -> Result<Self, CoreError> {
+        let mut client = Self::plain(
+            Credentials::new(apple_id.clone(), String::new()),
+            host,
+            port,
+        )?;
+        client.credentials = Login::PerCall(apple_id);
+        Ok(client)
+    }
+
     /// Address used for `AUTH`. This is the full Apple ID, not [`OutgoingMail::from`].
     #[must_use]
     pub(crate) fn login_address(&self) -> &str {
-        self.credentials.apple_id.as_str()
+        self.credentials.apple_id().as_str()
     }
 
     /// Sends `mail`.
@@ -124,10 +196,7 @@ impl SmtpClient {
     }
 
     fn transport(&self) -> Result<AsyncSmtpTransport<Tokio1Executor>, CoreError> {
-        let login = self.credentials.apple_id.as_str().to_owned();
-        let smtp_credentials = self
-            .credentials
-            .with_secret(|secret| SmtpCredentials::new(login, secret.to_owned()));
+        let smtp_credentials = self.credentials.for_auth()?;
         let builder = if self.starttls {
             AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.host)
                 .map_err(|_| CoreError::Network)?
@@ -273,6 +342,7 @@ pub(crate) mod tests {
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct Seen {
         username: String,
+        password: String,
         mail_from: String,
         data: String,
     }
@@ -339,6 +409,10 @@ pub(crate) mod tests {
         pub(crate) fn username(&self) -> String {
             self.seen.lock().expect("seen").username.clone()
         }
+
+        pub(crate) fn password(&self) -> String {
+            self.seen.lock().expect("seen").password.clone()
+        }
     }
 
     impl Drop for SmtpCapture {
@@ -378,9 +452,11 @@ pub(crate) mod tests {
                 if initial.is_empty() {
                     write_line(&mut reader, "334 \r\n").await?;
                     let encoded = read_line(&mut reader).await?;
-                    captured.username = plain_username(&encoded).unwrap_or_default();
+                    (captured.username, captured.password) =
+                        plain_login(&encoded).unwrap_or_default();
                 } else {
-                    captured.username = plain_username(initial).unwrap_or_default();
+                    (captured.username, captured.password) =
+                        plain_login(initial).unwrap_or_default();
                 }
                 write_line(&mut reader, "235 ok\r\n").await?;
             } else if let Some(initial) = strip_cmd(&line, "AUTH LOGIN") {
@@ -392,7 +468,7 @@ pub(crate) mod tests {
                 };
                 captured.username = username.unwrap_or_default();
                 write_line(&mut reader, "334 UGFzc3dvcmQ6\r\n").await?;
-                let _password = read_line(&mut reader).await?;
+                captured.password = decode_utf8(&read_line(&mut reader).await?).unwrap_or_default();
                 write_line(&mut reader, "235 ok\r\n").await?;
             } else if let Some(rest) = strip_prefix_ignore(&line, "MAIL FROM:") {
                 captured.mail_from = angle_addr(rest);
@@ -511,14 +587,15 @@ pub(crate) mod tests {
             )
     }
 
-    fn plain_username(encoded: &str) -> Option<String> {
+    fn plain_login(encoded: &str) -> Option<(String, String)> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded.trim())
             .ok()?;
         let text = String::from_utf8(bytes).ok()?;
         let mut parts = text.split('\0');
         let _authzid = parts.next()?;
-        Some(parts.next()?.to_owned())
+        let username = parts.next()?.to_owned();
+        Some((username, parts.next()?.to_owned()))
     }
 
     fn decode_utf8(encoded: &str) -> Option<String> {
@@ -669,5 +746,80 @@ pub(crate) mod tests {
             prop_assert_eq!(parsed.subject, subject);
             prop_assert_eq!(parsed.body, body);
         }
+    }
+
+    async fn as_call<T>(
+        credentials: ibridge_auth::Credentials,
+        work: impl std::future::Future<Output = T>,
+    ) -> T {
+        ibridge_auth::with_call_credentials(
+            std::sync::Arc::new(credentials),
+            std::sync::Arc::new(ibridge_auth::LoginLog::new()),
+            work,
+        )
+        .await
+    }
+
+    fn ada_id() -> AppleId {
+        AppleId::try_from("ada@icloud.com").expect("apple id")
+    }
+
+    #[tokio::test]
+    async fn smtp_per_call_uses_call_credential() {
+        let capture = SmtpCapture::start().await;
+        let client = SmtpClient::plain_per_call(ada_id(), &capture.host, capture.port)
+            .expect("loopback host is allowed");
+        let mail = sample("ada@icloud.com");
+        as_call(credentials(), client.send(&mail))
+            .await
+            .expect("the call's credentials sign the send");
+        assert_eq!(capture.username(), "ada@icloud.com");
+        assert_eq!(
+            capture.password(),
+            PASSWORD,
+            "AUTH used the password the call carried"
+        );
+    }
+
+    #[tokio::test]
+    async fn smtp_per_call_without_credential_fails() {
+        let capture = SmtpCapture::start().await;
+        let client = SmtpClient::plain_per_call(ada_id(), &capture.host, capture.port)
+            .expect("loopback host is allowed");
+        let mail = sample("ada@icloud.com");
+        as_call(credentials(), client.send(&mail))
+            .await
+            .expect("a call with credentials works");
+
+        let error = client
+            .send(&mail)
+            .await
+            .expect_err("a send with no call credential must fail, not reuse one");
+        assert!(
+            matches!(error, ibridge_core::CoreError::Protocol(_)),
+            "no credential is a protocol error, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn smtp_per_call_rejects_other_account() {
+        let capture = SmtpCapture::start().await;
+        let client = SmtpClient::plain_per_call(ada_id(), &capture.host, capture.port)
+            .expect("loopback host is allowed");
+        let bob = ibridge_auth::Credentials::new(
+            AppleId::try_from("bob@icloud.com").expect("apple id"),
+            "bobs-secret",
+        );
+        let error = as_call(bob, client.send(&sample("ada@icloud.com")))
+            .await
+            .expect_err("bob's credentials are not for ada's client");
+        assert!(
+            matches!(error, ibridge_core::CoreError::Protocol(_)),
+            "another account's call is a protocol error, got {error:?}"
+        );
+        assert!(
+            capture.username().is_empty() && capture.password().is_empty(),
+            "another account's password is never sent"
+        );
     }
 }

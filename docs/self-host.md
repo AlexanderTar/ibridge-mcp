@@ -65,7 +65,7 @@ docker exec ibridge ibridge admin suspend you@icloud.com
 docker exec ibridge ibridge admin delete you@icloud.com
 ```
 
-`suspend` blocks the account's tokens, API keys and sign-in and deletes nothing. `delete` removes the account and every sealed copy of its password. `--data-dir` defaults to `/data`. Revoke the app-specific password at Apple as well: deleting the account here does not do that.
+`suspend` blocks the account's tokens, API keys and sign-in and deletes nothing. `delete` removes the account and every sealed copy of its password. `--data-dir` defaults to `/data`. The command runs in its own process and cannot reach the running server's pooled mail sessions. It does not need to: the server checks the database on every call, so the account's tokens and keys are refused from the next call and no pool is reached. Sessions the server already holds for that account sit idle and close within five minutes. Revoke the app-specific password at Apple as well: deleting the account here does not do that.
 
 ## Backups
 

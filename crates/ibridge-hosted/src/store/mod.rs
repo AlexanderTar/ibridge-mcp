@@ -376,7 +376,7 @@ impl Store {
             return Ok(());
         }
         let mut tx = begin(&self.pool).await?;
-        let hit = match load(&mut tx, code).await {
+        let hit = match load(&mut *tx, code).await {
             Ok(hit) => hit,
             Err(StoreError::InvalidToken) => return Ok(()),
             Err(err) => return Err(err),
@@ -404,6 +404,12 @@ impl Store {
         if !known_token(&self.pool, access).await? {
             return Err(StoreError::InvalidToken);
         }
+        // A token that opens writes nothing, so a call never queues behind a writer.
+        let hit = load(&self.pool, access).await?;
+        if opens(&hit, now) {
+            return opened(&hit, access);
+        }
+        // A refusal is recorded (an expired or revoked token stays so), which takes the write lock.
         let mut tx = begin(&self.pool).await?;
         let result = open_in(&mut tx, access, now).await;
         settle(tx, result).await
@@ -744,7 +750,7 @@ async fn mint_key_in(
 }
 
 async fn exchange_in(tx: &mut WriteTx, code: &str, now: i64) -> Result<IssuedTokens, StoreError> {
-    let hit = load(tx, code).await?;
+    let hit = load(&mut **tx, code).await?;
     if let Some(err) = refusal(&hit, now) {
         return Err(refuse(tx, &hit, err).await);
     }
@@ -759,23 +765,33 @@ async fn exchange_in(tx: &mut WriteTx, code: &str, now: i64) -> Result<IssuedTok
     Ok(issued)
 }
 
+/// Whether `hit` is an access token or API key that may open a password now.
+fn opens(hit: &Hit, now: i64) -> bool {
+    (hit.purpose == PURPOSE_ACCESS || hit.purpose == PURPOSE_API_KEY) && refusal(hit, now).is_none()
+}
+
+/// The write path of a call: the token does not open, and the reason is recorded.
 async fn open_in(tx: &mut WriteTx, access: &str, now: i64) -> Result<CallSecret, StoreError> {
-    let hit = load(tx, access).await?;
+    let hit = load(&mut **tx, access).await?;
     if hit.purpose != PURPOSE_ACCESS && hit.purpose != PURPOSE_API_KEY {
         return Err(StoreError::InvalidToken);
     }
     if let Some(err) = refusal(&hit, now) {
         return Err(refuse(tx, &hit, err).await);
     }
+    opened(&hit, access)
+}
+
+/// Opens the password `hit` seals with `access`.
+fn opened(hit: &Hit, access: &str) -> Result<CallSecret, StoreError> {
     let grant = grant_bytes(&hit.grant_id)?;
-    let secret = unseal(&hit, access)?;
-    sweep_expired(tx, now).await?;
+    let secret = unseal(hit, access)?;
     Ok(CallSecret {
         grant_id: GrantId(grant),
         apple_id: AppleId::try_from(hit.apple_id.as_str()).map_err(internal)?,
         secret,
         scope: Scope::parse(&hit.scope)?,
-        services: services_of(&hit)?,
+        services: services_of(hit)?,
     })
 }
 
@@ -792,7 +808,7 @@ async fn refresh_in(
     refresh_token: &str,
     now: i64,
 ) -> Result<IssuedTokens, StoreError> {
-    let hit = load(tx, refresh_token).await?;
+    let hit = load(&mut **tx, refresh_token).await?;
     if let Some(err) = refusal(&hit, now) {
         return Err(refuse(tx, &hit, err).await);
     }
@@ -844,7 +860,7 @@ fn is_tombstone(purpose: &str) -> bool {
     purpose == PURPOSE_SPENT || purpose == PURPOSE_CODE_SPENT
 }
 
-async fn load(tx: &mut WriteTx, token: &str) -> Result<Hit, StoreError> {
+async fn load<'e>(db: impl sqlx::SqliteExecutor<'e>, token: &str) -> Result<Hit, StoreError> {
     let mut lookup = seal::lookup(token.as_bytes());
     let row = sqlx::query(
         "SELECT seals.id AS seal_id, seals.grant_id AS grant_id, seals.purpose AS purpose,
@@ -858,7 +874,7 @@ async fn load(tx: &mut WriteTx, token: &str) -> Result<Hit, StoreError> {
          WHERE seals.lookup = ?",
     )
     .bind(lookup.as_slice())
-    .fetch_optional(&mut **tx)
+    .fetch_optional(db)
     .await;
     lookup.zeroize();
     let row = row.map_err(internal)?;
@@ -895,8 +911,9 @@ async fn known_token(pool: &SqlitePool, token: &str) -> Result<bool, StoreError>
 }
 
 async fn sweep_expired(tx: &mut WriteTx, now: i64) -> Result<(), StoreError> {
-    // Every successful write sweeps every grant. Expired ciphertext must not wait
-    // for its own client. There is no background task.
+    // Every write that issues a seal sweeps every grant. Expired ciphertext must not wait
+    // for its own client. There is no background task. A call that only opens a token
+    // writes nothing, so reads never take the write lock.
     sqlx::query(
         "DELETE FROM seals
          WHERE purpose IN (?, ?, ?)
@@ -1701,6 +1718,31 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn read_call_takes_no_write_lock() {
+        let temp = TempDb::new();
+        let store = Store::open(&temp.path()).await.unwrap();
+        let code = seal_code(&store, at(0)).await;
+        let issued = store
+            .exchange_code(code.code.expose_secret(), at(1))
+            .await
+            .unwrap();
+
+        // Another writer holds SQLite's write lock, as a sign-in or a refresh would.
+        let writer = super::begin(&store.pool).await.unwrap();
+        let opened = tokio::time::timeout(
+            Duration::from_secs(1),
+            store.open_for_call(issued.access.expose_secret(), at(2)),
+        )
+        .await;
+        drop(writer);
+
+        let call = opened
+            .expect("a call did not wait on the write lock")
+            .expect("the token opens");
+        assert_eq!(call.apple_id.as_str(), "ada@icloud.com");
+    }
+
     struct TempDb {
         dir: std::path::PathBuf,
     }
@@ -2285,21 +2327,26 @@ mod tests {
             .open_for_call(rotated.access.expose_secret(), at(10 + 120))
             .await
             .expect("access still opens when the grace copy expires");
-        let spent: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM seals WHERE purpose = 'refresh_spent'")
-                .fetch_one(&store.pool)
-                .await
-                .unwrap();
-        assert_eq!(spent, 1, "an expired grace copy becomes a tombstone");
+        let tombstones = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM seals WHERE purpose = 'refresh_spent'",
+            )
+            .fetch_one(&store.pool)
+            .await
+            .unwrap()
+        };
+        assert_eq!(tombstones().await, 0, "a read sweeps nothing");
+        seal_code(&store, at(10 + 120)).await;
+        assert_eq!(
+            tombstones().await,
+            1,
+            "a write that issues a seal turns an expired grace copy into a tombstone"
+        );
         let later = 10 + 120 + 90 * 24 * 60 * 60;
         let other = seal_code(&store, at(later)).await;
-        let spent: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM seals WHERE purpose = 'refresh_spent'")
-                .fetch_one(&store.pool)
-                .await
-                .unwrap();
         assert_eq!(
-            spent, 0,
+            tombstones().await,
+            0,
             "a refresh tombstone older than the refresh lifetime is deleted"
         );
         let replay = store.refresh(&old_refresh, at(later)).await;

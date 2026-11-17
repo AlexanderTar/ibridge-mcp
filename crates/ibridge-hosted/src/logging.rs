@@ -9,12 +9,20 @@
 //! `debug` and `trace`. So only our own crates and the request log get the level
 //! the operator picked; every other crate is held to `warn`.
 
-use tracing::Level;
-use tracing::Subscriber;
+use std::fmt;
+
+use serde_json::{Map, Value};
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::Layer as _;
 use tracing_subscriber::filter::Targets;
-use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::time::{FormatTime as _, SystemTime};
+use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, FormattedFields, MakeWriter};
 use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::registry::LookupSpan;
+
+use crate::store::redact;
 
 /// The crates that may log at the operator's level.
 const OURS: [&str; 10] = [
@@ -30,9 +38,97 @@ const OURS: [&str; 10] = [
     "tower_http::trace",
 ];
 
+/// Collects a record's fields into a JSON object, each text value passed through [`redact`].
+///
+/// This is [`RedactingFields`](crate::RedactingFields)'s job done for JSON output:
+/// `tracing-subscriber`'s own JSON event format ignores a custom field formatter and
+/// writes values as they are, so the formatter here owns both event and span fields.
+struct Scrub<'a>(&'a mut Map<String, Value>);
+
+impl Visit for Scrub<'_> {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.record_str(field, &format!("{value:?}"));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0
+            .insert(field.name().to_owned(), Value::String(redact(value)));
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.0.insert(field.name().to_owned(), value.into());
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.0.insert(field.name().to_owned(), value.into());
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.0.insert(field.name().to_owned(), value.into());
+    }
+}
+
+/// Formats a span's fields as one JSON object with every value scrubbed.
+struct ScrubbedFields;
+
+impl<'writer> FormatFields<'writer> for ScrubbedFields {
+    fn format_fields<R: tracing_subscriber::field::RecordFields>(
+        &self,
+        mut writer: Writer<'writer>,
+        fields: R,
+    ) -> fmt::Result {
+        let mut map = Map::new();
+        fields.record(&mut Scrub(&mut map));
+        write!(writer, "{}", Value::Object(map))
+    }
+}
+
+/// One JSON object per event: time, level, scrubbed fields, target and the scrubbed spans around it.
+struct ScrubbedJson;
+
+impl<S> FormatEvent<S, ScrubbedFields> for ScrubbedJson
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn format_event(
+        &self,
+        context: &FmtContext<'_, S, ScrubbedFields>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> fmt::Result {
+        let mut timestamp = String::new();
+        SystemTime.format_time(&mut Writer::new(&mut timestamp))?;
+        let mut fields = Map::new();
+        event.record(&mut Scrub(&mut fields));
+        let meta = event.metadata();
+        let mut line = Map::new();
+        line.insert("timestamp".to_owned(), timestamp.into());
+        line.insert("level".to_owned(), meta.level().as_str().into());
+        line.insert("fields".to_owned(), Value::Object(fields));
+        line.insert("target".to_owned(), meta.target().into());
+        if let Some(scope) = context.event_scope() {
+            let spans: Vec<Value> = scope
+                .from_root()
+                .map(|span| {
+                    let mut entry = span
+                        .extensions()
+                        .get::<FormattedFields<ScrubbedFields>>()
+                        .and_then(|fields| serde_json::from_str::<Map<String, Value>>(fields).ok())
+                        .unwrap_or_default();
+                    entry.insert("name".to_owned(), span.name().into());
+                    Value::Object(entry)
+                })
+                .collect();
+            line.insert("spans".to_owned(), Value::Array(spans));
+        }
+        writeln!(writer, "{}", Value::Object(line))
+    }
+}
+
 /// A subscriber that writes one JSON object per event to `writer`.
 ///
-/// Our crates log at `level` and above. Every other crate logs `warn` and above.
+/// Our crates log at `level` and above. Every other crate logs `warn` and above. Every
+/// field value, on events and spans, goes through [`redact`] before it is written.
 pub fn json_subscriber<W>(writer: W, level: Level) -> impl Subscriber + Send + Sync
 where
     W: for<'a> MakeWriter<'a> + Send + Sync + 'static,
@@ -43,7 +139,8 @@ where
     );
     tracing_subscriber::registry().with(
         tracing_subscriber::fmt::layer()
-            .json()
+            .fmt_fields(ScrubbedFields)
+            .event_format(ScrubbedJson)
             .with_writer(writer)
             .with_ansi(false)
             .with_filter(filter),
@@ -60,4 +157,88 @@ pub fn init() {
         .unwrap_or(Level::INFO);
     let _already_set =
         tracing::subscriber::set_global_default(json_subscriber(std::io::stdout, level));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    use serde_json::Value;
+    use tracing::Level;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    use super::json_subscriber;
+
+    /// Collects what the subscriber writes.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl MakeWriter<'_> for Captured {
+        type Writer = Self;
+
+        fn make_writer(&self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[test]
+    fn json_logs_redact_secret_fields() {
+        let logs = Captured::default();
+        let subscriber = json_subscriber(logs.clone(), Level::TRACE);
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("http", path = "/cb?code=ibc_spansecret&state=x");
+            let _entered = span.enter();
+            tracing::info!(
+                header = "Authorization: Bearer iba_headersecret",
+                query = %"access_token=ibf_querysecret&other=1",
+                "signed in with token=ibr_messagesecret"
+            );
+        });
+        let bytes = logs
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let text = String::from_utf8(bytes).expect("utf8 logs");
+        assert!(!text.is_empty(), "the event was logged at all");
+        for line in text.lines() {
+            serde_json::from_str::<Value>(line)
+                .unwrap_or_else(|error| panic!("log lines are JSON ({error}): {line}"));
+        }
+        for secret in [
+            "iba_headersecret",
+            "ibf_querysecret",
+            "ibr_messagesecret",
+            "ibc_spansecret",
+        ] {
+            assert!(!text.contains(secret), "{secret} reached the log:\n{text}");
+        }
+        assert!(
+            text.contains("[REDACTED]"),
+            "the values were scrubbed, not dropped:\n{text}"
+        );
+        assert!(
+            text.contains("signed in with"),
+            "the rest of the message stays:\n{text}"
+        );
+        assert!(
+            text.contains("/cb"),
+            "the rest of the span field stays:\n{text}"
+        );
+    }
 }

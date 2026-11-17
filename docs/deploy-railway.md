@@ -149,7 +149,7 @@ Your own account was created while the instance was closed, so it counts toward 
 
 ## Operating
 
-- **Suspend or delete an account:** `railway ssh --service ibridge -- ibridge admin suspend <address>` or `... delete <address>`. Then tell the person to revoke the app-specific password at Apple.
+- **Suspend or delete an account:** `railway ssh --service ibridge -- ibridge admin suspend <address>` or `... delete <address>`. The command runs outside the server process, so the server refuses the account's tokens from the next call but its idle mail sessions close on their own within five minutes. Then tell the person to revoke the app-specific password at Apple.
 - **Deploy a new version:** pick the commit as in step 2, then `railway up --service ibridge --detach`. A deploy restarts the service and ends open sessions; people reconnect without signing in again.
 - **Rate limits behind Railway's proxy:** `IBRIDGE_BEHIND_PROXY=true` is part of the variables in step 4. If sign-in limits ever lock everyone out together, check it is set with the dashboard's Variables tab, and see [Behind a proxy](self-host.md#behind-a-proxy).
 - **Roll back:** redeploy the previous sha with `railway up`, or use Railway's deployment history. The database is forward-only: `/readyz` fails if a snapshot or a rollback meets a different schema, so restore a snapshot taken by the older build.

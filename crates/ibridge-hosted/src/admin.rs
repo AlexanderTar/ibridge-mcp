@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admin_suspend_drops_pooled_sessions() {
+    async fn suspend_runs_its_evict_hook_and_refuses_tokens_before_any_pool() {
         let (h, cache) = pooled().await;
         let ada = tokens(&h.store, ADA).await;
         let (status, body) = call(
@@ -254,7 +254,20 @@ mod tests {
 
         assert!(
             cache.is_empty(),
-            "suspending closes the account's pooled sessions"
+            "the evict hook the server passes closes the account's pooled sessions; \
+             the out-of-process `ibridge admin` passes a no-op and relies on the check below"
+        );
+        let (status, _) = call(
+            &h.app,
+            ada.access.expose_secret(),
+            "mail_search",
+            &json!({}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "a suspended account's token is refused before any pool is reached"
         );
     }
 

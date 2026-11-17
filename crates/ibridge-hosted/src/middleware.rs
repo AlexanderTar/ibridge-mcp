@@ -101,9 +101,12 @@ async fn authenticate(State(gate): State<Arc<Gate>>, mut request: Request, next:
             request.headers_mut().remove(header::AUTHORIZATION);
             next.run(request).await
         }
-        Err(StoreError::InvalidToken | StoreError::Expired | StoreError::InvalidGrant) => {
-            challenge(&gate, Some("invalid_token"))
-        }
+        Err(
+            StoreError::InvalidToken
+            | StoreError::Expired
+            | StoreError::InvalidGrant
+            | StoreError::Suspended,
+        ) => challenge(&gate, Some("invalid_token")),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

@@ -28,6 +28,15 @@ enum Command {
         #[command(subcommand)]
         action: DaemonAction,
     },
+    /// Operator commands for the hosted service, run on its host (for example with `railway ssh`).
+    #[cfg(feature = "hosted")]
+    Admin {
+        /// Where the hosted database lives.
+        #[arg(long, value_name = "DIR", default_value = "/data", global = true)]
+        data_dir: std::path::PathBuf,
+        #[command(subcommand)]
+        action: AdminCommand,
+    },
     /// Runs the MCP server.
     Serve {
         /// Speak MCP over stdin and stdout. Logs go to stderr.
@@ -60,6 +69,21 @@ enum Command {
         #[cfg(feature = "hosted")]
         #[arg(long, requires = "hosted")]
         multi_tenant: bool,
+    },
+}
+
+#[cfg(feature = "hosted")]
+#[derive(Debug, Subcommand)]
+enum AdminCommand {
+    /// Blocks an account: its tokens, API keys and sign-in stop working. Nothing is deleted.
+    Suspend {
+        /// The account's iCloud address, in any letter case.
+        apple_id: String,
+    },
+    /// Deletes an account and every sealed copy of its password.
+    Delete {
+        /// The account's iCloud address, in any letter case.
+        apple_id: String,
     },
 }
 
@@ -103,6 +127,18 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             DaemonAction::Uninstall => crate::daemon::run_uninstall(),
             DaemonAction::Status => crate::daemon::run_status(),
         },
+        #[cfg(feature = "hosted")]
+        Command::Admin { data_dir, action } => {
+            let (action, apple_id) = match action {
+                AdminCommand::Suspend { apple_id } => {
+                    (ibridge_hosted::AdminAction::Suspend, apple_id)
+                }
+                AdminCommand::Delete { apple_id } => {
+                    (ibridge_hosted::AdminAction::Delete, apple_id)
+                }
+            };
+            crate::hosted::admin(&data_dir, action, &apple_id).await
+        }
         Command::Serve {
             stdio,
             #[cfg(feature = "http")]
@@ -146,5 +182,48 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             }
             crate::serve::stdio(access).await
         }
+    }
+}
+
+#[cfg(all(test, feature = "hosted"))]
+mod tests {
+    use clap::Parser;
+
+    use super::{AdminCommand, Cli, Command};
+
+    #[test]
+    fn admin_takes_an_action_an_address_and_a_data_dir() {
+        let cli =
+            Cli::try_parse_from(["ibridge", "admin", "suspend", "ada@icloud.com"]).expect("parses");
+        let Command::Admin { data_dir, action } = cli.command else {
+            panic!("not the admin command");
+        };
+        assert_eq!(
+            data_dir,
+            std::path::Path::new("/data"),
+            "the container's volume by default"
+        );
+        assert!(
+            matches!(action, AdminCommand::Suspend { apple_id } if apple_id == "ada@icloud.com")
+        );
+
+        let cli = Cli::try_parse_from([
+            "ibridge",
+            "admin",
+            "delete",
+            "ada@icloud.com",
+            "--data-dir",
+            "/tmp/x",
+        ])
+        .expect("the flag comes after the action");
+        let Command::Admin { data_dir, action } = cli.command else {
+            panic!("not the admin command");
+        };
+        assert_eq!(data_dir, std::path::Path::new("/tmp/x"));
+        assert!(matches!(action, AdminCommand::Delete { .. }));
+        assert!(
+            Cli::try_parse_from(["ibridge", "admin", "suspend"]).is_err(),
+            "an address is required"
+        );
     }
 }

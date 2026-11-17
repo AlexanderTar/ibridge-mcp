@@ -2,6 +2,7 @@
 
 //! `ibridge serve --hosted`: the OAuth server and the MCP endpoint for many accounts.
 
+use std::io::Write as _;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -62,5 +63,31 @@ pub(crate) async fn run(options: HostedOptions) -> anyhow::Result<()> {
         crate::platform::shutdown_signal(),
     )
     .await?;
+    Ok(())
+}
+
+/// Suspends or deletes the account `apple_id` names, in the database under `data_dir`.
+///
+/// # Errors
+///
+/// Returns an error when the address is not an iCloud address, no account has it, or the
+/// database cannot be opened or updated.
+pub(crate) async fn admin(
+    data_dir: &std::path::Path,
+    action: ibridge_hosted::AdminAction,
+    apple_id: &str,
+) -> anyhow::Result<()> {
+    let address = AppleId::try_from(apple_id.trim()).context("not an iCloud address")?;
+    let matched = ibridge_hosted::admin(data_dir, action, &address).await?;
+    anyhow::ensure!(matched > 0, "no account has the address {address}");
+    let text = match action {
+        ibridge_hosted::AdminAction::Suspend => format!(
+            "Suspended {matched} account(s) for {address}. The running server refuses their tokens from the next call and closes their idle sessions within minutes."
+        ),
+        _ => format!(
+            "Deleted {matched} account(s) for {address}, with every sealed copy of their password."
+        ),
+    };
+    writeln!(std::io::stdout().lock(), "{text}")?;
     Ok(())
 }

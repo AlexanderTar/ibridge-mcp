@@ -347,6 +347,15 @@ async fn mint(
             "Sign-ups are full",
             "This service is not taking new accounts right now. Try again later.",
         ),
+        Err(StoreError::Suspended) => {
+            dashboard(
+                &shared,
+                &session,
+                StatusCode::FORBIDDEN,
+                Some("This account is suspended, so it cannot make new keys."),
+            )
+            .await
+        }
         Err(error) => {
             tracing::error!(%error, "could not mint a key");
             message(

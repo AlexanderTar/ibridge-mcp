@@ -142,6 +142,29 @@ impl Store {
         settle(tx, result).await
     }
 
+    /// Suspends every account spelled like `address`. Its tokens and keys stop working
+    /// and it cannot sign in or mint keys, until an operator undoes it in the database.
+    /// Nothing is deleted, so the accounts and their grants stay as they were.
+    ///
+    /// Returns the exact addresses suspended, whose pooled sessions the caller should close.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Internal`] when the database cannot be updated.
+    pub async fn suspend_accounts_of(&self, address: &AppleId) -> Result<Vec<AppleId>, StoreError> {
+        let owners: Vec<String> = sqlx::query_scalar(
+            "UPDATE accounts SET suspended = 1 WHERE lower(apple_id) = lower(?) RETURNING apple_id",
+        )
+        .bind(address.as_str())
+        .fetch_all(self.pool())
+        .await
+        .map_err(internal)?;
+        owners
+            .iter()
+            .map(|owner| AppleId::try_from(owner.as_str()).map_err(internal))
+            .collect()
+    }
+
     /// Deletes every account spelled like `address`, with its grants and every sealed copy.
     ///
     /// Returns the exact addresses deleted, whose pooled sessions the caller should close.

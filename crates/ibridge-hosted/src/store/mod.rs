@@ -40,6 +40,9 @@ pub enum StoreError {
     /// No iCloud service accepted the app-specific password.
     #[error("the password was not accepted")]
     Rejected,
+    /// An operator suspended the account.
+    #[error("the account is suspended")]
+    Suspended,
     /// The account is new and the service is already at its account limit.
     #[error("the service is not taking new accounts")]
     SignupsFull,
@@ -456,7 +459,11 @@ impl Store {
     }
 }
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
+
+/// Version 2 added `accounts.suspended`.
+const UPGRADE_1_TO_2: &str =
+    "ALTER TABLE accounts ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0;";
 
 async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
@@ -465,6 +472,7 @@ async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
         .map_err(internal)?;
     match version {
         0 => apply_schema_script(pool, include_str!("schema.sql"), SCHEMA_VERSION).await?,
+        1 => apply_schema_script(pool, UPGRADE_1_TO_2, SCHEMA_VERSION).await?,
         SCHEMA_VERSION => {}
         _ => {
             return Err(internal(StoreFault(
@@ -561,6 +569,7 @@ struct Hit {
     status: String,
     scope: String,
     apple_id: String,
+    suspended: bool,
 }
 
 struct Outgoing<'a> {
@@ -762,6 +771,9 @@ async fn refuse(tx: &mut WriteTx, hit: &Hit, err: StoreError) -> StoreError {
 }
 
 fn refusal(hit: &Hit, now: i64) -> Option<StoreError> {
+    if hit.suspended {
+        return Some(StoreError::Suspended);
+    }
     if hit.status == STATUS_REVOKED || is_tombstone(&hit.purpose) {
         return Some(StoreError::InvalidGrant);
     }
@@ -785,7 +797,7 @@ async fn load(tx: &mut WriteTx, token: &str) -> Result<Hit, StoreError> {
         "SELECT seals.id AS seal_id, seals.grant_id AS grant_id, seals.purpose AS purpose,
                 seals.nonce AS nonce, seals.ciphertext AS ciphertext,
                 seals.expires_at AS expires_at, grants.status AS status, grants.scope AS scope,
-                accounts.apple_id AS apple_id
+                accounts.apple_id AS apple_id, accounts.suspended AS suspended
          FROM seals
          JOIN grants ON grants.id = seals.grant_id
          JOIN accounts ON accounts.id = grants.account_id
@@ -813,6 +825,7 @@ fn hit_from(row: &SqliteRow) -> Result<Hit, sqlx::Error> {
         status: row.try_get("status")?,
         scope: row.try_get("scope")?,
         apple_id: row.try_get("apple_id")?,
+        suspended: row.try_get::<i64, _>("suspended")? != 0,
     })
 }
 
@@ -883,13 +896,13 @@ async fn upsert_account(
 ) -> Result<i64, StoreError> {
     // `i64::MAX` stands for no cap; a cap that does not fit is no cap either.
     let cap = cap.map_or(i64::MAX, |cap| i64::try_from(cap).unwrap_or(i64::MAX));
-    sqlx::query_scalar(
+    let row = sqlx::query(
         "INSERT INTO accounts (apple_id, created_at)
          SELECT ?1, ?2
          WHERE EXISTS (SELECT 1 FROM accounts WHERE apple_id = ?1)
             OR (SELECT COUNT(*) FROM accounts) < ?3
          ON CONFLICT (apple_id) DO UPDATE SET apple_id = excluded.apple_id
-         RETURNING id",
+         RETURNING id, suspended",
     )
     .bind(apple_id.as_str())
     .bind(now)
@@ -897,7 +910,11 @@ async fn upsert_account(
     .fetch_optional(&mut **tx)
     .await
     .map_err(internal)?
-    .ok_or(StoreError::SignupsFull)
+    .ok_or(StoreError::SignupsFull)?;
+    if row.try_get::<i64, _>("suspended").map_err(internal)? != 0 {
+        return Err(StoreError::Suspended);
+    }
+    row.try_get("id").map_err(internal)
 }
 
 async fn insert_seal(tx: &mut WriteTx, outgoing: &Outgoing<'_>) -> Result<(), StoreError> {
@@ -1222,7 +1239,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            version, 1,
+            version, 2,
             "the schema records user_version so a later package can migrate"
         );
         let temp = TempDb::new();
@@ -1235,7 +1252,38 @@ mod tests {
             .fetch_one(&opened.pool)
             .await
             .unwrap();
-        assert_eq!(again, 1, "opening an existing database keeps user_version");
+        assert_eq!(again, 2, "opening an existing database keeps user_version");
+    }
+
+    #[tokio::test]
+    async fn a_version_1_database_gains_the_suspended_column() {
+        let temp = TempDb::new();
+        let options = SqliteConnectOptions::new()
+            .filename(temp.path())
+            .create_if_missing(true);
+        let old = SqlitePoolOptions::new()
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            "CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, apple_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+             INSERT INTO accounts (apple_id, created_at) VALUES ('ada@icloud.com', 1);
+             PRAGMA user_version = 1;"
+                .to_owned(),
+        ))
+        .execute(&old)
+        .await
+        .unwrap();
+        old.close().await;
+
+        let store = Store::open(&temp.path()).await.unwrap();
+
+        let suspended: i64 = sqlx::query_scalar("SELECT suspended FROM accounts")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(suspended, 0, "an account that existed is not suspended");
+        store.ready().await.expect("the upgraded database is ready");
     }
 
     async fn empty_pool() -> SqlitePool {

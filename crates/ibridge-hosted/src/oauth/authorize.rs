@@ -205,6 +205,8 @@ async fn submit(
         .await
     {
         Ok(issued) => issued,
+        // The page does not say why, so it cannot be used to learn which accounts are suspended.
+        Err(crate::store::StoreError::Suspended) => return again(StatusCode::BAD_REQUEST),
         Err(crate::store::StoreError::SignupsFull) => {
             return message(
                 StatusCode::SERVICE_UNAVAILABLE,

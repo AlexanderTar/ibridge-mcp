@@ -2,6 +2,7 @@
 
 //! Hosted OAuth server and token-sealed credential store.
 
+mod admin;
 mod app;
 mod backup;
 mod config;
@@ -34,6 +35,7 @@ pub use oauth::{
     validated_by,
 };
 
+pub use admin::{AdminAction, AdminError, admin};
 pub use app::app;
 pub use backup::{BackupError, KEEP as BACKUPS_KEPT, spawn_daily as spawn_daily_backups};
 pub use config::{ALLOWED_APPLE_IDS, HostedConfig, HostedOptions, SIGNUP_CAP, SIGNUPS, StartError};

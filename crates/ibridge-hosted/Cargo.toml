@@ -39,6 +39,7 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
 ibridge-mail.workspace = true
 ibridge-testkit.workspace = true
 tempfile.workspace = true

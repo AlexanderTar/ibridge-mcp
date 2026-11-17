@@ -1939,6 +1939,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "futures",
  "getrandom 0.4.3",
  "hkdf",
  "http",

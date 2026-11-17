@@ -38,6 +38,9 @@ pub enum StoreError {
     /// No iCloud service accepted the app-specific password.
     #[error("the password was not accepted")]
     Rejected,
+    /// The account is new and the service is already at its account limit.
+    #[error("the service is not taking new accounts")]
+    SignupsFull,
     /// The database could not be opened or updated.
     #[error("the store failed")]
     Internal {
@@ -186,12 +189,20 @@ impl ValidatedCredentials {
 #[derive(Clone, Debug)]
 pub struct Store {
     pool: SqlitePool,
+    signup_cap: Option<usize>,
 }
 
 impl Store {
     /// The connection pool, for tables other modules own.
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Refuses new accounts once `cap` exist. An account that exists keeps signing in.
+    #[must_use]
+    pub fn with_signup_cap(mut self, cap: usize) -> Self {
+        self.signup_cap = Some(cap);
+        self
     }
 
     /// Opens an in-memory store and applies the schema.
@@ -209,7 +220,10 @@ impl Store {
             .await
             .map_err(internal)?;
         apply_schema(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            signup_cap: None,
+        })
     }
 
     /// Opens a file-backed store so several connections share one database.
@@ -230,7 +244,10 @@ impl Store {
             .await
             .map_err(internal)?;
         apply_schema(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            signup_cap: None,
+        })
     }
 
     /// Whether the database answers and holds this build's schema.
@@ -254,7 +271,8 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Internal`] when the row cannot be written.
+    /// Returns [`StoreError::SignupsFull`] for a new account over the cap, and
+    /// [`StoreError::Internal`] when the row cannot be written.
     pub async fn seal_under_code(
         &self,
         apple_id: &AppleId,
@@ -264,7 +282,7 @@ impl Store {
     ) -> Result<IssuedCode, StoreError> {
         let now = unix(now)?;
         let mut tx = begin(&self.pool).await?;
-        let result = seal_in(&mut tx, apple_id, asp, scope, now).await;
+        let result = seal_in(&mut tx, apple_id, asp, scope, now, self.signup_cap).await;
         settle(tx, result).await
     }
 
@@ -272,7 +290,8 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Internal`] when the row cannot be written.
+    /// Returns [`StoreError::SignupsFull`] for a new account over the cap, and
+    /// [`StoreError::Internal`] when the row cannot be written.
     pub async fn seal_validated_under_code(
         &self,
         validated: &ValidatedCredentials,
@@ -410,7 +429,8 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Internal`] when the row cannot be written.
+    /// Returns [`StoreError::SignupsFull`] for a new account over the cap, and
+    /// [`StoreError::Internal`] when the row cannot be written.
     pub async fn mint_api_key(
         &self,
         validated: &ValidatedCredentials,
@@ -427,6 +447,7 @@ impl Store {
             name,
             scope,
             now,
+            self.signup_cap,
         )
         .await;
         settle(tx, result).await
@@ -582,8 +603,9 @@ async fn seal_in(
     asp: &SecretString,
     scope: Scope,
     now: i64,
+    cap: Option<usize>,
 ) -> Result<IssuedCode, StoreError> {
-    let account = upsert_account(tx, apple_id, now).await?;
+    let account = upsert_account(tx, apple_id, now, cap).await?;
     let grant = random_bytes::<16>()?;
     sqlx::query(
         "INSERT INTO grants (id, account_id, kind, name, scope, status, created_at)
@@ -626,8 +648,9 @@ async fn mint_key_in(
     name: &str,
     scope: Scope,
     now: i64,
+    cap: Option<usize>,
 ) -> Result<ApiKey, StoreError> {
-    let account = upsert_account(tx, apple_id, now).await?;
+    let account = upsert_account(tx, apple_id, now, cap).await?;
     let grant = random_bytes::<16>()?;
     sqlx::query(
         "INSERT INTO grants (id, account_id, kind, name, scope, status, created_at)
@@ -847,17 +870,32 @@ async fn drop_expired(tx: &mut WriteTx, hit: &Hit) -> Result<(), StoreError> {
     }
 }
 
-async fn upsert_account(tx: &mut WriteTx, apple_id: &AppleId, now: i64) -> Result<i64, StoreError> {
+/// The account's row id. A new account is refused once `cap` accounts exist; one that
+/// exists is always found. The count and the insert share one `BEGIN IMMEDIATE`
+/// transaction, so two sign-ups cannot both take the last place.
+async fn upsert_account(
+    tx: &mut WriteTx,
+    apple_id: &AppleId,
+    now: i64,
+    cap: Option<usize>,
+) -> Result<i64, StoreError> {
+    // `i64::MAX` stands for no cap; a cap that does not fit is no cap either.
+    let cap = cap.map_or(i64::MAX, |cap| i64::try_from(cap).unwrap_or(i64::MAX));
     sqlx::query_scalar(
-        "INSERT INTO accounts (apple_id, created_at) VALUES (?, ?)
+        "INSERT INTO accounts (apple_id, created_at)
+         SELECT ?1, ?2
+         WHERE EXISTS (SELECT 1 FROM accounts WHERE apple_id = ?1)
+            OR (SELECT COUNT(*) FROM accounts) < ?3
          ON CONFLICT (apple_id) DO UPDATE SET apple_id = excluded.apple_id
          RETURNING id",
     )
     .bind(apple_id.as_str())
     .bind(now)
-    .fetch_one(&mut **tx)
+    .bind(cap)
+    .fetch_optional(&mut **tx)
     .await
-    .map_err(internal)
+    .map_err(internal)?
+    .ok_or(StoreError::SignupsFull)
 }
 
 async fn insert_seal(tx: &mut WriteTx, outgoing: &Outgoing<'_>) -> Result<(), StoreError> {

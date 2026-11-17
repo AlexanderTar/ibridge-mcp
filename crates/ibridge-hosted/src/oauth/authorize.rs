@@ -217,6 +217,13 @@ async fn submit(
         .await
     {
         Ok(issued) => issued,
+        Err(crate::store::StoreError::SignupsFull) => {
+            return message(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Sign-ups are full",
+                "This service is not taking new accounts right now. Try again later.",
+            );
+        }
         Err(error) => {
             tracing::error!(%error, "could not seal the sign-in");
             return message(

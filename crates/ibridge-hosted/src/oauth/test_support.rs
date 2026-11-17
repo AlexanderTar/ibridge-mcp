@@ -123,7 +123,16 @@ pub(crate) async fn harness(access: Access) -> Harness {
 
 /// A harness whose server believes it lives at `public_url`.
 pub(crate) async fn harness_at(public_url: &str, access: Access) -> Harness {
-    let store = Store::memory().await.expect("store");
+    harness_over(public_url, access, Store::memory().await.expect("store")).await
+}
+
+/// A multi-tenant harness whose store takes at most `cap` accounts.
+pub(crate) async fn harness_capped(cap: usize) -> Harness {
+    let store = Store::memory().await.expect("store").with_signup_cap(cap);
+    harness_over(PUBLIC, Access::MultiTenant, store).await
+}
+
+async fn harness_over(public_url: &str, access: Access, store: Store) -> Harness {
     let calls = Arc::new(AtomicUsize::new(0));
     let inner = validated_by(|credentials: &Credentials| {
         credentials.with_secret(|password| Combined {

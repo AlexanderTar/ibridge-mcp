@@ -8,6 +8,7 @@ use axum::Router;
 use rmcp::model::ServerConfig;
 
 use crate::health;
+use crate::limits::{Guards, around, limit_calls};
 use crate::oauth::{OAuthConfig, SignInCheck, router};
 use crate::provider::{AccountCache, Backend};
 use crate::server::mcp_router;
@@ -15,7 +16,7 @@ use crate::store::{Store, StoreError};
 
 /// Builds the hosted router for `backend`'s accounts.
 ///
-/// `info` is what `initialize` reports. Serve the result with
+/// `info` is what `initialize` reports. `guards` are the call, size and time limits. Serve the result with
 /// `into_make_service_with_connect_info::<SocketAddr>()`, as [`router`] explains.
 /// Call it inside a Tokio runtime: it starts the task that closes idle accounts.
 ///
@@ -29,6 +30,7 @@ pub async fn app<B: Backend>(
     backend: B,
     checker: impl SignInCheck,
     info: ServerConfig,
+    guards: &Guards,
 ) -> Result<Router, StoreError> {
     let cache = Arc::new(AccountCache::new(
         backend,
@@ -37,9 +39,9 @@ pub async fn app<B: Backend>(
     ));
     // The task ends when the cache, held by the handler, is dropped.
     drop(cache.spawn_sweeper());
-    let mcp = mcp_router(cache, info, &config);
+    let mcp = limit_calls(mcp_router(cache, info, &config), guards);
     let oauth = router(config, &store, checker, mcp).await?;
-    Ok(oauth.merge(health::routes(store)))
+    Ok(around(oauth.merge(health::routes(store)), guards))
 }
 
 #[cfg(test)]

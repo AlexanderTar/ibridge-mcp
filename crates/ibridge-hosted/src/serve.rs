@@ -46,7 +46,11 @@ pub async fn serve<B: Backend>(
 ) -> Result<(), ServeError> {
     tokio::fs::create_dir_all(&config.data_dir).await?;
     let store = Store::open(&config.data_dir.join(DATABASE_FILE)).await?;
-    let app = crate::app::app(config.oauth, store, backend, checker, info).await?;
+    let store = match config.signup_cap {
+        Some(cap) => store.with_signup_cap(cap),
+        None => store,
+    };
+    let app = crate::app::app(config.oauth, store, backend, checker, info, &config.guards).await?;
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

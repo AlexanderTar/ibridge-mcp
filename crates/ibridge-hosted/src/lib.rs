@@ -24,7 +24,8 @@ pub use oauth::{
 };
 
 pub use app::app;
-pub use config::{ALLOWED_APPLE_IDS, HostedConfig, HostedOptions, StartError};
+pub use config::{ALLOWED_APPLE_IDS, HostedConfig, HostedOptions, SIGNUP_CAP, SIGNUPS, StartError};
+pub use limits::Guards;
 pub use middleware::CallAuth;
 pub use provider::{Account, AccountCache, AccountServer, Backend, Providers};
 pub use serve::{DATABASE_FILE, ServeError, serve};

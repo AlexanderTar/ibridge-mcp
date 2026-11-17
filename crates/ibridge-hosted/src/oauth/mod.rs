@@ -12,6 +12,8 @@ mod metadata;
 mod token;
 
 #[cfg(test)]
+mod signup_tests;
+#[cfg(test)]
 mod test_support;
 
 use std::collections::HashSet;

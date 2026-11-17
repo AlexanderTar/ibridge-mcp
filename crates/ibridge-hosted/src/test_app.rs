@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, header};
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use ibridge_auth::{AuthError, Credentials, ServiceCheck, ValidationReport, Validator};
 use ibridge_core::{
     AppleId, CoreError, Draft, FlagChange, MailSearch, Mailbox, MailboxPath, MessageId,
@@ -21,12 +21,15 @@ use secrecy::{ExposeSecret as _, SecretString};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use crate::limits::Guards;
 use crate::oauth::{Access, OAuthConfig, validated_by};
 use crate::provider::{Backend, Providers};
 use crate::store::{Scope, Store};
 
 /// The subject of the one message the fake mailbox holds. No log may contain it.
 pub(crate) const SECRET_SUBJECT: &str = "Quarterly layoffs plan";
+/// A search for this text never finishes, so a test can watch the timeout fire.
+pub(crate) const HANG: &str = "hang";
 pub(crate) const HOST: &str = "ibridge.example";
 pub(crate) const PUBLIC_URL: &str = "https://ibridge.example";
 
@@ -44,7 +47,10 @@ impl MailApi for FakeMail {
         Ok(Vec::new())
     }
 
-    async fn search(&self, _query: &MailSearch) -> Result<MailHitPage, CoreError> {
+    async fn search(&self, query: &MailSearch) -> Result<MailHitPage, CoreError> {
+        if query.text.as_deref() == Some(HANG) {
+            std::future::pending::<()>().await;
+        }
         let id = MessageId {
             mailbox: MailboxPath::try_from("INBOX").expect("path"),
             validity: UidValidity::try_from(1).expect("validity"),
@@ -150,14 +156,20 @@ pub(crate) fn info() -> rmcp::model::ServerConfig {
     rmcp::ServerHandler::get_info(&server)
 }
 
-/// The hosted router over `store`, open to anyone.
+/// The hosted router over `store`, open to anyone, with the default limits.
 pub(crate) async fn app_over(store: &Store) -> Router {
+    app_with(store, &Guards::default()).await
+}
+
+/// The hosted router over `store`, open to anyone.
+pub(crate) async fn app_with(store: &Store, guards: &Guards) -> Router {
     crate::app::app(
         config(Access::MultiTenant),
         store.clone(),
         FakeBackend,
         validated_by(|_: &Credentials| AcceptAll),
         info(),
+        guards,
     )
     .await
     .expect("app")
@@ -178,32 +190,64 @@ pub(crate) async fn token(store: &Store, apple_id: &str, asp: &str, scope: Scope
     issued.access.expose_secret().to_owned()
 }
 
-/// A `tools/call` request to `/mcp`.
-pub(crate) fn tool_request(bearer: &str, name: &str, arguments: &Value) -> Request<Body> {
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": name,
-            "arguments": arguments,
-            "_meta": {
-                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1.0"},
-                "io.modelcontextprotocol/clientCapabilities": {},
-            },
-        },
+/// A JSON-RPC request to `/mcp` in the stateless 2026-07-28 form.
+pub(crate) fn rpc_request(
+    bearer: &str,
+    method: &str,
+    name: Option<&str>,
+    params: Value,
+) -> Request<Body> {
+    let mut params = params;
+    params["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1.0"},
+        "io.modelcontextprotocol/clientCapabilities": {},
     });
-    Request::post("/mcp")
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+    let mut request = Request::post("/mcp")
         .header(header::HOST, HOST)
         .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "application/json, text/event-stream")
         .header("mcp-protocol-version", "2026-07-28")
-        .header("mcp-method", "tools/call")
-        .header("mcp-name", name)
-        .body(Body::from(body.to_string()))
-        .expect("request")
+        .header("mcp-method", method);
+    if let Some(name) = name {
+        request = request.header("mcp-name", name);
+    }
+    request.body(Body::from(body.to_string())).expect("request")
+}
+
+/// A `tools/call` request to `/mcp`.
+pub(crate) fn tool_request(bearer: &str, name: &str, arguments: &Value) -> Request<Body> {
+    rpc_request(
+        bearer,
+        "tools/call",
+        Some(name),
+        json!({"name": name, "arguments": arguments}),
+    )
+}
+
+/// One response, read to the end.
+#[derive(Debug)]
+pub(crate) struct Reply {
+    pub(crate) status: StatusCode,
+    pub(crate) headers: HeaderMap,
+    pub(crate) text: String,
+}
+
+/// Sends `request` through `app`.
+pub(crate) async fn send(app: &Router, request: Request<Body>) -> Reply {
+    let response = app.clone().oneshot(request).await.expect("response");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("body");
+    Reply {
+        status,
+        headers,
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+    }
 }
 
 /// Calls a tool and returns the HTTP status and body text.
@@ -212,15 +256,7 @@ pub(crate) async fn call(
     bearer: &str,
     name: &str,
     arguments: &Value,
-) -> (axum::http::StatusCode, String) {
-    let response = app
-        .clone()
-        .oneshot(tool_request(bearer, name, arguments))
-        .await
-        .expect("response");
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .expect("body");
-    (status, String::from_utf8_lossy(&bytes).into_owned())
+) -> (StatusCode, String) {
+    let reply = send(app, tool_request(bearer, name, arguments)).await;
+    (reply.status, reply.text)
 }

@@ -6,6 +6,7 @@ use std::future::{Future, ready};
 
 use ibridge_auth::Credentials;
 use ibridge_core::AppleId;
+use ibridge_testkit::fixtures::ReplayImap;
 use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
 use tokio::io::DuplexStream;
 
@@ -22,6 +23,20 @@ pub(super) fn pool(script: FakeScript) -> (FakeImap, ImapPool<FakeImap>) {
     let fake = FakeImap::spawn(script);
     let pooled = ImapPool::new(credentials(), fake.clone());
     (fake, pooled)
+}
+
+/// A pool that talks to the recorded iCloud responses in `tests/fixtures/imap`.
+pub(super) fn replay_pool() -> ImapPool<ReplayImap> {
+    ImapPool::new(credentials(), ReplayImap::load())
+}
+
+impl Connect for ReplayImap {
+    type Stream = DuplexStream;
+
+    fn connect(&self) -> impl Future<Output = std::io::Result<Self::Stream>> + Send {
+        let stream = ReplayImap::connect(self);
+        ready(Ok(stream))
+    }
 }
 
 impl Connect for FakeImap {

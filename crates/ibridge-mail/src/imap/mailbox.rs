@@ -145,7 +145,7 @@ mod tests {
     use ibridge_core::MailboxRole;
     use ibridge_testkit::imap_fake::FakeScript;
 
-    use super::super::support::pool;
+    use super::super::support::{pool, replay_pool};
 
     #[tokio::test]
     async fn list_mailboxes_maps_special_use() {
@@ -214,6 +214,39 @@ mod tests {
         assert!(
             boxes.iter().any(|mailbox| mailbox.path.as_str() == "INBOX"),
             "the other mailboxes are still returned"
+        );
+    }
+
+    #[tokio::test]
+    async fn fixture_icloud_list_special_use() {
+        let listed = replay_pool().listed().await.expect("recorded LIST");
+        let found = |name: &str| {
+            listed
+                .iter()
+                .find(|item| item.path.as_str() == name)
+                .map(|item| (item.role, item.special_use))
+        };
+        assert_eq!(found("INBOX"), Some((MailboxRole::Inbox, false)));
+        assert_eq!(
+            found("Sent Messages"),
+            Some((MailboxRole::Sent, true)),
+            "real iCloud marks Sent with the SPECIAL-USE attribute"
+        );
+        assert_eq!(
+            found("Deleted Messages"),
+            Some((MailboxRole::Trash, true)),
+            "real iCloud marks Trash with the SPECIAL-USE attribute"
+        );
+        let others = listed
+            .iter()
+            .filter(|item| item.path.as_str().starts_with("Folder-"))
+            .collect::<Vec<_>>();
+        assert!(!others.is_empty(), "the recording holds user folders");
+        assert!(
+            others
+                .iter()
+                .all(|item| item.role == MailboxRole::Other && !item.special_use),
+            "user folders carry no role"
         );
     }
 }

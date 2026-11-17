@@ -370,7 +370,7 @@ mod tests {
     use ibridge_core::{CoreError, MailSearch, MailboxPath, MessageId, Uid, UidValidity};
     use ibridge_testkit::imap_fake::FakeScript;
 
-    use super::super::support::{PASSWORD, pool};
+    use super::super::support::{PASSWORD, pool, replay_pool};
 
     #[tokio::test]
     async fn pool_requeries_capability_after_login() {
@@ -387,6 +387,30 @@ mod tests {
         assert!(
             matches!((login_at, capability_at), (Some(login), Some(capability)) if login < capability),
             "CAPABILITY is a separate command after LOGIN, commands {commands:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fixture_icloud_capability_requery() {
+        let greeting = ibridge_testkit::fixtures::read("imap", "capability-greeting.txt");
+        let after_login = ibridge_testkit::fixtures::read("imap", "capability-after-login.txt");
+        assert!(
+            !greeting.contains("UIDPLUS") && after_login.contains("UIDPLUS"),
+            "the recording shows iCloud advertising more after LOGIN than in its greeting"
+        );
+        let caps = replay_pool().capabilities().await.expect("capabilities");
+        let has = |name: &str| caps.iter().any(|cap| cap.eq_ignore_ascii_case(name));
+        assert!(
+            has("UIDPLUS") && has("IDLE") && has("NAMESPACE"),
+            "the pool keeps the post-login set, got {caps:?}"
+        );
+        assert!(
+            !has("AUTH=PLAIN"),
+            "greeting-only capabilities are replaced, got {caps:?}"
+        );
+        assert!(
+            !has("MOVE") && !has("SPECIAL-USE"),
+            "iCloud advertises neither MOVE nor SPECIAL-USE, got {caps:?}"
         );
     }
 

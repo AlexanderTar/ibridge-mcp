@@ -194,3 +194,24 @@ fn all_addresses(list: Option<AddressList<'_>>) -> Vec<String> {
             .collect()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::read_message;
+
+    #[test]
+    fn fixture_icloud_marker_mail_reads() {
+        for (file, word) in [("mail-1.eml", "one"), ("mail-2.eml", "two")] {
+            let raw = ibridge_testkit::fixtures::read("imap", file);
+            let read = read_message(raw.as_bytes(), 0).expect("recorded mail parses");
+            assert_eq!(read.from, "user@example.com");
+            assert!(
+                read.subject.starts_with("[ibridge-fixture] ")
+                    && read.subject.ends_with(&format!("seed {word}")),
+                "got {}",
+                read.subject
+            );
+            assert_eq!(read.body.trim(), format!("marker body {word}"));
+        }
+    }
+}

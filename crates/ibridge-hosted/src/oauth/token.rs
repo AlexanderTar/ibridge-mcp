@@ -206,11 +206,18 @@ mod tests {
     use rmcp::transport::auth::{AuthorizationRequest, OAuthState};
     use secrecy::ExposeSecret;
 
-    use crate::oauth::Access;
+    use ibridge_testkit::http::send;
+
     use crate::oauth::test_support::{
-        ADA, ASP_ALL, CLIENT_ID, Harness, LOOPBACK_REDIRECT, PUBLIC, VERIFIER, harness, harness_at,
+        ADA, ASP_ALL, CLIENT_ID, Harness, LOOPBACK_REDIRECT, PUBLIC, VERIFIER, harness,
+        harness_configured,
     };
+    use crate::oauth::{Access, Evict, OAuthConfig};
+    use crate::provider::AccountCache;
+    use crate::server::mcp_router;
     use crate::store::Scope;
+    use crate::store::Store;
+    use crate::test_app::{FakeBackend, info};
 
     fn field(reply: &crate::oauth::test_support::Reply, name: &str) -> String {
         reply.json()[name].as_str().unwrap_or_default().to_owned()
@@ -584,14 +591,25 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn full_flow_with_rmcp_oauth_client() {
+    /// The whole hosted router on a real socket, with the real `/mcp` over a fake mail
+    /// backend behind the same bearer check production uses. Returns it and its origin.
+    async fn serve_hosted() -> (Harness, String) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let port = listener.local_addr().expect("addr").port();
         let base = format!("http://127.0.0.1:{port}");
-        let h = harness_at(&base, Access::MultiTenant).await;
+        // The real `/mcp` over a fake mail backend, behind the same bearer check production uses.
+        let config = OAuthConfig::new(&base, Access::MultiTenant).expect("public url");
+        let store = Store::memory().await.expect("store");
+        let cache = Arc::new(AccountCache::new(
+            FakeBackend,
+            store.clone(),
+            config.url("/account"),
+        ));
+        let mcp = mcp_router(cache, info(), &config);
+        let evict: Evict = Arc::new(|_| {});
+        let h = harness_configured(config, store, evict, mcp).await;
         let served = h.app.clone();
         tokio::spawn(async move {
             axum::serve(
@@ -600,6 +618,113 @@ mod tests {
             )
             .await
         });
+        (h, base)
+    }
+
+    /// Claude.ai's path: a legacy session (initialize, `Mcp-Session-Id`, protocol 2025-11-25)
+    /// opened and used with `access`, a token the OAuth flow issued.
+    async fn legacy_session_call(base: &str, access: &str) {
+        let mcp_url = format!("{base}/mcp");
+        let bearer = format!("Bearer {access}");
+        let session_headers = |session: &str| {
+            vec![
+                ("authorization", bearer.clone()),
+                ("content-type", "application/json".to_owned()),
+                ("accept", "application/json, text/event-stream".to_owned()),
+                ("mcp-protocol-version", "2025-11-25".to_owned()),
+                ("mcp-session-id", session.to_owned()),
+            ]
+        };
+        let rpc = |headers: &[(String, String)], body: serde_json::Value| {
+            let headers: Vec<(String, String)> = headers.to_vec();
+            let url = mcp_url.clone();
+            async move {
+                let pairs: Vec<(&str, &str)> = headers
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str()))
+                    .collect();
+                send("POST", &url, &pairs, &body.to_string()).await
+            }
+        };
+        let owned = |headers: Vec<(&str, String)>| -> Vec<(String, String)> {
+            headers
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect()
+        };
+        let initialize = rpc(
+            &owned(vec![
+                ("authorization", bearer.clone()),
+                ("content-type", "application/json".to_owned()),
+                ("accept", "application/json, text/event-stream".to_owned()),
+            ]),
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "legacy test client", "version": "1.0"},
+                },
+            }),
+        )
+        .await;
+        assert_eq!(initialize.status, 200, "{}", initialize.body);
+        let session = initialize
+            .header("mcp-session-id")
+            .expect("a legacy session id")
+            .to_owned();
+        // A session's first answer arrives as an event stream; the JSON is its `data:` line.
+        let reply: serde_json::Value = initialize
+            .body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .find_map(|data| serde_json::from_str(data.trim()).ok())
+            .unwrap_or_else(|| panic!("a JSON initialize answer: {}", initialize.body));
+        assert_eq!(
+            reply["result"]["protocolVersion"], "2025-11-25",
+            "the session speaks the protocol the client asked for: {reply}"
+        );
+        let headers = owned(session_headers(&session));
+        let ready = rpc(
+            &headers,
+            serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        )
+        .await;
+        assert_eq!(ready.status, 202, "{}", ready.body);
+        let status = rpc(
+            &headers,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "account_status", "arguments": {}},
+            }),
+        )
+        .await;
+        assert_eq!(status.status, 200, "{}", status.body);
+        assert!(
+            status.body.contains("signed in as ada@icloud.com"),
+            "the call ran as the account the token opens: {}",
+            status.body
+        );
+        // The session id is not a credential: a call that leaves the token out is refused.
+        let tokenless: Vec<(String, String)> = headers
+            .iter()
+            .filter(|(name, _)| name != "authorization")
+            .cloned()
+            .collect();
+        let refused = rpc(
+            &tokenless,
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": {"name": "account_status", "arguments": {}},
+            }),
+        )
+        .await;
+        assert_eq!(refused.status, 401, "{}", refused.body);
+    }
+
+    #[tokio::test]
+    async fn full_flow_with_rmcp_oauth_client() {
+        let (h, base) = serve_hosted().await;
 
         // Discovery starts from the 401 challenge, as an MCP client's first request would.
         let probe = h
@@ -693,5 +818,7 @@ mod tests {
             1,
             "one live check for one sign-in"
         );
+
+        legacy_session_call(&base, &access).await;
     }
 }

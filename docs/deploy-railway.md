@@ -8,7 +8,7 @@ The Railway commands below were checked against `railway` 5.62.1's `--help`. The
 
 ## 1. Check the accounts
 
-**Railway.** Use the personal token file for every Railway command in this runbook, and set it per command so the CLI's own login is never used:
+**Railway.** Use the personal token file for every Railway command in this runbook. Export it for this shell so the CLI's own login is never used, and unset it when you finish:
 
 ```sh
 export RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)"
@@ -43,7 +43,7 @@ Write the sha in the deploy notes. `/privacy` tells users each deployment names 
 ```sh
 railway init --name ibridge
 railway add --service ibridge
-railway volume add --service ibridge --mount-path /data
+railway volume --service ibridge add --mount-path /data
 ```
 
 Run these once. `railway status` must show the project you just made and the personal workspace before you continue.
@@ -60,7 +60,7 @@ railway variable set --service ibridge --skip-deploys \
 printf '%s' '<contact address>' | railway variable set IBRIDGE_CONTACT --stdin --service ibridge --skip-deploys
 ```
 
-`RAILWAY_RUN_UID=0` is needed because Railway mounts volumes as root, while the image runs as uid 65532. `IBRIDGE_CONTACT` is the address `/privacy` and `/terms` show; the legal review supplies it. List names only: `railway variable list --service ibridge` prints values, so do not run it with `--kv` or `--json` on a shared screen.
+`RAILWAY_RUN_UID=0` is needed because Railway mounts volumes as root, while the image runs as uid 65532. `IBRIDGE_CONTACT` is the address `/privacy` and `/terms` show; the legal review supplies it. To check what is set without showing values, use the dashboard's Variables tab. `railway variable list` prints values, and `--kv` and `--json` print them raw, so none of those forms is safe on a shared screen.
 
 ## 5. Deploy and check
 
@@ -76,7 +76,7 @@ railway up --service ibridge --detach
 railway logs --service ibridge
 ```
 
-The logs must show a line containing `serving MCP over HTTP, hosted`. If the server refuses to start, the message names the setting (for example, closed sign-ups need `IBRIDGE_ALLOWED_APPLE_IDS`). If the container fails with the entrypoint repeated, for example `ibridge ibridge serve`, Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from the start command. Do not go on until the deployment is healthy.
+The logs must show a line containing `serving MCP over HTTP, hosted`. If the server refuses to start, the message names the setting (for example, closed sign-ups need `IBRIDGE_ALLOWED_APPLE_IDS`). If the container fails with the entrypoint repeated, for example `ibridge ibridge serve`, Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from the start command. Do not go on until the deployment is healthy. After the first deploy, record here whether Railway's start command replaced or was added to the image's entrypoint, and whether the apex record needed an ALIAS.
 
 An allowlist limits sign-in even with `--multi-tenant`, so the closed instance accepts only your address.
 

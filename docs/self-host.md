@@ -4,7 +4,7 @@ The hosted server lets Claude.ai and other remote MCP clients reach your iCloud 
 
 ## The image
 
-The release workflow builds `ghcr.io/alexandertar/ibridge` when a `v*` tag is pushed. The image is `gcr.io/distroless/cc-debian12:debug-nonroot` plus one binary, so it has a busybox shell for `docker exec` and `railway ssh`. It runs as the `nonroot` user (uid 65532) and keeps its database in `/data`. Build it yourself from a checkout:
+The release workflow builds `ghcr.io/alexandertar/ibridge` when a `v*` tag is pushed. The image is `gcr.io/distroless/cc-debian12:debug-nonroot` plus one binary, so it has a busybox shell for `docker exec` and `railway ssh`. It runs as the `nonroot` user (uid 65532; the Railway setup below overrides this and runs as root) and keeps its database in `/data`. Build it yourself from a checkout:
 
 ```sh
 docker build -t ibridge:test .

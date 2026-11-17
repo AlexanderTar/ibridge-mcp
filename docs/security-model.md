@@ -29,6 +29,7 @@ Sealing protects data at rest. It does not stop the running server from seeing t
 
 - **The server sees the password at two moments**: when you type it on the sign-in page, and while a request runs. Anyone who controls the running process at those moments, such as an operator or an attacker who changes the code it runs, can capture it. The code is open source and a deployment names the exact commit it runs, which makes a change visible but does not prevent one.
 - **Memory.** Working copies of the password are wiped after use, but the mail client library (lettre) keeps the SMTP password in a plain `String` until it sends `AUTH`, and that copy is not wiped. It lives until the send finishes and its memory is freed. A memory dump taken during a call could contain it.
+- **Runs as root on Railway.** The image runs as the unprivileged `nonroot` user, but Railway mounts volumes as root, so the public instance sets `RAILWAY_RUN_UID=0` and the server runs as root there. A flaw in the server would have root inside its container.
 - **Idle mail sessions.** Logged-in mail connections are kept for up to five minutes after a request to save logging in again. The password is not kept with them.
 - **Mail, event and contact text** passes through the server in clear text while a request runs. Sealing covers only the password.
 - **Tokens are bearer secrets.** Whoever holds a valid token can use the account until it expires or is revoked: access tokens last one hour, refresh tokens 90 days of non-use, API keys until revoked. Sign-in codes last 60 seconds.

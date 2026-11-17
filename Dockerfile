@@ -9,7 +9,7 @@
 ARG RUST_VERSION=1.100.0
 
 FROM rust:${RUST_VERSION}-bookworm AS chef
-RUN cargo install --locked cargo-chef
+RUN cargo install --locked cargo-chef@0.1.78
 WORKDIR /src
 
 FROM chef AS planner

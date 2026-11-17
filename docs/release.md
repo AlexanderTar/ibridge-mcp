@@ -38,7 +38,7 @@ Create the `AlexanderTar/homebrew-tap` repository on GitHub before the first tag
 
 ## Editing the workflow by hand
 
-dist generates `release.yml`, and three edits are made by hand: the tag filter is narrowed to `v*`, and the `notarize-macos` and `build-mcpb` jobs are added. `allow-dirty = ["ci"]` in `dist-workspace.toml` stops `dist plan` from rejecting those edits. After `dist` is upgraded, regenerate the file in a scratch copy (comment out `allow-dirty`, run `dist generate --mode ci`), then merge the difference into `release.yml` by hand. `.github/build-setup.yml` holds the step that turns on the hardened runtime. `.github/actionlint.yaml` tells actionlint to skip shellcheck style notes in the generated file.
+dist generates `release.yml`, and four edits are made by hand: the tag filter is narrowed to `v*`, and the `notarize-macos`, `build-mcpb` and `docker-image` jobs are added. `docker-image` builds the `Dockerfile` and pushes `ghcr.io/<owner>/ibridge` once `host` succeeds on a `v*` tag; it needs the `packages: write` permission and uses the built-in `GITHUB_TOKEN`, so it needs no extra secret. `allow-dirty = ["ci"]` in `dist-workspace.toml` stops `dist plan` from rejecting those edits. After `dist` is upgraded, regenerate the file in a scratch copy (comment out `allow-dirty`, run `dist generate --mode ci`), then merge the difference into `release.yml` by hand. `.github/build-setup.yml` holds the step that turns on the hardened runtime. `.github/actionlint.yaml` tells actionlint to skip shellcheck style notes in the generated file.
 
 ## Claude Desktop extension
 

@@ -819,6 +819,15 @@ async fn refresh_in(
     let plain = unseal(&hit, refresh_token)?;
     if hit.purpose == PURPOSE_REFRESH {
         mark_grace(tx, hit.seal_id, later(now, GRACE_TTL)?).await?;
+        // The new pair replaces the old access seal, so the old access token stops opening.
+        // A grace refresh keeps the access token the first rotation issued: a concurrent
+        // refresh must not strand the client that got it.
+        sqlx::query("DELETE FROM seals WHERE grant_id = ? AND purpose = ?")
+            .bind(hit.grant_id.as_slice())
+            .bind(PURPOSE_ACCESS)
+            .execute(&mut **tx)
+            .await
+            .map_err(internal)?;
     }
     let issued = issue_pair(tx, &hit, &grant, plain.expose_secret(), now).await?;
     sweep_expired(tx, now).await?;
@@ -936,11 +945,12 @@ async fn sweep_expired(tx: &mut WriteTx, now: i64) -> Result<(), StoreError> {
     .execute(&mut **tx)
     .await
     .map_err(internal)?;
-    // A spent refresh older than its original lifetime cannot revoke anymore.
+    // A spent refresh or code older than the refresh lifetime cannot revoke anymore.
     // Dropping it bounds the lookup index; presenting it returns InvalidToken.
     if let Some(cutoff) = now.checked_sub(REFRESH_TTL) {
-        sqlx::query("DELETE FROM seals WHERE purpose = ? AND created_at <= ?")
+        sqlx::query("DELETE FROM seals WHERE purpose IN (?, ?) AND created_at <= ?")
             .bind(PURPOSE_SPENT)
+            .bind(PURPOSE_CODE_SPENT)
             .bind(cutoff)
             .execute(&mut **tx)
             .await
@@ -2172,12 +2182,12 @@ mod tests {
         let pending = seal_code(&store, at(10)).await;
         let key = mint_key(&store, "ada@icloud.com", ASP, Scope::ReadWrite).await;
         let opened = store
-            .open_for_call(tokens.access.expose_secret(), at(11))
+            .open_for_call(rotated.access.expose_secret(), at(11))
             .await
             .unwrap();
         assert_eq!(opened.secret.expose_secret(), ASP);
+        // The access token the refresh replaced has no seal left, so it is not a sample.
         let samples = [
-            tokens.access.expose_secret().to_owned(),
             grace,
             rotated.access.expose_secret().to_owned(),
             rotated.refresh.expose_secret().to_owned(),
@@ -2313,8 +2323,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            before, 4,
-            "the untouched grant still holds its access, refresh and grace ciphertext"
+            before, 3,
+            "the untouched grant still holds its new access, new refresh and grace ciphertext"
         );
         let grant_b = seal_code(&store, at(when)).await;
         let after: i64 = sqlx::query_scalar(
@@ -2332,6 +2342,84 @@ mod tests {
             .exchange_code(grant_b.code.expose_secret(), at(when))
             .await
             .expect("the write that sweeps expired rows still leaves its own code");
+    }
+
+    #[tokio::test]
+    async fn sweep_removes_old_code_spent_tombstones() {
+        let store = Store::memory().await.unwrap();
+        let code = seal_code(&store, at(0)).await;
+        store
+            .exchange_code(code.code.expose_secret(), at(0))
+            .await
+            .unwrap();
+        let tombstones = || async {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM seals WHERE purpose = 'code_spent'")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap()
+        };
+        assert_eq!(
+            tombstones().await,
+            1,
+            "an exchanged code leaves a tombstone"
+        );
+        let refresh_ttl = 90 * 24 * 60 * 60;
+        seal_code(&store, at(refresh_ttl - 1)).await;
+        assert_eq!(
+            tombstones().await,
+            1,
+            "a tombstone younger than the refresh lifetime stays, so a replay still revokes"
+        );
+        let other = seal_code(&store, at(refresh_ttl)).await;
+        assert_eq!(
+            tombstones().await,
+            0,
+            "a write that issues a seal deletes a code tombstone older than the refresh lifetime"
+        );
+        let replay = store
+            .exchange_code(code.code.expose_secret(), at(refresh_ttl))
+            .await;
+        assert!(
+            matches!(replay, Err(StoreError::InvalidToken)),
+            "a swept code is unknown, got {replay:?}"
+        );
+        store
+            .exchange_code(other.code.expose_secret(), at(refresh_ttl))
+            .await
+            .expect("sweeping must not consume the new code");
+    }
+
+    #[tokio::test]
+    async fn refresh_removes_previous_access_seal() {
+        let store = Store::memory().await.unwrap();
+        let first = exchange(&store, at(0)).await;
+        store
+            .open_for_call(first.access.expose_secret(), at(1))
+            .await
+            .expect("the access token opens before a refresh");
+        let rotated = store
+            .refresh(first.refresh.expose_secret(), at(10))
+            .await
+            .unwrap();
+        let old = store
+            .open_for_call(first.access.expose_secret(), at(11))
+            .await;
+        assert!(
+            matches!(old, Err(StoreError::InvalidToken)),
+            "the previous access token no longer opens the password, got {old:?}"
+        );
+        let sealed: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM seals WHERE grant_id = ? AND purpose = 'access'",
+        )
+        .bind(rotated.grant_id.0.as_slice())
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(sealed, 1, "only the new access seal is left");
+        store
+            .open_for_call(rotated.access.expose_secret(), at(11))
+            .await
+            .expect("the new access token opens");
     }
 
     #[tokio::test]

@@ -18,6 +18,7 @@ When you sign in, the server checks the password with iCloud, then seals one cop
 2. Two independent keys come out of it with HKDF-SHA-256 (`ibridge-seal-v1` for encryption, `ibridge-lookup-v1` for the lookup hash). The lookup hash is not the encryption key.
 3. The password is encrypted with AES-256-GCM under a random 96-bit nonce. The associated data is the iCloud address and the grant it belongs to, so a ciphertext cannot be moved to another account or grant.
 4. Each connected app or key has its own sealed copy. Revoking one removes only its copy.
+5. A refresh re-seals the password under the new access and refresh tokens and deletes the old access copy, so the previous access token stops working at once. The refresh token it used keeps a sealed copy for two minutes, and a repeat refresh inside that window leaves the access token the first one issued in place. That is deliberate: two concurrent refreshes from one client must not invalidate each other's access token. That token expires an hour after it was issued. Spent sign-in codes and spent refresh tokens leave an empty marker for 90 days, so reusing one revokes the grant, and then the marker is deleted.
 
 On each `/mcp` request the server derives the key from the bearer token the request carries, opens that copy, logs in to iCloud, and wipes its working copy of the password.
 

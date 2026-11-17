@@ -54,13 +54,68 @@ pub(crate) trait Transport: Send + Sync {
 /// `Debug` prints the Apple ID and nothing else. The password stays inside
 /// [`Credentials`].
 pub struct DavClient {
-    credentials: Arc<Credentials>,
+    credentials: Login,
     wire: Wire,
     cache: discovery::ShardCache,
     caldav_base: Uri,
     caldav_path: String,
     carddav_base: Uri,
     carddav_path: String,
+}
+
+/// Where a request gets its password.
+pub(crate) trait CredentialSource: Send + Sync {
+    /// Passes the credentials this request signs in with to `read`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::Protocol`] when the request has no credentials to use.
+    fn with_credentials<T>(&self, read: impl FnOnce(&Credentials) -> T) -> Result<T, DavError>;
+}
+
+impl CredentialSource for Credentials {
+    fn with_credentials<T>(&self, read: impl FnOnce(&Credentials) -> T) -> Result<T, DavError> {
+        Ok(read(self))
+    }
+}
+
+impl<S: CredentialSource + ?Sized> CredentialSource for Arc<S> {
+    fn with_credentials<T>(&self, read: impl FnOnce(&Credentials) -> T) -> Result<T, DavError> {
+        (**self).with_credentials(read)
+    }
+}
+
+/// The client's credential source: its own, or the one the calling task carries.
+pub(crate) enum Login {
+    /// The client owns the credentials.
+    Owned(Arc<Credentials>),
+    /// The client owns none. Each request reads the call's, for this account only.
+    PerCall(ibridge_core::AppleId),
+}
+
+impl Login {
+    fn apple_id(&self) -> &ibridge_core::AppleId {
+        match self {
+            Self::Owned(credentials) => &credentials.apple_id,
+            Self::PerCall(apple_id) => apple_id,
+        }
+    }
+}
+
+impl CredentialSource for Login {
+    fn with_credentials<T>(&self, read: impl FnOnce(&Credentials) -> T) -> Result<T, DavError> {
+        match self {
+            Self::Owned(credentials) => Ok(read(credentials)),
+            Self::PerCall(apple_id) => {
+                // A call without credentials, or with another account's, is a bug in the caller.
+                ibridge_auth::call_credentials(|credentials| {
+                    (credentials.apple_id == *apple_id).then(|| read(credentials))
+                })
+                .flatten()
+                .ok_or(DavError::Protocol)
+            }
+        }
+    }
 }
 
 enum Wire {
@@ -73,7 +128,7 @@ impl std::fmt::Debug for DavClient {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DavClient")
-            .field("apple_id", &self.credentials.apple_id)
+            .field("apple_id", self.credentials.apple_id())
             .finish_non_exhaustive()
     }
 }
@@ -88,11 +143,34 @@ impl DavClient {
         Self::from_shared(Arc::new(credentials))
     }
 
+    /// Builds a client for a server that must not keep the password between calls.
+    ///
+    /// Every request signs in with the credentials of the call that makes it
+    /// (see `ibridge_auth::with_call_credentials`). A call without credentials,
+    /// or with another account's, fails before any request leaves.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::Network`] when the TLS roots cannot be loaded.
+    pub fn per_call(apple_id: ibridge_core::AppleId) -> Result<Self, DavError> {
+        let (caldav_base, caldav_path) = discovery::caldav_root();
+        let (carddav_base, carddav_path) = discovery::carddav_root();
+        Ok(Self {
+            credentials: Login::PerCall(apple_id),
+            wire: Wire::Http(Box::new(http_client()?)),
+            cache: discovery::ShardCache::new(),
+            caldav_base,
+            caldav_path: caldav_path.to_owned(),
+            carddav_base,
+            carddav_path: carddav_path.to_owned(),
+        })
+    }
+
     pub(crate) fn from_shared(credentials: Arc<Credentials>) -> Result<Self, DavError> {
         let (caldav_base, caldav_path) = discovery::caldav_root();
         let (carddav_base, carddav_path) = discovery::carddav_root();
         Ok(Self {
-            credentials,
+            credentials: Login::Owned(credentials),
             wire: Wire::Http(Box::new(http_client()?)),
             cache: discovery::ShardCache::new(),
             caldav_base,
@@ -112,7 +190,30 @@ impl DavClient {
     pub fn for_test_server(credentials: Credentials, base_url: &str) -> Result<Self, DavError> {
         let origin = loopback_origin(base_url)?;
         Ok(Self {
-            credentials: Arc::new(credentials),
+            credentials: Login::Owned(Arc::new(credentials)),
+            wire: Wire::Http(Box::new(http_client()?)),
+            cache: discovery::ShardCache::new(),
+            caldav_base: origin.clone(),
+            caldav_path: "/.well-known/caldav".to_owned(),
+            carddav_base: origin,
+            carddav_path: "/.well-known/carddav".to_owned(),
+        })
+    }
+
+    /// A per-call client for a loopback server. See [`Self::per_call`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::HostNotAllowed`] when `base_url` is not loopback, and
+    /// [`DavError::Network`] when the TLS roots cannot be loaded.
+    #[cfg(any(test, feature = "test-hosts"))]
+    pub fn per_call_for_test_server(
+        apple_id: ibridge_core::AppleId,
+        base_url: &str,
+    ) -> Result<Self, DavError> {
+        let origin = loopback_origin(base_url)?;
+        Ok(Self {
+            credentials: Login::PerCall(apple_id),
             wire: Wire::Http(Box::new(http_client()?)),
             cache: discovery::ShardCache::new(),
             caldav_base: origin.clone(),
@@ -131,7 +232,7 @@ impl DavClient {
         let (caldav_base, caldav_path) = discovery::caldav_root();
         let (carddav_base, carddav_path) = discovery::carddav_root();
         Self {
-            credentials: Arc::new(credentials),
+            credentials: Login::Owned(Arc::new(credentials)),
             wire: Wire::Script(script),
             cache: discovery::ShardCache::new(),
             caldav_base,
@@ -141,12 +242,24 @@ impl DavClient {
         }
     }
 
+    /// Scripted transport for a per-call client.
+    #[cfg(test)]
+    pub(crate) fn from_script_per_call(
+        script: crate::test_support::Script,
+        apple_id: ibridge_core::AppleId,
+    ) -> Self {
+        let mut client = Self::from_script(script, crate::test_support::credentials());
+        client.credentials = Login::PerCall(apple_id);
+        client
+    }
+
     /// The account's calendar home.
     ///
     /// # Errors
     ///
     /// Returns [`DavError`] when the principal or the calendar home cannot be read.
     pub async fn calendar_home(&self) -> Result<CollectionHome, DavError> {
+        self.credentials.with_credentials(|_| ())?;
         discovery::discover_caldav_from(
             self,
             &self.credentials,
@@ -163,6 +276,7 @@ impl DavClient {
     ///
     /// Returns [`DavError`] when the principal or the address-book home cannot be read.
     pub async fn contacts_home(&self) -> Result<CollectionHome, DavError> {
+        self.credentials.with_credentials(|_| ())?;
         discovery::discover_carddav_from(
             self,
             &self.credentials,
@@ -281,7 +395,7 @@ impl Transport for DavClient {
 /// [`DavError::Network`] when the transport fails.
 pub(crate) async fn execute(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     request: Request<String>,
 ) -> Result<Exchange, DavError> {
     let (parts, body) = request.into_parts();
@@ -303,7 +417,8 @@ pub(crate) async fn execute(
             method = %outgoing.method,
             host = outgoing.uri.host().unwrap_or(""),
         );
-        attach_basic(&mut outgoing.headers, credentials)?;
+        credentials
+            .with_credentials(|credentials| attach_basic(&mut outgoing.headers, credentials))??;
         let response = send_with_retry(transport, &outgoing)
             .instrument(span)
             .await?;

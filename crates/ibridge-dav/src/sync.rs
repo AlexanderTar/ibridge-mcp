@@ -3,14 +3,13 @@
 //! Collection sync and conditional writes.
 
 use http::{StatusCode, Uri};
-use ibridge_auth::Credentials;
 use ibridge_core::ETag;
 use libdav::dav::{Propfind, PutResource, SyncCollection, SyncCollectionParseError};
 use libdav::names::{GETETAG, VALID_SYNC_TOKEN};
 use libdav::requests::DavRequest;
 use libdav::{Depth, PropertyName};
 
-use crate::client::{Exchange, Transport, execute};
+use crate::client::{CredentialSource, Exchange, Transport, execute};
 use crate::error::DavError;
 use crate::multistatus;
 
@@ -50,7 +49,7 @@ pub struct SyncReport {
 /// [`DavError::Network`] when the transport fails.
 pub(crate) async fn sync_collection(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     collection_url: &str,
     token: Option<&str>,
     limit: Option<u32>,
@@ -92,7 +91,7 @@ pub(crate) async fn sync_collection(
 /// Returns [`DavError::Conflict`] when the server answers 412.
 pub(crate) async fn put_new(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     resource_url: &str,
     body: &str,
     content_type: &str,
@@ -112,7 +111,7 @@ pub(crate) async fn put_new(
 /// Returns [`DavError::Conflict`] when the server answers 412.
 pub(crate) async fn put_if_match(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     resource_url: &str,
     body: &str,
     content_type: &str,
@@ -134,7 +133,7 @@ pub(crate) async fn put_if_match(
 /// [`DavError::NotFound`] when it answers 404.
 pub(crate) async fn delete_if_match(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     resource_url: &str,
     etag: &ETag,
 ) -> Result<(), DavError> {
@@ -154,7 +153,7 @@ pub(crate) async fn delete_if_match(
 
 async fn finish_put(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     http_request: http::Request<String>,
     request: &impl DavRequest<
         Response = libdav::dav::PutResourceResponse,
@@ -217,7 +216,7 @@ fn report_from_body(body: &[u8]) -> Result<SyncReport, DavError> {
 
 async fn etag_scan(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     collection_url: &str,
 ) -> Result<SyncReport, DavError> {
     let (base, path) = split_url(collection_url)?;

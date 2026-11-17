@@ -10,7 +10,7 @@ use libdav::dav::FindPropertyHrefs;
 use libdav::names::{ADDRESSBOOK_HOME_SET, CALENDAR_HOME_SET, CURRENT_USER_PRINCIPAL};
 use libdav::requests::DavRequest;
 
-use crate::client::{Transport, execute};
+use crate::client::{CredentialSource, Transport, execute};
 use crate::error::DavError;
 
 /// Absolute URL of a calendar home or an address-book home.
@@ -92,7 +92,7 @@ pub(crate) fn carddav_root() -> (Uri, &'static str) {
 /// Returns [`DavError`] when the principal or the calendar home cannot be read.
 pub(crate) async fn discover_caldav(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     cache: &ShardCache,
 ) -> Result<CollectionHome, DavError> {
     let (base, path) = caldav_root();
@@ -106,7 +106,7 @@ pub(crate) async fn discover_caldav(
 /// Returns [`DavError`] when the principal or the calendar home cannot be read.
 pub(crate) async fn discover_caldav_from(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     cache: &ShardCache,
     base: &Uri,
     path: &str,
@@ -144,7 +144,7 @@ pub(crate) async fn discover_caldav_from(
 /// Returns [`DavError`] when the principal or the address-book home cannot be read.
 pub(crate) async fn discover_carddav(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     cache: &ShardCache,
 ) -> Result<CollectionHome, DavError> {
     let (base, path) = carddav_root();
@@ -158,7 +158,7 @@ pub(crate) async fn discover_carddav(
 /// Returns [`DavError`] when the principal or the address-book home cannot be read.
 pub(crate) async fn discover_carddav_from(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     cache: &ShardCache,
     base: &Uri,
     path: &str,
@@ -191,7 +191,7 @@ pub(crate) async fn discover_carddav_from(
 
 async fn propfind_href(
     transport: &impl Transport,
-    credentials: &Credentials,
+    credentials: &impl CredentialSource,
     base: &Uri,
     path: &str,
     property: &libdav::PropertyName<'_, '_>,
@@ -335,6 +335,7 @@ mod tests {
     use ibridge_core::AppleId;
 
     use super::{ShardCache, discover_caldav, discover_carddav};
+    use crate::DavError;
     use crate::test_support::{Script, credentials, expected_basic};
 
     const ADA_PRINCIPAL: &str = "/184573921/principal/";
@@ -349,6 +350,10 @@ mod tests {
             format!("{apple_id}:test-secret"),
         );
         format!("Basic {token}")
+    }
+
+    fn ada_id() -> AppleId {
+        AppleId::try_from("ada@icloud.com").expect("primary address")
     }
 
     fn bob() -> Credentials {
@@ -627,6 +632,83 @@ mod tests {
             script.requests().len(),
             after_first,
             "the second contacts home lookup must not send a request"
+        );
+    }
+
+    async fn as_call<T>(credentials: Credentials, work: impl std::future::Future<Output = T>) -> T {
+        ibridge_auth::with_call_credentials(
+            std::sync::Arc::new(credentials),
+            std::sync::Arc::new(ibridge_auth::LoginLog::new()),
+            work,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn dav_per_call_uses_call_credential() {
+        let script = caldav_server();
+        let client = crate::DavClient::from_script_per_call(script.clone(), ada_id());
+        let home = as_call(credentials(), client.calendar_home())
+            .await
+            .expect("the call's credentials sign the discovery requests");
+        assert_eq!(home.url, ADA_CALENDAR_HOME);
+        let seen = script.requests();
+        assert!(!seen.is_empty(), "discovery sent requests");
+        assert!(
+            seen.iter()
+                .all(|request| request.authorization.as_deref() == Some(expected_basic().as_str())),
+            "every request carries the call's Basic auth, saw {seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dav_per_call_without_credential_fails() {
+        let script = caldav_server();
+        let client = crate::DavClient::from_script_per_call(script.clone(), ada_id());
+        as_call(credentials(), client.calendar_home())
+            .await
+            .expect("a call with credentials works");
+        let before = script.requests().len();
+
+        let home = client
+            .calendar_home()
+            .await
+            .expect_err("no call credential");
+        assert_eq!(home, DavError::Protocol, "calendar home needs a call");
+        let contacts = client
+            .contacts_home()
+            .await
+            .expect_err("no call credential");
+        assert_eq!(contacts, DavError::Protocol, "contacts home needs a call");
+        let request = client
+            .request(
+                http::Request::builder()
+                    .method("PROPFIND")
+                    .uri("https://caldav.icloud.com/")
+                    .body(String::new())
+                    .expect("request"),
+            )
+            .await
+            .expect_err("no call credential");
+        assert_eq!(request, DavError::Protocol, "a request needs a call");
+        assert_eq!(
+            script.requests().len(),
+            before,
+            "a call without credentials sends nothing and reuses no password"
+        );
+    }
+
+    #[tokio::test]
+    async fn dav_per_call_rejects_other_account() {
+        let script = caldav_server();
+        let client = crate::DavClient::from_script_per_call(script.clone(), ada_id());
+        let error = as_call(bob(), client.calendar_home())
+            .await
+            .expect_err("bob's credentials are not for ada's client");
+        assert_eq!(error, DavError::Protocol);
+        assert!(
+            script.requests().is_empty(),
+            "another account's password is never sent"
         );
     }
 }

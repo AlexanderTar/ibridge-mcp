@@ -7,11 +7,13 @@
 //! It reads `~/.config/ibridge/test-account.env`, writes one marker event to the
 //! calendar named `ibridge-test` and, when a task collection of that name is
 //! visible over `CalDAV`, one marker reminder to it. It reads each back and deletes
-//! it. Nothing outside those two collections is read or written.
+//! it, by path with no etag when the read-back fails, so nothing is left behind.
+//! Nothing outside those two collections is read or written.
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use http::{Request, StatusCode};
 use ibridge_auth::{CredentialSource, Credentials, FileSource};
 use ibridge_calendar::CalDavProvider;
 use ibridge_core::{
@@ -36,6 +38,29 @@ async fn account() -> Credentials {
         .expect("the test account file is present, mode 0600 and complete")
 }
 
+fn copy(credentials: &Credentials) -> Credentials {
+    credentials.with_secret(|secret| Credentials::new(credentials.apple_id.clone(), secret))
+}
+
+/// Deletes the resource at `url` with no `If-Match`, so a failed read-back cannot leave the
+/// marker behind for want of an etag. A 404 means it is already gone.
+async fn delete_regardless(client: &DavClient, url: String) {
+    let request = Request::builder()
+        .method("DELETE")
+        .uri(url)
+        .body(String::new())
+        .expect("a DELETE request");
+    let exchange = client
+        .request(request)
+        .await
+        .expect("send the cleanup DELETE");
+    assert!(
+        exchange.status.is_success() || exchange.status == StatusCode::NOT_FOUND,
+        "the cleanup DELETE removed the marker, got {}",
+        exchange.status
+    );
+}
+
 fn nonce() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -47,7 +72,9 @@ fn nonce() -> String {
 #[tokio::test]
 #[ignore = "live: needs IBRIDGE_LIVE=1 and the test account file"]
 async fn live_calendar_smoke() {
-    let provider = CalDavProvider::new(DavClient::new(account().await).expect("DAV client"));
+    let credentials = account().await;
+    let cleanup = DavClient::new(copy(&credentials)).expect("DAV client");
+    let provider = CalDavProvider::new(DavClient::new(credentials).expect("DAV client"));
     let marker = format!("[ibridge-live] {}", nonce());
 
     let calendars = provider.list_calendars().await.expect("calendars");
@@ -83,6 +110,10 @@ async fn live_calendar_smoke() {
         Ok(event) => provider.delete_event(&created, &event.etag).await,
         Err(_) => Err(CoreError::NotFound),
     };
+    if deleted.is_err() {
+        let home = cleanup.calendar_home().await.expect("calendar home");
+        delete_regardless(&cleanup, home.url_of(created.as_str())).await;
+    }
     let after = provider.get_event(&created).await;
 
     let listed = listed.expect("list the marker event");
@@ -95,7 +126,7 @@ async fn live_calendar_smoke() {
     );
     let fetched = fetched.expect("read the marker event");
     assert_eq!(fetched.description, "live smoke marker");
-    deleted.expect("delete the marker event");
+    deleted.expect("delete the marker event with its etag");
     assert!(
         matches!(after, Err(CoreError::NotFound)),
         "the marker event is gone, got {after:?}"
@@ -129,6 +160,10 @@ async fn live_calendar_smoke() {
         Ok(reminder) => RemindersProvider::delete(&provider, &path, &reminder.etag).await,
         Err(_) => Err(CoreError::NotFound),
     };
+    if removed.is_err() {
+        let home = cleanup.calendar_home().await.expect("calendar home");
+        delete_regardless(&cleanup, home.url_of(path.as_str())).await;
+    }
     let after = provider.get(&path).await;
 
     let page = page.expect("list the marker reminder");
@@ -139,7 +174,7 @@ async fn live_calendar_smoke() {
         "the marker reminder is listed"
     );
     assert_eq!(got.expect("read the marker reminder").priority, Some(5));
-    removed.expect("delete the marker reminder");
+    removed.expect("delete the marker reminder with its etag");
     assert!(
         matches!(after, Err(CoreError::NotFound)),
         "the marker reminder is gone, got {after:?}"

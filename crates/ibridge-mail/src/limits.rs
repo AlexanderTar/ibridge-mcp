@@ -2,7 +2,7 @@
 
 //! Per-account send limits. Both caps are configurable.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use ibridge_core::CoreError;
@@ -112,7 +112,7 @@ impl SendWindow {
     #[must_use]
     pub fn is_idle(&self) -> bool {
         let hour = Duration::from_hours(1);
-        let state = self.state.lock().expect("send window");
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.sent.iter().all(|slot| slot.at.elapsed() >= hour)
     }
 

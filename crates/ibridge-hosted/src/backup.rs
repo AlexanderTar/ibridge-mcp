@@ -386,8 +386,7 @@ mod tests {
             tokio::time::advance(Duration::from_hours(24)).await;
             settle(&reads, 2 + 2 * day).await;
         }
-        // Read with `std::fs`, not `snapshots`: awaiting the blocking pool here would let
-        // the paused clock jump a day ahead.
+        // `std::fs` reads what is on disk now; `snapshots` would go through the blocking pool.
         let mut kept: Vec<String> = names(&backups)
             .into_iter()
             .filter(|name| name.starts_with(PREFIX))

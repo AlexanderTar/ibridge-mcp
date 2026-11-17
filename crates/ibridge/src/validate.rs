@@ -93,3 +93,18 @@ pub(crate) fn validator(
     let dav = Skipped;
     Ok(Combined { mail, dav })
 }
+
+/// The sign-in check of the hosted server: the same two checks as [`validator`], but
+/// sign-in succeeds when either side works, so an account without iCloud Mail signs in
+/// through `CalDAV`.
+///
+/// # Errors
+///
+/// Returns an error when the system has no root certificates to check iCloud with.
+#[cfg(feature = "hosted")]
+pub(crate) fn hosted_validator(
+    credentials: &Credentials,
+) -> anyhow::Result<impl Validator + Sync + use<>> {
+    let Combined { mail, dav } = validator(credentials)?;
+    Ok(ibridge_hosted::Combined { mail, dav })
+}

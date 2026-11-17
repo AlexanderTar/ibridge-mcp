@@ -10,6 +10,8 @@ mod contacts;
 mod daemon;
 mod doctor;
 mod downloads;
+#[cfg(feature = "hosted")]
+mod hosted;
 mod login;
 mod mail;
 mod platform;

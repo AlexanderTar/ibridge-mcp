@@ -13,14 +13,14 @@ use ibridge_core::{CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId}
 use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
 
 /// Mail backend for a build with mail off. Every call says so.
-#[cfg(any(not(feature = "mail"), test))]
+#[cfg(any(not(feature = "mail"), feature = "hosted", test))]
 #[derive(Debug)]
 pub(crate) struct NoMail;
 
-#[cfg(any(not(feature = "mail"), test))]
+#[cfg(any(not(feature = "mail"), feature = "hosted", test))]
 const OFF: CoreError = CoreError::Unsupported("mail is not enabled in this build");
 
-#[cfg(any(not(feature = "mail"), test))]
+#[cfg(any(not(feature = "mail"), feature = "hosted", test))]
 #[expect(
     clippy::unused_async_trait_impl,
     reason = "the stand-in answers without waiting"

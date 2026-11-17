@@ -14,7 +14,7 @@ calendar = ["dep:ibridge-calendar", "dep:ibridge-dav"]
 contacts = ["dep:ibridge-contacts", "dep:ibridge-dav"]
 stdio = ["rmcp/transport-io"]
 http = ["dep:base64", "dep:getrandom", "dep:secrecy", "dep:subtle"]
-hosted = []
+hosted = ["http", "dep:ibridge-hosted"]
 
 [dependencies]
 anyhow.workspace = true
@@ -26,6 +26,7 @@ ibridge-calendar = { workspace = true, optional = true }
 ibridge-contacts = { workspace = true, optional = true }
 ibridge-core.workspace = true
 ibridge-dav = { workspace = true, optional = true }
+ibridge-hosted = { workspace = true, optional = true }
 ibridge-mail = { workspace = true, optional = true }
 ibridge-server.workspace = true
 keyring-core.workspace = true

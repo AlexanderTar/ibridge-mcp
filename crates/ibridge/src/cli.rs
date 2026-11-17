@@ -40,6 +40,26 @@ enum Command {
         /// Hide and reject every tool that changes mail.
         #[arg(long)]
         read_only: bool,
+        /// Run the hosted service: OAuth sign-in for many accounts, with `--http` as the listen address.
+        #[cfg(feature = "hosted")]
+        #[arg(
+            long,
+            conflicts_with_all = ["stdio", "read_only"],
+            requires_all = ["http", "public_url", "data_dir"]
+        )]
+        hosted: bool,
+        /// The https origin clients reach, for example `https://ibridge.fyi`.
+        #[cfg(feature = "hosted")]
+        #[arg(long, value_name = "URL", requires = "hosted")]
+        public_url: Option<String>,
+        /// Where the hosted database and its backups live.
+        #[cfg(feature = "hosted")]
+        #[arg(long, value_name = "DIR", requires = "hosted")]
+        data_dir: Option<std::path::PathBuf>,
+        /// Let any iCloud account sign in (the public service).
+        #[cfg(feature = "hosted")]
+        #[arg(long, requires = "hosted")]
+        multi_tenant: bool,
     },
 }
 
@@ -88,7 +108,30 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             #[cfg(feature = "http")]
             http,
             read_only,
+            #[cfg(feature = "hosted")]
+            hosted,
+            #[cfg(feature = "hosted")]
+            public_url,
+            #[cfg(feature = "hosted")]
+            data_dir,
+            #[cfg(feature = "hosted")]
+            multi_tenant,
         } => {
+            #[cfg(feature = "hosted")]
+            if hosted {
+                // clap's `requires_all` guarantees these three are set.
+                let (Some(addr), Some(public_url), Some(data_dir)) = (http, public_url, data_dir)
+                else {
+                    anyhow::bail!("--hosted needs --http, --public-url and --data-dir");
+                };
+                return crate::hosted::run(ibridge_hosted::HostedOptions {
+                    addr,
+                    public_url,
+                    data_dir,
+                    multi_tenant,
+                })
+                .await;
+            }
             let access = if read_only {
                 Access::ReadOnly
             } else {

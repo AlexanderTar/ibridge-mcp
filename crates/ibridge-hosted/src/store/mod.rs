@@ -47,6 +47,18 @@ pub enum StoreError {
     },
 }
 
+/// Why the store cannot serve requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum NotReady {
+    /// The database does not answer.
+    #[error("the database is not reachable")]
+    Database,
+    /// The database answers, but its schema is not the one this build needs.
+    #[error("the schema migrations are not applied")]
+    Migrations,
+}
+
 /// What a hosted credential may do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -219,6 +231,23 @@ impl Store {
             .map_err(internal)?;
         apply_schema(&pool).await?;
         Ok(Self { pool })
+    }
+
+    /// Whether the database answers and holds this build's schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotReady`] saying which of the two checks failed.
+    pub async fn ready(&self) -> Result<(), NotReady> {
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|_| NotReady::Database)?;
+        if version == SCHEMA_VERSION {
+            Ok(())
+        } else {
+            Err(NotReady::Migrations)
+        }
     }
 
     /// Seals `asp` under a new authorization code.

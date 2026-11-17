@@ -8,6 +8,7 @@ mod config;
 #[cfg(test)]
 mod e2e;
 mod health;
+mod icloud;
 mod limits;
 pub mod logging;
 mod middleware;
@@ -31,6 +32,7 @@ pub use oauth::{
 pub use app::app;
 pub use backup::{BackupError, KEEP as BACKUPS_KEPT, spawn_daily as spawn_daily_backups};
 pub use config::{ALLOWED_APPLE_IDS, HostedConfig, HostedOptions, SIGNUP_CAP, SIGNUPS, StartError};
+pub use icloud::{IcloudBackend, SessionMail};
 pub use limits::Guards;
 pub use middleware::CallAuth;
 pub use provider::{Account, AccountCache, AccountServer, Backend, Providers};

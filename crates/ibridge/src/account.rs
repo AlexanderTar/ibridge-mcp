@@ -33,6 +33,23 @@ impl Services {
     }
 }
 
+impl Services {
+    /// The services the saved sign-in left on.
+    ///
+    /// A service the login recorded as off keeps its tools hidden. With no saved
+    /// sign-in, such as an account from the environment, nothing changes.
+    pub(crate) fn after_login(self, recorded: Option<&State>) -> Self {
+        let on = |built: bool, pick: fn(&State) -> Option<&String>| {
+            built && recorded.and_then(pick).is_none()
+        };
+        Self {
+            mail: on(self.mail, |state| state.mail.as_ref()),
+            calendar: on(self.calendar, |state| state.calendar.as_ref()),
+            contacts: on(self.contacts, |state| state.contacts.as_ref()),
+        }
+    }
+}
+
 /// The signed-in address and, per service, why it is off. `None` means on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct State {

@@ -9,7 +9,7 @@ pub mod multistatus;
 mod redirect;
 mod sync;
 
-pub use client::{DavClient, Exchange};
+pub use client::{DavClient, DavHttp, Exchange};
 pub use discovery::{CollectionHome, DavValidator};
 pub use error::DavError;
 pub use sync::{SyncReport, SyncedItem};

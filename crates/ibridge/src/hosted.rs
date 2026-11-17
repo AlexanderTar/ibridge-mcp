@@ -7,34 +7,11 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use ibridge_auth::{AuthError, Credentials, ValidationReport, Validator};
 use ibridge_core::AppleId;
-use ibridge_hosted::{Backend, HostedConfig, HostedOptions, Providers, validated_by};
-use ibridge_server::{AccountSnapshot, IbridgeServer, NoCalendar, NoContacts, ServiceStatus};
+use ibridge_hosted::{HostedConfig, HostedOptions, IcloudBackend, validated_by};
+use ibridge_server::{AccountSnapshot, IbridgeServer, ServiceStatus};
 use tokio::net::TcpListener;
 
 use crate::mail::NoMail;
-
-/// The one place the hosted server gets its providers.
-///
-/// ponytail: every provider says it is unsupported. Calendar, contacts and send need the
-/// call's password in `DavClient` and `SmtpClient`, which own their credentials today.
-/// The security package TASK-1838 adds per-call credentials to both and replaces this
-/// with the real backend; nothing else in this file changes.
-#[derive(Debug)]
-struct Unwired;
-
-impl Backend for Unwired {
-    type Mail = NoMail;
-    type Calendar = NoCalendar;
-    type Contacts = NoContacts;
-
-    fn open(&self, _apple_id: &AppleId) -> Providers<NoMail, NoCalendar, NoContacts> {
-        Providers {
-            mail: Arc::new(NoMail),
-            calendar: Arc::new(NoCalendar),
-            contacts: Arc::new(NoContacts),
-        }
-    }
-}
 
 /// A sign-in check built from this build's validators, or a refusal when they cannot be built.
 struct Check<V>(Option<V>);
@@ -68,6 +45,8 @@ fn info() -> rmcp::model::ServerConfig {
 pub(crate) async fn run(options: HostedOptions) -> anyhow::Result<()> {
     ibridge_hosted::logging::init();
     let config = HostedConfig::resolve(options, |name| std::env::var(name).ok())?;
+    let backend = IcloudBackend::icloud()
+        .map_err(|_| anyhow::anyhow!("the system has no root certificates to check iCloud with"))?;
     let listener = TcpListener::bind(config.addr)
         .await
         .with_context(|| format!("could not listen on {}", config.addr))?;
@@ -75,7 +54,7 @@ pub(crate) async fn run(options: HostedOptions) -> anyhow::Result<()> {
     ibridge_hosted::serve(
         config,
         listener,
-        Unwired,
+        backend,
         validated_by(|credentials: &Credentials| {
             Check(crate::validate::hosted_validator(credentials).ok())
         }),

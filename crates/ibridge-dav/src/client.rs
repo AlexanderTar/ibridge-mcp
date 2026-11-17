@@ -63,6 +63,30 @@ pub struct DavClient {
     carddav_path: String,
 }
 
+/// The HTTP stack per-call clients share: TLS roots and a connection pool.
+///
+/// It holds no credentials. Build it once, then give it to [`DavClient::per_call`]
+/// for each account.
+#[derive(Clone)]
+pub struct DavHttp(Client<Connector, Full<Bytes>>);
+
+impl std::fmt::Debug for DavHttp {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("DavHttp").finish_non_exhaustive()
+    }
+}
+
+impl DavHttp {
+    /// Loads the system root certificates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DavError::Network`] when the TLS roots cannot be loaded.
+    pub fn new() -> Result<Self, DavError> {
+        http_client().map(Self)
+    }
+}
+
 /// Where a request gets its password.
 pub(crate) trait CredentialSource: Send + Sync {
     /// Passes the credentials this request signs in with to `read`.
@@ -147,23 +171,21 @@ impl DavClient {
     ///
     /// Every request signs in with the credentials of the call that makes it
     /// (see `ibridge_auth::with_call_credentials`). A call without credentials,
-    /// or with another account's, fails before any request leaves.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DavError::Network`] when the TLS roots cannot be loaded.
-    pub fn per_call(apple_id: ibridge_core::AppleId) -> Result<Self, DavError> {
+    /// or with another account's, fails before any request leaves. `http` is
+    /// shared, so many accounts reuse one TLS setup and connection pool.
+    #[must_use]
+    pub fn per_call(apple_id: ibridge_core::AppleId, http: &DavHttp) -> Self {
         let (caldav_base, caldav_path) = discovery::caldav_root();
         let (carddav_base, carddav_path) = discovery::carddav_root();
-        Ok(Self {
+        Self {
             credentials: Login::PerCall(apple_id),
-            wire: Wire::Http(Box::new(http_client()?)),
+            wire: Wire::Http(Box::new(http.0.clone())),
             cache: discovery::ShardCache::new(),
             caldav_base,
             caldav_path: caldav_path.to_owned(),
             carddav_base,
             carddav_path: carddav_path.to_owned(),
-        })
+        }
     }
 
     pub(crate) fn from_shared(credentials: Arc<Credentials>) -> Result<Self, DavError> {
@@ -204,17 +226,17 @@ impl DavClient {
     ///
     /// # Errors
     ///
-    /// Returns [`DavError::HostNotAllowed`] when `base_url` is not loopback, and
-    /// [`DavError::Network`] when the TLS roots cannot be loaded.
+    /// Returns [`DavError::HostNotAllowed`] when `base_url` is not loopback.
     #[cfg(any(test, feature = "test-hosts"))]
     pub fn per_call_for_test_server(
         apple_id: ibridge_core::AppleId,
         base_url: &str,
+        http: &DavHttp,
     ) -> Result<Self, DavError> {
         let origin = loopback_origin(base_url)?;
         Ok(Self {
             credentials: Login::PerCall(apple_id),
-            wire: Wire::Http(Box::new(http_client()?)),
+            wire: Wire::Http(Box::new(http.0.clone())),
             cache: discovery::ShardCache::new(),
             caldav_base: origin.clone(),
             caldav_path: "/.well-known/caldav".to_owned(),

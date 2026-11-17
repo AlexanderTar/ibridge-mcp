@@ -112,7 +112,7 @@ impl SmtpClient {
     ///
     /// Returns [`CoreError::HostNotAllowed`] when `host` is not a loopback name.
     /// The port is not part of that check.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hosts"))]
     pub(crate) fn plain(
         credentials: Credentials,
         host: impl Into<String>,
@@ -135,8 +135,8 @@ impl SmtpClient {
     /// # Errors
     ///
     /// Returns [`CoreError::HostNotAllowed`] when `host` is not a loopback name.
-    #[cfg(test)]
-    pub(crate) fn plain_per_call(
+    #[cfg(any(test, feature = "test-hosts"))]
+    pub fn plain_per_call(
         apple_id: ibridge_core::AppleId,
         host: impl Into<String>,
         port: u16,
@@ -213,7 +213,7 @@ impl SmtpClient {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hosts"))]
 fn is_loopback(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }

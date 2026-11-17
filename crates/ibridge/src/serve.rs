@@ -102,7 +102,7 @@ pub(crate) async fn stdio(access: Access) -> anyhow::Result<()> {
 
     init_logging();
     let (credentials, state) = credentials().await?;
-    let services = Services::built();
+    let services = Services::built().after_login(state.as_ref());
     let account = snapshot(credentials.apple_id.clone(), services, state.as_ref());
     let mail = crate::mail::backend(&credentials)?;
     let calendar = crate::calendar::backend(&credentials)?;
@@ -149,7 +149,7 @@ pub(crate) async fn http(addr: std::net::SocketAddr, access: Access) -> anyhow::
     crate::platform::install_keychain()?;
     let token = crate::token::DaemonToken::get_or_create()?;
     let (credentials, state) = credentials().await?;
-    let services = Services::built();
+    let services = Services::built().after_login(state.as_ref());
     let account = snapshot(credentials.apple_id.clone(), services, state.as_ref());
     let mail = crate::mail::backend(&credentials)?;
     let calendar = crate::calendar::backend(&credentials)?;
@@ -481,11 +481,12 @@ mod http_tests {
 mod tests {
     use std::sync::Arc;
 
+    use ibridge_auth::{ServiceCheck, ValidationReport};
     use ibridge_core::AppleId;
     use ibridge_server::{NoCalendar, NoContacts, ServiceStatus};
 
     use super::{Access, assemble};
-    use crate::account::{Services, snapshot};
+    use crate::account::{Services, State, snapshot};
     use crate::mail::NoMail;
 
     #[test]
@@ -629,6 +630,60 @@ mod tests {
             !off.iter()
                 .any(|name| name.starts_with("calendar_") || name.starts_with("reminders_")),
             "a build without calendar hides its tools, got {off:?}"
+        );
+    }
+
+    #[test]
+    fn local_serve_hides_disabled_service_tools() {
+        let state = State::from_report(
+            &AppleId::try_from("ada@icloud.com").expect("apple id"),
+            &ValidationReport {
+                mail: ServiceCheck::Ok,
+                calendar: ServiceCheck::Failed {
+                    reason: "calendar rejected".to_owned(),
+                },
+                contacts: ServiceCheck::Failed {
+                    reason: "contacts rejected".to_owned(),
+                },
+            },
+        );
+        let everything = Services {
+            mail: true,
+            calendar: true,
+            contacts: true,
+        };
+        let services = everything.after_login(Some(&state));
+        let account = snapshot(
+            AppleId::try_from("ada@icloud.com").expect("apple id"),
+            services,
+            Some(&state),
+        );
+        let names: Vec<String> = assemble(
+            services,
+            Access::ReadWrite,
+            account,
+            Arc::new(NoMail),
+            Arc::new(NoCalendar),
+            Arc::new(NoContacts),
+        )
+        .tools()
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect();
+        assert!(
+            names.iter().any(|name| name == "mail_search"),
+            "mail was on at sign-in and stays, got {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name.starts_with("calendar_")
+                || name.starts_with("reminders_")
+                || name.starts_with("contacts_")),
+            "tools of services the login recorded as off are hidden, got {names:?}"
+        );
+        let unchanged = everything.after_login(None);
+        assert!(
+            unchanged.mail && unchanged.calendar && unchanged.contacts,
+            "an account with no saved sign-in keeps every built service"
         );
     }
 }

@@ -353,6 +353,13 @@ pub(crate) mod tests {
 
     const PASSWORD: &str = "test-secret";
 
+    /// How the capture server answers `AUTH`.
+    #[derive(Clone, Copy)]
+    enum AuthReply {
+        Accept,
+        Reject,
+    }
+
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct Seen {
         username: String,
@@ -375,15 +382,15 @@ pub(crate) mod tests {
 
         /// The first `times` connections are refused. Later ones speak SMTP.
         pub(crate) async fn start_failing(times: usize) -> Self {
-            Self::start_with(times, false).await
+            Self::start_with(times, AuthReply::Accept).await
         }
 
         /// Every `AUTH` is answered 535.
         async fn start_rejecting_auth() -> Self {
-            Self::start_with(0, true).await
+            Self::start_with(0, AuthReply::Reject).await
         }
 
-        async fn start_with(times: usize, reject_auth: bool) -> Self {
+        async fn start_with(times: usize, auth: AuthReply) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
             let port = listener.local_addr().expect("local addr").port();
             let seen = Arc::new(Mutex::new(Seen::default()));
@@ -397,7 +404,7 @@ pub(crate) mod tests {
                     let slot = Arc::clone(&slot);
                     let fails_left = Arc::clone(&fails_left);
                     tokio::spawn(async move {
-                        let _ = serve(socket, slot, fails_left, reject_auth).await;
+                        let _ = serve(socket, slot, fails_left, auth).await;
                     });
                 }
             });
@@ -448,7 +455,7 @@ pub(crate) mod tests {
         socket: TcpStream,
         seen: Arc<Mutex<Seen>>,
         fails_left: Arc<AtomicUsize>,
-        reject_auth: bool,
+        auth: AuthReply,
     ) -> std::io::Result<()> {
         let mut reader = BufReader::new(socket);
         let refuse = fails_left
@@ -482,7 +489,7 @@ pub(crate) mod tests {
                     (captured.username, captured.password) =
                         plain_login(initial).unwrap_or_default();
                 }
-                write_auth_result(&mut reader, reject_auth).await?;
+                write_auth_result(&mut reader, auth).await?;
             } else if let Some(initial) = strip_cmd(&line, "AUTH LOGIN") {
                 let username = if initial.is_empty() {
                     write_line(&mut reader, "334 VXNlcm5hbWU6\r\n").await?;
@@ -493,7 +500,7 @@ pub(crate) mod tests {
                 captured.username = username.unwrap_or_default();
                 write_line(&mut reader, "334 UGFzc3dvcmQ6\r\n").await?;
                 captured.password = decode_utf8(&read_line(&mut reader).await?).unwrap_or_default();
-                write_auth_result(&mut reader, reject_auth).await?;
+                write_auth_result(&mut reader, auth).await?;
             } else if let Some(rest) = strip_prefix_ignore(&line, "MAIL FROM:") {
                 captured.mail_from = angle_addr(rest);
                 write_line(&mut reader, "250 ok\r\n").await?;
@@ -518,12 +525,11 @@ pub(crate) mod tests {
 
     async fn write_auth_result(
         reader: &mut BufReader<TcpStream>,
-        reject: bool,
+        auth: AuthReply,
     ) -> std::io::Result<()> {
-        let line = if reject {
-            "535 5.7.8 authentication failed\r\n"
-        } else {
-            "235 ok\r\n"
+        let line = match auth {
+            AuthReply::Reject => "535 5.7.8 authentication failed\r\n",
+            AuthReply::Accept => "235 ok\r\n",
         };
         write_line(reader, line).await
     }

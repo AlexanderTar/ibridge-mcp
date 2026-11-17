@@ -89,8 +89,8 @@ mod tests {
     struct Fixed(Result<ValidationReport, AuthError>);
 
     impl Validator for Fixed {
-        async fn validate(&self) -> Result<ValidationReport, AuthError> {
-            self.0.clone()
+        fn validate(&self) -> impl Future<Output = Result<ValidationReport, AuthError>> + Send {
+            std::future::ready(self.0.clone())
         }
     }
 

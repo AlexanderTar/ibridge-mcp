@@ -22,6 +22,9 @@ use crate::scrub::{Identity, Scrubber};
 const PROPFIND_BODY: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\
     <D:propfind xmlns:D=\"DAV:\"><D:prop><D:displayname/><D:resourcetype/></D:prop></D:propfind>";
 
+const PRINCIPAL_BODY: &str = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\
+    <D:propfind xmlns:D=\"DAV:\"><D:prop><D:current-user-principal/></D:prop></D:propfind>";
+
 /// Creates a marker contact, records the replies, scrubs them into `out_dir`
 /// and deletes the contact.
 ///
@@ -81,6 +84,19 @@ async fn record(
         names,
     });
     let mut fixtures: Vec<(&str, String)> = Vec::new();
+    // Where discovery starts. iCloud answers it without a principal, so the
+    // client has to fall back to the server root.
+    fixtures.push((
+        "well-known.xml",
+        send(
+            raw,
+            "PROPFIND",
+            &raw.carddav_root_url(),
+            Some("0"),
+            PRINCIPAL_BODY,
+        )
+        .await?,
+    ));
     fixtures.push(("propfind-home.xml", listing));
 
     let path = provider

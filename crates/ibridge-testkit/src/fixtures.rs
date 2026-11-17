@@ -143,8 +143,8 @@ impl ReplayCalDav {
         let events = read("caldav", "report-events.xml");
         let todos = read("caldav", "report-todos.xml");
         let listing = read("caldav", "propfind-home.xml");
-        let event = first_resource(&events);
-        let todo = first_resource(&todos);
+        let event = first_resource(&events, ".ics");
+        let todo = first_resource(&todos, ".ics");
         let routes = CalDavRoutes {
             home: first_href(&listing),
             events_collection: parent(&event),
@@ -241,14 +241,14 @@ fn first_href(xml: &str) -> String {
         .unwrap_or_else(|| panic!("a recorded multistatus holds an href"))
 }
 
-/// The first `<href>` that names an `.ics` resource.
-fn first_resource(xml: &str) -> String {
+/// The first `<href>` that ends with `extension`, such as `.ics`.
+fn first_resource(xml: &str, extension: &str) -> String {
     xml.split("<href>")
         .skip(1)
         .filter_map(|part| part.split_once("</href>").map(|(href, _)| href))
-        .find(|href| href.ends_with(".ics"))
+        .find(|href| href.ends_with(extension))
         .map(str::to_owned)
-        .unwrap_or_else(|| panic!("a recorded report holds an .ics resource"))
+        .unwrap_or_else(|| panic!("a recorded report holds a {extension} resource"))
 }
 
 /// The `getetag` the report gives for `href`. A real `GET` answers with the same value.
@@ -267,4 +267,112 @@ fn parent(path: &str) -> String {
     path.rsplit_once('/')
         .map(|(collection, _)| format!("{collection}/"))
         .unwrap_or_else(|| panic!("a recorded resource path has a collection"))
+}
+
+/// A `CardDAV` server that answers from the recorded `carddav` fixtures.
+///
+/// `/.well-known/carddav` answers the recorded reply, which carries no
+/// principal, exactly as iCloud does. The principal lookup at `/` and the
+/// address-book home are answered here, because the recorder saves only what
+/// follows them: `propfind-home.xml` for the home listing,
+/// `report-multiget.xml` for the address-book report and `contact.vcf` for the
+/// marker contact. A report on any other address book is empty.
+#[derive(Debug)]
+pub struct ReplayCardDav {
+    server: wiremock::MockServer,
+}
+
+#[derive(Clone, Debug)]
+struct CardDavRoutes {
+    home: String,
+    book: String,
+    contact: String,
+    contact_etag: String,
+}
+
+impl ReplayCardDav {
+    /// Starts a server on a free loopback port and loads the fixtures.
+    pub async fn start() -> Self {
+        let report = read("carddav", "report-multiget.xml");
+        let listing = read("carddav", "propfind-home.xml");
+        let contact = first_resource(&report, ".vcf");
+        let routes = CardDavRoutes {
+            home: first_href(&listing),
+            book: parent(&contact),
+            contact_etag: etag_of(&report, &contact),
+            contact,
+        };
+        let files = [
+            ("well-known.xml", read("carddav", "well-known.xml")),
+            ("propfind-home.xml", listing),
+            ("report-multiget.xml", report),
+            ("contact.vcf", read("carddav", "contact.vcf")),
+        ];
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::any())
+            .respond_with(move |request: &wiremock::Request| {
+                carddav_reply(&routes, &files, request)
+            })
+            .mount(&server)
+            .await;
+        Self { server }
+    }
+
+    /// Base URL with a trailing slash, for `DavClient::for_test_server`.
+    #[must_use]
+    pub fn base_url(&self) -> String {
+        format!("{}/", self.server.uri())
+    }
+}
+
+fn carddav_reply(
+    routes: &CardDavRoutes,
+    files: &[(&str, String)],
+    request: &wiremock::Request,
+) -> wiremock::ResponseTemplate {
+    let file = |name: &str| {
+        files
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default()
+    };
+    let xml = |status: u16, body: String| {
+        wiremock::ResponseTemplate::new(status).set_body_raw(body, "application/xml")
+    };
+    let path = request.url.path();
+    let body = String::from_utf8_lossy(&request.body);
+    let principal = "/0000000000/principal/";
+    match request.method.as_str() {
+        "PROPFIND"
+            if body.contains("current-user-principal") && path.starts_with("/.well-known") =>
+        {
+            xml(207, file("well-known.xml"))
+        }
+        "PROPFIND" if body.contains("current-user-principal") => xml(
+            207,
+            format!(
+                "<multistatus xmlns=\"DAV:\"><response><href>/</href><propstat><prop>\
+                 <current-user-principal><href>{principal}</href></current-user-principal>\
+                 </prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+            ),
+        ),
+        "PROPFIND" if body.contains("addressbook-home-set") => xml(
+            207,
+            format!(
+                "<multistatus xmlns=\"DAV:\" xmlns:CARD=\"urn:ietf:params:xml:ns:carddav\">\
+                 <response><href>{principal}</href><propstat><prop><CARD:addressbook-home-set>\
+                 <href>{}</href></CARD:addressbook-home-set></prop>\
+                 <status>HTTP/1.1 200 OK</status></propstat></response></multistatus>",
+                routes.home
+            ),
+        ),
+        "PROPFIND" if path == routes.home => xml(207, file("propfind-home.xml")),
+        "REPORT" if path == routes.book => xml(207, file("report-multiget.xml")),
+        "REPORT" => xml(207, "<multistatus xmlns=\"DAV:\"></multistatus>".to_owned()),
+        "GET" if path == routes.contact => wiremock::ResponseTemplate::new(200)
+            .insert_header("ETag", routes.contact_etag.as_str())
+            .set_body_raw(file("contact.vcf"), "text/vcard"),
+        _ => wiremock::ResponseTemplate::new(404),
+    }
 }

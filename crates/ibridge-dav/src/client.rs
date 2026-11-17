@@ -276,6 +276,17 @@ impl DavClient {
         client
     }
 
+    /// The URL where address-book discovery starts, such as
+    /// `https://contacts.icloud.com/.well-known/carddav`.
+    #[must_use]
+    pub fn carddav_root_url(&self) -> String {
+        format!(
+            "{}{}",
+            self.carddav_base.to_string().trim_end_matches('/'),
+            self.carddav_path
+        )
+    }
+
     /// The account's calendar home.
     ///
     /// # Errors

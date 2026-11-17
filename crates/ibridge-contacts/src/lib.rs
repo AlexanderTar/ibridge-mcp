@@ -7,6 +7,8 @@ mod groups;
 #[cfg(test)]
 mod integration;
 mod provider;
+#[cfg(test)]
+mod replay;
 mod search;
 #[cfg(test)]
 mod test_support;

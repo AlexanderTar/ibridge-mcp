@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:">
+
+	<response>
+		<href>/.well-known/carddav/</href>
+		
+        
+		
+		<propstat>
+			<prop>
+				<current-user-principal/>
+
+			</prop>
+			<status>HTTP/1.1 404 Not Found</status>
+		</propstat>
+        
+	</response>
+
+</multistatus>

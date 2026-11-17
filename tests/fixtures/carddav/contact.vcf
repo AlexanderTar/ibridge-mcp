@@ -1,0 +1,9 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//ibridge//contacts//EN
+UID:1D4D2E87-C0BE-44EA-BFA1-50BDCD266251
+N:contact;[ibridge-fixture] 24f9353ca5024474;;;
+FN:[ibridge-fixture] 24f9353ca5024474 contact
+EMAIL;TYPE=INTERNET:marker@example.invalid
+TEL;TYPE=VOICE:+1 555 0100
+END:VCARD

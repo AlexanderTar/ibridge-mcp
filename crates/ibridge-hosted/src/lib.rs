@@ -5,6 +5,8 @@
 mod app;
 mod backup;
 mod config;
+#[cfg(test)]
+mod e2e;
 mod health;
 mod limits;
 pub mod logging;
@@ -14,6 +16,8 @@ mod provider;
 mod serve;
 mod server;
 mod store;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 #[cfg(test)]
 mod test_app;

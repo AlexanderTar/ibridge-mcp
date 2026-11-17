@@ -10,9 +10,14 @@ publish = false
 
 [dependencies]
 async-imap.workspace = true
+base64.workspace = true
+bytes.workspace = true
 futures.workspace = true
 getrandom.workspace = true
 http.workspace = true
+http-body-util.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
 ibridge-auth.workspace = true
 ibridge-calendar.workspace = true
 ibridge-contacts.workspace = true
@@ -22,14 +27,18 @@ ibridge-mail.workspace = true
 mail-parser.workspace = true
 regex.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
 ibridge-dav = { workspace = true, features = ["test-hosts"] }
+ibridge-hosted = { workspace = true, features = ["testing"] }
 ibridge-testkit.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

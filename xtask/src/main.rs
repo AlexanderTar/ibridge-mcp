@@ -2,6 +2,7 @@
 
 //! Workspace maintenance tasks.
 
+mod live_hosted;
 mod mcpb;
 mod record_calendar;
 mod record_contacts;
@@ -26,9 +27,46 @@ fn main() -> ExitCode {
             Ok(bundles) => report_paths(&bundles),
             Err(error) => fail(&format!("mcpb: {error}")),
         },
+        Some("live-hosted-check") => run_live_hosted_check(args),
         Some("schema-snapshot") => ExitCode::from(2),
         Some(command) => fail(&format!("unknown command: {command}")),
-        None => fail("usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb>"),
+        None => fail(
+            "usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb|live-hosted-check>",
+        ),
+    }
+}
+
+/// `live-hosted-check --url URL [--account FILE]`.
+///
+/// Signs in to the hosted server at `URL` with the test account the way a client does,
+/// then calls `account_status`, and prints one line per step. The account file defaults
+/// to `~/.config/ibridge/test-account.env`. The password is never printed.
+fn run_live_hosted_check(mut args: impl Iterator<Item = String>) -> ExitCode {
+    const USAGE: &str =
+        "usage: cargo xtask live-hosted-check --url <https://host> [--account FILE]";
+    let mut url = None;
+    let mut account = env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".config/ibridge/test-account.env"));
+    while let Some(flag) = args.next() {
+        match (flag.as_str(), args.next()) {
+            ("--url", Some(value)) => url = Some(value),
+            ("--account", Some(value)) => account = Some(PathBuf::from(value)),
+            _ => return fail(USAGE),
+        }
+    }
+    let (Some(url), Some(account)) = (url, account) else {
+        return fail(USAGE);
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => return fail(&format!("live-hosted-check: {error}")),
+    };
+    match runtime.block_on(live_hosted::run(&url, &account, &mut io::stdout())) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => fail(&format!("live-hosted-check: {error}")),
     }
 }
 

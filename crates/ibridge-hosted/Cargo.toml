@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Hosted OAuth server and token-sealed credential store."
 
+[features]
+# Fakes for tests that run a hosted server without iCloud.
+testing = ["dep:ibridge-mail", "dep:ibridge-testkit"]
+
 [dependencies]
 aes-gcm.workspace = true
 askama.workspace = true
@@ -21,7 +25,9 @@ hyper-rustls.workspace = true
 hyper-util.workspace = true
 ibridge-auth.workspace = true
 ibridge-core.workspace = true
+ibridge-mail = { workspace = true, optional = true }
 ibridge-server.workspace = true
+ibridge-testkit = { workspace = true, optional = true }
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }

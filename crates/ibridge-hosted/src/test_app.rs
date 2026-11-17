@@ -138,6 +138,47 @@ impl Validator for AcceptAll {
     }
 }
 
+/// A sign-in check that reports what it was given.
+struct Reports(ValidationReport);
+
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the fake answers without waiting"
+)]
+impl Validator for Reports {
+    async fn validate(&self) -> Result<ValidationReport, AuthError> {
+        Ok(self.0.clone())
+    }
+}
+
+/// An access token for a password whose sign-in check reported `report`.
+pub(crate) async fn token_after_check(
+    store: &Store,
+    apple_id: &str,
+    asp: &str,
+    scope: Scope,
+    report: ValidationReport,
+) -> String {
+    let now = SystemTime::now();
+    let credentials = Credentials::new(
+        AppleId::try_from(apple_id).expect("apple id"),
+        asp.to_owned(),
+    );
+    let validated =
+        crate::store::ValidatedCredentials::from_check(credentials, |_| Reports(report))
+            .await
+            .expect("some service accepts the password");
+    let code = store
+        .seal_validated_under_code(&validated, scope, now)
+        .await
+        .expect("seal");
+    let issued = store
+        .exchange_code(code.code.expose_secret(), now)
+        .await
+        .expect("exchange");
+    issued.access.expose_secret().to_owned()
+}
+
 pub(crate) fn config(access: Access) -> OAuthConfig {
     OAuthConfig::new(PUBLIC_URL, access).expect("public url")
 }

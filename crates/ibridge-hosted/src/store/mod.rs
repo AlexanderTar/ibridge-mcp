@@ -5,9 +5,11 @@
 mod manage;
 mod redact;
 mod seal;
+mod services;
 
 pub(crate) use manage::{GrantKind, GrantSummary};
 pub use redact::{RedactingFields, redact};
+pub use services::Services;
 
 use std::error::Error;
 use std::fmt;
@@ -142,6 +144,8 @@ pub struct CallSecret {
     pub secret: SecretString,
     /// Scope stored for this grant.
     pub scope: Scope,
+    /// What the sign-in that made this grant found out about each service.
+    pub services: Services,
 }
 
 /// Personal API key. The key is shown once and is the only copy of its seal key.
@@ -163,6 +167,7 @@ pub struct ApiKey {
 pub struct ValidatedCredentials {
     apple_id: AppleId,
     secret: SecretString,
+    services: Services,
 }
 
 impl ValidatedCredentials {
@@ -177,16 +182,17 @@ impl ValidatedCredentials {
         validator_for: impl FnOnce(&Credentials) -> V,
     ) -> Result<Self, StoreError> {
         let validator = validator_for(&credentials);
-        let accepted = match validator.validate().await {
-            Ok(report) => report.any_service_ok(),
-            Err(_err) => false,
+        let report = match validator.validate().await {
+            Ok(report) if report.any_service_ok() => report,
+            Ok(_) | Err(_) => return Err(StoreError::Rejected),
         };
-        if !accepted {
-            return Err(StoreError::Rejected);
-        }
         let apple_id = credentials.apple_id.clone();
         let secret = credentials.with_secret(|value| SecretString::from(value));
-        Ok(Self { apple_id, secret })
+        Ok(Self {
+            apple_id,
+            secret,
+            services: Services::from_report(&report),
+        })
     }
 }
 
@@ -285,9 +291,30 @@ impl Store {
         scope: Scope,
         now: SystemTime,
     ) -> Result<IssuedCode, StoreError> {
+        self.seal_with(apple_id, asp, scope, &Services::default(), now)
+            .await
+    }
+
+    async fn seal_with(
+        &self,
+        apple_id: &AppleId,
+        asp: &SecretString,
+        scope: Scope,
+        services: &Services,
+        now: SystemTime,
+    ) -> Result<IssuedCode, StoreError> {
         let now = unix(now)?;
         let mut tx = begin(&self.pool).await?;
-        let result = seal_in(&mut tx, apple_id, asp, scope, now, self.signup_cap).await;
+        let result = seal_in(
+            &mut tx,
+            apple_id,
+            asp,
+            scope,
+            services,
+            now,
+            self.signup_cap,
+        )
+        .await;
         settle(tx, result).await
     }
 
@@ -303,8 +330,14 @@ impl Store {
         scope: Scope,
         now: SystemTime,
     ) -> Result<IssuedCode, StoreError> {
-        self.seal_under_code(&validated.apple_id, &validated.secret, scope, now)
-            .await
+        self.seal_with(
+            &validated.apple_id,
+            &validated.secret,
+            scope,
+            &validated.services,
+            now,
+        )
+        .await
     }
 
     /// Exchanges a code for an access token and a refresh token, then deletes the code ciphertext.
@@ -445,25 +478,20 @@ impl Store {
     ) -> Result<ApiKey, StoreError> {
         let now = unix(now)?;
         let mut tx = begin(&self.pool).await?;
-        let result = mint_key_in(
-            &mut tx,
-            &validated.apple_id,
-            &validated.secret,
-            name,
-            scope,
-            now,
-            self.signup_cap,
-        )
-        .await;
+        let result = mint_key_in(&mut tx, validated, name, scope, now, self.signup_cap).await;
         settle(tx, result).await
     }
 }
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Version 2 added `accounts.suspended`.
 const UPGRADE_1_TO_2: &str =
     "ALTER TABLE accounts ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0;";
+
+/// Version 3 added `grants.services`: what the sign-in found out about each service, as JSON
+/// with no secret. A grant made before it has none, which reads as every service on.
+const UPGRADE_2_TO_3: &str = "ALTER TABLE grants ADD COLUMN services TEXT;";
 
 async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
@@ -472,7 +500,11 @@ async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
         .map_err(internal)?;
     match version {
         0 => apply_schema_script(pool, include_str!("schema.sql"), SCHEMA_VERSION).await?,
-        1 => apply_schema_script(pool, UPGRADE_1_TO_2, SCHEMA_VERSION).await?,
+        1 => {
+            apply_schema_script(pool, UPGRADE_1_TO_2, 2).await?;
+            apply_schema_script(pool, UPGRADE_2_TO_3, SCHEMA_VERSION).await?;
+        }
+        2 => apply_schema_script(pool, UPGRADE_2_TO_3, SCHEMA_VERSION).await?,
         SCHEMA_VERSION => {}
         _ => {
             return Err(internal(StoreFault(
@@ -568,6 +600,7 @@ struct Hit {
     expires_at: Option<i64>,
     status: String,
     scope: String,
+    services: Option<String>,
     apple_id: String,
     suspended: bool,
 }
@@ -613,20 +646,22 @@ async fn seal_in(
     apple_id: &AppleId,
     asp: &SecretString,
     scope: Scope,
+    services: &Services,
     now: i64,
     cap: Option<usize>,
 ) -> Result<IssuedCode, StoreError> {
     let account = upsert_account(tx, apple_id, now, cap).await?;
     let grant = random_bytes::<16>()?;
     sqlx::query(
-        "INSERT INTO grants (id, account_id, kind, name, scope, status, created_at)
-         VALUES (?, ?, ?, NULL, ?, ?, ?)",
+        "INSERT INTO grants (id, account_id, kind, name, scope, status, services, created_at)
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
     )
     .bind(grant.as_slice())
     .bind(account)
     .bind(KIND_OAUTH)
     .bind(scope.as_str())
     .bind(STATUS_ACTIVE)
+    .bind(services_json(services)?)
     .bind(now)
     .execute(&mut **tx)
     .await
@@ -652,20 +687,28 @@ async fn seal_in(
     })
 }
 
+fn services_json(services: &Services) -> Result<String, StoreError> {
+    serde_json::to_string(services).map_err(internal)
+}
+
 async fn mint_key_in(
     tx: &mut WriteTx,
-    apple_id: &AppleId,
-    asp: &SecretString,
+    validated: &ValidatedCredentials,
     name: &str,
     scope: Scope,
     now: i64,
     cap: Option<usize>,
 ) -> Result<ApiKey, StoreError> {
+    let ValidatedCredentials {
+        apple_id,
+        secret: asp,
+        services,
+    } = validated;
     let account = upsert_account(tx, apple_id, now, cap).await?;
     let grant = random_bytes::<16>()?;
     sqlx::query(
-        "INSERT INTO grants (id, account_id, kind, name, scope, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO grants (id, account_id, kind, name, scope, status, services, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(grant.as_slice())
     .bind(account)
@@ -673,6 +716,7 @@ async fn mint_key_in(
     .bind(name)
     .bind(scope.as_str())
     .bind(STATUS_ACTIVE)
+    .bind(services_json(services)?)
     .bind(now)
     .execute(&mut **tx)
     .await
@@ -731,7 +775,16 @@ async fn open_in(tx: &mut WriteTx, access: &str, now: i64) -> Result<CallSecret,
         apple_id: AppleId::try_from(hit.apple_id.as_str()).map_err(internal)?,
         secret,
         scope: Scope::parse(&hit.scope)?,
+        services: services_of(&hit)?,
     })
+}
+
+/// The services a grant's sign-in recorded. A grant from before they were recorded has all on.
+fn services_of(hit: &Hit) -> Result<Services, StoreError> {
+    hit.services
+        .as_deref()
+        .map_or_else(|| Ok(Services::default()), serde_json::from_str)
+        .map_err(internal)
 }
 
 async fn refresh_in(
@@ -797,6 +850,7 @@ async fn load(tx: &mut WriteTx, token: &str) -> Result<Hit, StoreError> {
         "SELECT seals.id AS seal_id, seals.grant_id AS grant_id, seals.purpose AS purpose,
                 seals.nonce AS nonce, seals.ciphertext AS ciphertext,
                 seals.expires_at AS expires_at, grants.status AS status, grants.scope AS scope,
+                grants.services AS services,
                 accounts.apple_id AS apple_id, accounts.suspended AS suspended
          FROM seals
          JOIN grants ON grants.id = seals.grant_id
@@ -824,6 +878,7 @@ fn hit_from(row: &SqliteRow) -> Result<Hit, sqlx::Error> {
         expires_at: row.try_get("expires_at")?,
         status: row.try_get("status")?,
         scope: row.try_get("scope")?,
+        services: row.try_get("services")?,
         apple_id: row.try_get("apple_id")?,
         suspended: row.try_get::<i64, _>("suspended")? != 0,
     })
@@ -1239,7 +1294,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            version, 2,
+            version, 3,
             "the schema records user_version so a later package can migrate"
         );
         let temp = TempDb::new();
@@ -1252,7 +1307,7 @@ mod tests {
             .fetch_one(&opened.pool)
             .await
             .unwrap();
-        assert_eq!(again, 2, "opening an existing database keeps user_version");
+        assert_eq!(again, 3, "opening an existing database keeps user_version");
     }
 
     #[tokio::test]
@@ -1267,6 +1322,7 @@ mod tests {
             .unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             "CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, apple_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+             CREATE TABLE grants (id BLOB NOT NULL PRIMARY KEY, account_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT, scope TEXT NOT NULL, status TEXT NOT NULL, failure_count INTEGER NOT NULL DEFAULT 0, first_failure_at INTEGER, created_at INTEGER NOT NULL);
              INSERT INTO accounts (apple_id, created_at) VALUES ('ada@icloud.com', 1);
              PRAGMA user_version = 1;"
                 .to_owned(),
@@ -1283,6 +1339,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(suspended, 0, "an account that existed is not suspended");
+        store.ready().await.expect("the upgraded database is ready");
+    }
+
+    #[tokio::test]
+    async fn a_version_2_database_gains_grant_services_and_reads_them_as_all_on() {
+        let temp = TempDb::new();
+        let options = SqliteConnectOptions::new()
+            .filename(temp.path())
+            .create_if_missing(true);
+        let old = SqlitePoolOptions::new()
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            "CREATE TABLE grants (id BLOB NOT NULL PRIMARY KEY, account_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT, scope TEXT NOT NULL, status TEXT NOT NULL, failure_count INTEGER NOT NULL DEFAULT 0, first_failure_at INTEGER, created_at INTEGER NOT NULL);
+             INSERT INTO grants (id, account_id, kind, scope, status, created_at) VALUES (x'00', 1, 'oauth', 'read', 'active', 1);
+             PRAGMA user_version = 2;"
+                .to_owned(),
+        ))
+        .execute(&old)
+        .await
+        .unwrap();
+        old.close().await;
+
+        let store = Store::open(&temp.path()).await.unwrap();
+
+        let services: Option<String> = sqlx::query_scalar("SELECT services FROM grants")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            services, None,
+            "a grant that existed has no recorded services"
+        );
         store.ready().await.expect("the upgraded database is ready");
     }
 

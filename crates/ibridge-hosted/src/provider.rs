@@ -38,7 +38,7 @@ use tokio::time::Instant;
 
 use crate::middleware::CallAuth;
 use crate::server::{ScopedServers, ServerSource, call_auth};
-use crate::store::{GrantId, Store};
+use crate::store::{GrantId, Services, Store};
 
 /// Tool calls one account may have in flight at once.
 const CALLS_PER_ACCOUNT: usize = 4;
@@ -117,6 +117,9 @@ struct Watch {
     account_url: String,
     clock: Box<dyn Fn() -> SystemTime + Send + Sync>,
 }
+
+/// The cache's entries: one per account and per set of services its grants found on.
+type Entries<S> = HashMap<(AppleId, Services), Entry<S>>;
 
 struct Entry<S> {
     servers: Arc<ScopedServers<S>>,
@@ -228,15 +231,17 @@ impl<B: Backend> std::fmt::Debug for AccountCache<B> {
     }
 }
 
-/// Providers for every account with recent calls, keyed by the exact Apple ID the store holds.
+/// Providers for every account with recent calls, keyed by the exact Apple ID the store holds
+/// and by what the grant's sign-in found out about each service.
 ///
 /// Not by the lowercased address: the store treats `Ada@icloud.com` and `ada@icloud.com`
-/// as two accounts, and a pool logs in as the one spelling it was built for.
+/// as two accounts, and a pool logs in as the one spelling it was built for. Two grants of
+/// one account that found different services on get separate entries, because their tool lists differ.
 pub struct AccountCache<B: Backend> {
     backend: B,
     idle: Duration,
     watch: Arc<Watch>,
-    entries: Arc<Mutex<HashMap<AppleId, Entry<AccountServer<B>>>>>,
+    entries: Arc<Mutex<Entries<AccountServer<B>>>>,
 }
 
 impl<B: Backend> AccountCache<B> {
@@ -299,7 +304,7 @@ impl<B: Backend> AccountCache<B> {
         self.entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .remove(apple_id);
+            .retain(|(owner, _), _| owner != apple_id);
     }
 
     /// Closes idle accounts on a timer, so a quiet server does not keep sockets open.
@@ -324,16 +329,21 @@ impl<B: Backend> AccountCache<B> {
         })
     }
 
-    fn build(&self, apple_id: &AppleId) -> Entry<AccountServer<B>> {
+    fn build(&self, apple_id: &AppleId, services: &Services) -> Entry<AccountServer<B>> {
         let providers = self.backend.open(apple_id);
+        let status = |reason: &Option<String>| {
+            reason
+                .clone()
+                .map_or(ServiceStatus::On, |reason| ServiceStatus::Off { reason })
+        };
         let account = AccountSnapshot {
             apple_id: apple_id.clone(),
-            mail: ServiceStatus::On,
-            calendar: ServiceStatus::On,
-            contacts: ServiceStatus::On,
+            mail: status(&services.mail),
+            calendar: status(&services.calendar),
+            contacts: status(&services.contacts),
         };
         let entries = Arc::downgrade(&self.entries);
-        let key = apple_id.clone();
+        let key = (apple_id.clone(), services.clone());
         let gate = Arc::new(Gate::new(Box::new(move || {
             if let Some(entries) = entries.upgrade() {
                 entries
@@ -348,10 +358,21 @@ impl<B: Backend> AccountCache<B> {
             } else {
                 IbridgeServer::read_only(account.clone(), Arc::clone(&providers.mail))
             };
+            let mut inner = base
+                .with_calendar(Arc::clone(&providers.calendar))
+                .with_contacts(Arc::clone(&providers.contacts));
+            // A service the sign-in found off lists no tools; `account_status` says why.
+            if services.mail.is_some() {
+                inner = inner.without_mail();
+            }
+            if services.calendar.is_some() {
+                inner = inner.without_calendar();
+            }
+            if services.contacts.is_some() {
+                inner = inner.without_contacts();
+            }
             Account {
-                inner: base
-                    .with_calendar(Arc::clone(&providers.calendar))
-                    .with_contacts(Arc::clone(&providers.contacts)),
+                inner,
                 gate: Arc::clone(&gate),
                 watch: Arc::clone(&self.watch),
             }
@@ -374,8 +395,8 @@ impl<B: Backend> ServerSource for AccountCache<B> {
         // Also dropped here, so a cache with no sweeper still forgets idle accounts.
         entries.retain(|_, entry| !entry.gate.expired(self.idle));
         let entry = entries
-            .entry(call.apple_id().clone())
-            .or_insert_with(|| self.build(call.apple_id()));
+            .entry((call.apple_id().clone(), call.services().clone()))
+            .or_insert_with(|| self.build(call.apple_id(), call.services()));
         entry.gate.touch();
         Arc::clone(&entry.servers)
     }

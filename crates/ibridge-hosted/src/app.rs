@@ -58,7 +58,9 @@ mod tests {
 
     use crate::logging::json_subscriber;
     use crate::store::{Scope, Store};
-    use crate::test_app::{SECRET_SUBJECT, app_over, call, token};
+    use crate::test_app::{
+        SECRET_SUBJECT, app_over, call, rpc_request, send, token, token_after_check,
+    };
 
     /// Collects what the subscriber writes.
     #[derive(Clone, Default)]
@@ -136,5 +138,114 @@ mod tests {
             !text.to_ascii_lowercase().contains("authorization"),
             "no header is logged:\n{text}"
         );
+    }
+
+    /// A CalDAV-only sign-in: IMAP refused, the DAV services accepted.
+    fn caldav_only() -> ibridge_auth::ValidationReport {
+        use ibridge_auth::{ServiceCheck, ValidationReport};
+        ValidationReport {
+            mail: ServiceCheck::Failed {
+                reason: "mail login was refused".to_owned(),
+            },
+            calendar: ServiceCheck::Ok,
+            contacts: ServiceCheck::Ok,
+        }
+    }
+
+    #[tokio::test]
+    async fn hosted_status_reflects_sign_in_report() {
+        let store = Store::memory().await.expect("store");
+        let app = app_over(&store).await;
+        let bearer = token_after_check(
+            &store,
+            "ada@icloud.com",
+            "app-pass-word-1234",
+            Scope::ReadWrite,
+            caldav_only(),
+        )
+        .await;
+
+        let (status, body) = call(&app, &bearer, "account_status", &json!({})).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let services = &body_json(&body)["structuredContent"]["services"];
+        let find = |name: &str| {
+            services
+                .as_array()
+                .and_then(|all| all.iter().find(|service| service["name"] == name))
+                .unwrap_or_else(|| panic!("{name} is in the status: {body}"))
+        };
+        assert_eq!(find("mail")["status"], "off", "mail is off: {body}");
+        assert_eq!(
+            find("mail")["reason"],
+            "mail login was refused",
+            "the sign-in's reason is shown: {body}"
+        );
+        assert_eq!(find("calendar")["status"], "on", "{body}");
+        assert_eq!(find("contacts")["status"], "on", "{body}");
+    }
+
+    #[tokio::test]
+    async fn caldav_only_grant_lists_no_mail_tools() {
+        let store = Store::memory().await.expect("store");
+        let app = app_over(&store).await;
+        let caldav = token_after_check(
+            &store,
+            "ada@icloud.com",
+            "app-pass-word-1234",
+            Scope::ReadWrite,
+            caldav_only(),
+        )
+        .await;
+        let everything = token(
+            &store,
+            "bob@icloud.com",
+            "app-pass-word-5678",
+            Scope::ReadWrite,
+        )
+        .await;
+
+        let names = |bearer: String| {
+            let app = app.clone();
+            async move {
+                let reply = send(&app, rpc_request(&bearer, "tools/list", None, json!({}))).await;
+                assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+                body_json(&reply.text)["tools"]
+                    .as_array()
+                    .expect("a tool list")
+                    .iter()
+                    .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let listed = names(caldav).await;
+        assert!(
+            !listed.iter().any(|name| name.starts_with("mail_")),
+            "no mail tool for a CalDAV-only grant: {listed:?}"
+        );
+        assert!(
+            listed.contains(&"account_status".to_owned()),
+            "account_status stays: {listed:?}"
+        );
+        assert!(
+            listed.contains(&"calendar_list_events".to_owned()),
+            "calendar tools stay: {listed:?}"
+        );
+        let full = names(everything).await;
+        assert!(
+            full.iter().any(|name| name.starts_with("mail_")),
+            "a grant that signed in to everything keeps its mail tools: {full:?}"
+        );
+    }
+
+    /// The JSON in a response body, which may arrive as a bare object or one event-stream `data:` line.
+    fn body_json(body: &str) -> Value {
+        let payload = body
+            .lines()
+            .find_map(|line| line.strip_prefix("data:"))
+            .unwrap_or(body);
+        let value: Value = serde_json::from_str(payload.trim())
+            .unwrap_or_else(|error| panic!("a JSON body ({error}): {body}"));
+        value.get("result").cloned().unwrap_or(value)
     }
 }

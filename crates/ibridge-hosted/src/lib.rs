@@ -48,4 +48,6 @@ pub use middleware::CallAuth;
 pub use provider::{Account, AccountCache, AccountServer, Backend, Providers};
 pub use serve::{BACKUP_DIR, DATABASE_FILE, ServeError, serve};
 pub use server::{HostedHandler, ScopedServers, ServerSource, mcp_router};
-pub use store::{NotReady, RedactingFields, Store, StoreError, ValidatedCredentials, redact};
+pub use store::{
+    NotReady, RedactingFields, Services, Store, StoreError, ValidatedCredentials, redact,
+};

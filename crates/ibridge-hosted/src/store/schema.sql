@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS grants (
     name TEXT,
     scope TEXT NOT NULL,
     status TEXT NOT NULL,
+    services TEXT,
     failure_count INTEGER NOT NULL DEFAULT 0,
     first_failure_at INTEGER,
     created_at INTEGER NOT NULL

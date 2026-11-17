@@ -18,7 +18,7 @@ use axum::response::{IntoResponse as _, Response};
 use ibridge_auth::Credentials;
 use ibridge_core::AppleId;
 
-use crate::store::{GrantId, Scope, Store, StoreError};
+use crate::store::{GrantId, Scope, Services, Store, StoreError};
 
 /// Who is calling and what the call may do, with the password open for this call only.
 ///
@@ -28,10 +28,17 @@ use crate::store::{GrantId, Scope, Store, StoreError};
 pub struct CallAuth {
     grant: GrantId,
     scope: Scope,
+    services: Services,
     credentials: Arc<Credentials>,
 }
 
 impl CallAuth {
+    /// What the sign-in behind this grant found out about each service.
+    #[must_use]
+    pub fn services(&self) -> &Services {
+        &self.services
+    }
+
     /// The grant or API key that presented the token.
     #[must_use]
     pub fn grant(&self) -> GrantId {
@@ -94,6 +101,7 @@ async fn authenticate(State(gate): State<Arc<Gate>>, mut request: Request, next:
             request.extensions_mut().insert(CallAuth {
                 grant: opened.grant_id,
                 scope: opened.scope,
+                services: opened.services,
                 credentials: Arc::new(Credentials::new(opened.apple_id, opened.secret)),
             });
             // The token is a key. Nothing downstream, including the MCP service that

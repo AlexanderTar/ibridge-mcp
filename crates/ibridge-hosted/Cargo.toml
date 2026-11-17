@@ -1,0 +1,61 @@
+[package]
+name = "ibridge-hosted"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hosted OAuth server and token-sealed credential store."
+
+[features]
+# Fakes for tests that run a hosted server without iCloud.
+testing = ["dep:ibridge-testkit"]
+
+[dependencies]
+aes-gcm.workspace = true
+askama.workspace = true
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+getrandom.workspace = true
+hkdf.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
+ibridge-auth.workspace = true
+ibridge-calendar.workspace = true
+ibridge-contacts.workspace = true
+ibridge-core.workspace = true
+ibridge-dav.workspace = true
+ibridge-mail.workspace = true
+ibridge-server.workspace = true
+ibridge-testkit = { workspace = true, optional = true }
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+secrecy.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+ibridge-dav = { workspace = true, features = ["test-hosts"] }
+ibridge-mail = { workspace = true, features = ["test-hosts"] }
+ibridge-testkit.workspace = true
+tempfile.workspace = true
+testcontainers.workspace = true
+rmcp = { workspace = true, features = ["auth", "client"] }
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

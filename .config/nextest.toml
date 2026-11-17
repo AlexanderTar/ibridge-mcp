@@ -1,0 +1,20 @@
+# Docker-backed tests are named `integration::…` or `…::integration::…`.
+# `binary(integration)` is not used: nextest rejects a binary predicate
+# that matches no binary, and `tests/integration.rs` does not exist until
+# a Docker suite lands. A top-level test in that file has no module prefix,
+# so it belongs in `mod integration`. `group()` is command-line only, so
+# this filter is what puts them in the integration test group and what the
+# default profile excludes.
+
+[test-groups.integration]
+max-threads = 1
+
+[profile.default]
+default-filter = 'not test(/(^|::)integration::/)'
+
+[[profile.default.overrides]]
+filter = 'test(/(^|::)integration::/)'
+test-group = 'integration'
+
+[profile.integration]
+default-filter = 'test(/(^|::)integration::/)'

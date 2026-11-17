@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<multistatus xmlns="DAV:">
+
+    
+    
+    <response xmlns="DAV:">
+        <href>/0000000000/calendars/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                                <displayname xmlns="DAV:">Test User</displayname>
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VEVENT' xmlns='urn:ietf:params:xml:ns:caldav'/><comp name='VTODO' xmlns='urn:ietf:params:xml:ns:caldav'/><comp name='VFREEBUSY' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+            
+    </response>
+    
+    
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/collection-1/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                                <displayname xmlns="DAV:">ibridge-test</displayname>
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VEVENT' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+            
+        </response>
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/collection-2/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                                <displayname xmlns="DAV:">Test User</displayname>
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VTODO' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+            
+        </response>
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/collection-3/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                                <displayname xmlns="DAV:">Test User</displayname>
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/><shared-owner xmlns="http://calendarserver.org/ns/"/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VTODO' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+            
+        </response>
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/collection-4/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                                <displayname xmlns="DAV:">ibridge-test</displayname>
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VTODO' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+            
+        </response>
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/Test User/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                                <displayname xmlns="DAV:">Test User</displayname>
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VEVENT' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+            
+        </response>
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/inbox/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><schedule-inbox xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VEVENT' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+                    <propstat>
+                        <prop>
+                            
+                                
+                                    <displayname xmlns="DAV:"/>
+                                
+                            
+                                
+                            
+                                
+                            
+                        </prop>
+                        <status>HTTP/1.1 404 Not Found</status>
+                    </propstat>
+                
+            
+        </response>
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/notification/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><notification xmlns="http://calendarserver.org/ns/"/></resourcetype>
+                            
+                        
+                            
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+                    <propstat>
+                        <prop>
+                            
+                                
+                                    <displayname xmlns="DAV:"/>
+                                
+                            
+                                
+                            
+                                
+                                    <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"/>
+                                
+                            
+                        </prop>
+                        <status>HTTP/1.1 404 Not Found</status>
+                    </propstat>
+                
+            
+        </response>
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/outbox/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><schedule-outbox xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VEVENT' xmlns='urn:ietf:params:xml:ns:caldav'/><comp name='VTODO' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+                    <propstat>
+                        <prop>
+                            
+                                
+                                    <displayname xmlns="DAV:"/>
+                                
+                            
+                                
+                            
+                                
+                            
+                        </prop>
+                        <status>HTTP/1.1 404 Not Found</status>
+                    </propstat>
+                
+            
+        </response>
+        
+        <response xmlns="DAV:">
+            <href>/0000000000/calendars/collection-5/</href>
+            
+                <propstat>
+                    <prop>
+                        
+                            
+                                <displayname xmlns="DAV:">Test User</displayname>
+                            
+                        
+                            
+                                <resourcetype xmlns="DAV:"><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/><shared xmlns="http://calendarserver.org/ns/"/></resourcetype>
+                            
+                        
+                            
+                                <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name='VTODO' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>
+                            
+                        
+                    </prop>
+                    <status>HTTP/1.1 200 OK</status>
+                </propstat>
+                
+            
+        </response>
+        
+    
+    
+    
+    
+
+
+</multistatus>

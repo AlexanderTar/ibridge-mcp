@@ -1,0 +1,19 @@
+[package]
+name = "ibridge-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Domain newtypes, provider traits and the core error type."
+
+[dependencies]
+base64.workspace = true
+thiserror.workspace = true
+trait-variant.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

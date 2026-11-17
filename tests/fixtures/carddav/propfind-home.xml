@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:">
+
+	<response>
+		<href>/0000000000/carddavhome/</href>
+		
+		<propstat>
+			<prop>
+			
+			
+            
+			
+			
+			
+			
+            
+            
+            
+            
+            
+
+            
+            
+            
+            
+            
+			
+			
+            
+            
+            
+            
+            
+            
+				<resourcetype>
+					<collection/>
+
+				</resourcetype>
+			
+            
+            
+            
+            
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+			</prop>
+			<status>HTTP/1.1 200 OK</status>
+		</propstat>
+		
+		
+		<propstat>
+			<prop>
+				<displayname/>
+
+			</prop>
+			<status>HTTP/1.1 404 Not Found</status>
+		</propstat>
+        
+	</response>
+
+	<response>
+		<href>/0000000000/carddavhome/card/</href>
+		
+		<propstat>
+			<prop>
+			
+			
+            
+			
+			
+			
+			
+            
+            
+            
+            
+            
+
+            
+            
+            
+            
+            
+			
+			
+            
+            
+            
+            
+            
+            
+				<resourcetype>
+					<collection/>
+<addressbook xmlns="urn:ietf:params:xml:ns:carddav"/>
+
+				</resourcetype>
+			
+            
+            
+            
+            
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+			</prop>
+			<status>HTTP/1.1 200 OK</status>
+		</propstat>
+		
+		
+		<propstat>
+			<prop>
+				<displayname/>
+
+			</prop>
+			<status>HTTP/1.1 404 Not Found</status>
+		</propstat>
+        
+	</response>
+
+</multistatus>

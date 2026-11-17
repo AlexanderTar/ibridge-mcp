@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<multistatus xmlns="DAV:">
+    
+        <response>
+            <href>/0000000000/calendars/collection-4/</href>
+            <propstat>
+                <prop>
+                    
+                        
+                            <getetag xmlns="DAV:">"mwl579jl"</getetag>
+                        
+                    
+                        
+                        
+                    
+                </prop>
+                <status>HTTP/1.1 200 OK</status>
+            </propstat>
+            
+                <propstat>
+                    <prop>
+                        
+                            <calendar-data xmlns="urn:ietf:params:xml:ns:caldav"/>
+                        
+                    </prop>
+                    <status>HTTP/1.1 404 Not Found</status>
+                </propstat>
+            
+        </response>
+    
+    
+        <response>
+            <href>/0000000000/calendars/collection-4/378291b90b874bd23b58b080fc2c316d.ics</href>
+            <propstat>
+                <prop>
+                    
+                        
+                            <getetag xmlns="DAV:">"mwl58sc7"</getetag>
+                        
+                    
+                        
+                            <calendar-data xmlns="urn:ietf:params:xml:ns:caldav"><![CDATA[BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//ibridge//calendar//EN
+BEGIN:VTODO
+UID:378291b90b874bd23b58b080fc2c316d
+DTSTAMP:20261117T202722Z
+SUMMARY:[ibridge-fixture] 70ef6d1dd14f4309 reminder
+DESCRIPTION:recorded by ibridge xtask
+DUE:20261202T090000Z
+PRIORITY:5
+STATUS:NEEDS-ACTION
+END:VTODO
+END:VCALENDAR
+]]></calendar-data>
+                        
+                    
+                </prop>
+                <status>HTTP/1.1 200 OK</status>
+            </propstat>
+            
+        </response>
+    
+</multistatus>

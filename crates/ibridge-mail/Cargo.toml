@@ -1,0 +1,37 @@
+[package]
+name = "ibridge-mail"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "IMAP and SMTP mail provider."
+
+[features]
+# Cleartext SMTP to a loopback server, for GreenMail in another crate's tests.
+# Off by default: production builds speak STARTTLS to iCloud only.
+test-hosts = []
+
+[dependencies]
+async-imap.workspace = true
+ibridge-auth.workspace = true
+ibridge-core.workspace = true
+lettre.workspace = true
+mail-builder.workspace = true
+mail-parser.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+ibridge-testkit.workspace = true
+proptest.workspace = true
+testcontainers.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

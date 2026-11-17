@@ -1,0 +1,11 @@
+Return-path: <user@example.com>
+From: <user@example.com>
+To: <user@example.com>
+Subject: [ibridge-fixture] 08a80e13221fd920 seed two
+Message-ID: <msg-2@scrub.invalid>
+Date: Tue, 17 Nov 2026 20:24:03 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+marker body two

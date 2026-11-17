@@ -1,0 +1,64 @@
+[package]
+name = "ibridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "iCloud Mail, Calendar, Reminders and Contacts MCP server."
+
+[features]
+default = ["mail", "calendar", "contacts", "stdio", "http"]
+mail = ["dep:ibridge-mail"]
+calendar = ["dep:ibridge-calendar", "dep:ibridge-dav"]
+contacts = ["dep:ibridge-contacts", "dep:ibridge-dav"]
+stdio = ["rmcp/transport-io"]
+http = ["dep:base64", "dep:getrandom", "dep:secrecy", "dep:subtle"]
+hosted = ["http", "dep:ibridge-hosted"]
+
+[dependencies]
+anyhow.workspace = true
+base64 = { workspace = true, optional = true }
+clap.workspace = true
+getrandom = { workspace = true, optional = true }
+ibridge-auth.workspace = true
+ibridge-calendar = { workspace = true, optional = true }
+ibridge-contacts = { workspace = true, optional = true }
+ibridge-core.workspace = true
+ibridge-dav = { workspace = true, optional = true }
+ibridge-hosted = { workspace = true, optional = true }
+ibridge-mail = { workspace = true, optional = true }
+ibridge-server.workspace = true
+keyring-core.workspace = true
+rmcp = { workspace = true, features = ["server"] }
+rpassword.workspace = true
+secrecy = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+subtle = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["signal"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", default-features = false, features = ["keychain"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store = "1"
+# The store leaves secret-service without a crypto backend, which fails to compile.
+secret-service = { version = "5", features = ["crypto-rust"] }
+
+[dev-dependencies]
+ibridge-testkit.workspace = true
+insta.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["secret-service"]
+
+[lints]
+workspace = true

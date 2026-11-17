@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Connect iCloud to {{ client_name }}{% endblock %}
+{% block body %}
+<h1>Connect iCloud to {{ client_name }}</h1>
+<p><strong>{{ client_name }}</strong> is asking to use your iCloud Mail, Calendar, Reminders and Contacts. After you sign in, your browser goes back to <strong>{{ redirect_host }}</strong>.</p>
+{% if let Some(message) = error %}<p class="error" role="alert">{{ message }}</p>{% endif %}
+<form method="post" action="/authorize" autocomplete="off">
+<input type="hidden" name="response_type" value="code">
+<input type="hidden" name="client_id" value="{{ client_id }}">
+<input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+<input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+<input type="hidden" name="code_challenge_method" value="S256">
+{% if let Some(state) = state %}<input type="hidden" name="state" value="{{ state }}">{% endif %}
+{% if let Some(scope) = scope %}<input type="hidden" name="scope" value="{{ scope }}">{% endif %}
+{% if let Some(resource) = resource %}<input type="hidden" name="resource" value="{{ resource }}">{% endif %}
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="apple_id">Your primary iCloud address</label>
+<input id="apple_id" name="apple_id" type="email" inputmode="email" autocomplete="username" required maxlength="254" value="{{ apple_id }}">
+<label for="password">App-specific password</label>
+<input id="password" name="password" type="password" autocomplete="off" required maxlength="64">
+<p class="hint">Never use your main Apple ID password here. <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">Create an app-specific password</a> in your Apple Account, then paste it above. Use your iCloud address (@icloud.com, @me.com or @mac.com), which may differ from your Apple ID email.</p>
+<label class="check" for="read_only"><input id="read_only" name="read_only" type="checkbox"{% if read_only %} checked{% endif %}><span>Read-only access. {{ client_name }} can read but cannot send, move, change or delete anything.</span></label>
+<button type="submit">Connect</button>
+</form>
+{% endblock %}

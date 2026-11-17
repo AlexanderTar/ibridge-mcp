@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:" xmlns:CD="urn:ietf:params:xml:ns:carddav" xmlns:CS="http://calendarserver.org/ns/">
+
+    <response>
+        <href>/0000000000/carddavhome/card/1D4D2E87-C0BE-44EA-BFA1-50BDCD266251.vcf</href>
+        
+        <propstat>
+            <prop>
+                <getetag>"mwl5fx6e"</getetag>
+                <address-data xmlns="urn:ietf:params:xml:ns:carddav">BEGIN:VCARD&#13;
+VERSION:3.0&#13;
+PRODID:-//ibridge//contacts//EN&#13;
+UID:1D4D2E87-C0BE-44EA-BFA1-50BDCD266251&#13;
+N:contact;[ibridge-fixture] 24f9353ca5024474;;;&#13;
+FN:[ibridge-fixture] 24f9353ca5024474 contact&#13;
+EMAIL;TYPE=INTERNET:marker@example.invalid&#13;
+TEL;TYPE=VOICE:+1 555 0100&#13;
+END:VCARD&#13;
+</address-data>
+                     
+                        <creationdate>Tue, 17 Nov 2026 20:32:55 GMT</creationdate>
+                     
+                     
+                        <getlastmodified>Tue, 17 Nov 2026 20:32:55 GMT</getlastmodified>
+                     
+                     
+                        <card-type xmlns="http://apple.com/ns/ical/">CONTACT</card-type>
+                        <guardian-whitelisted xmlns="http://apple.com/ns/ical/">false</guardian-whitelisted>
+                     
+            </prop>
+            <status>HTTP/1.1 200 OK</status>
+        </propstat>
+        
+    </response>
+
+</multistatus>

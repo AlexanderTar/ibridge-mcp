@@ -1,0 +1,26 @@
+[package]
+name = "ibridge-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Scripted protocol fakes, fixtures and test containers."
+publish = false
+
+[dependencies]
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper-util.workspace = true
+imap-codec.workspace = true
+testcontainers.workspace = true
+tokio.workspace = true
+wiremock.workspace = true
+
+[dev-dependencies]
+async-imap.workspace = true
+futures.workspace = true
+
+[lints]
+workspace = true

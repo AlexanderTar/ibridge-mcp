@@ -1,0 +1,36 @@
+[package]
+name = "ibridge-dav"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared CalDAV and CardDAV client."
+
+[features]
+# Loopback hosts and cleartext HTTP, for Radicale in another crate's tests.
+# Off by default: production builds speak https to iCloud only.
+test-hosts = []
+
+[dependencies]
+base64.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
+ibridge-auth.workspace = true
+ibridge-core.workspace = true
+libdav.workspace = true
+roxmltree.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+ibridge-testkit.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

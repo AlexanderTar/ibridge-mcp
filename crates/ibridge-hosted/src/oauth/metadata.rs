@@ -5,8 +5,6 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{Value, json};
@@ -14,7 +12,7 @@ use serde_json::{Value, json};
 use super::Shared;
 
 const PRM_PATH: &str = "/.well-known/oauth-protected-resource";
-const PRM_MCP_PATH: &str = "/.well-known/oauth-protected-resource/mcp";
+pub(super) const PRM_MCP_PATH: &str = "/.well-known/oauth-protected-resource/mcp";
 const AS_PATH: &str = "/.well-known/oauth-authorization-server";
 
 pub(super) fn routes(shared: &Arc<Shared>) -> Router {
@@ -22,9 +20,6 @@ pub(super) fn routes(shared: &Arc<Shared>) -> Router {
         .route(PRM_PATH, get(protected_resource))
         .route(PRM_MCP_PATH, get(protected_resource))
         .route(AS_PATH, get(authorization_server))
-        // ponytail: hosted MCP auth replaces this placeholder with the real
-        // endpoint, which checks the access token. Until then no token passes.
-        .route("/mcp", axum::routing::any(challenge))
         .with_state(Arc::clone(shared))
 }
 
@@ -52,20 +47,6 @@ async fn authorization_server(State(shared): State<Arc<Shared>>) -> Json<Value> 
         "client_id_metadata_document_supported": true,
         "authorization_response_iss_parameter_supported": true,
     }))
-}
-
-async fn challenge(State(shared): State<Arc<Shared>>) -> Response {
-    let value = format!(
-        r#"Bearer resource_metadata="{}""#,
-        shared.config.url(PRM_MCP_PATH)
-    );
-    let mut response = StatusCode::UNAUTHORIZED.into_response();
-    if let Ok(value) = HeaderValue::from_str(&value) {
-        response
-            .headers_mut()
-            .insert(header::WWW_AUTHENTICATE, value);
-    }
-    response
 }
 
 #[cfg(test)]

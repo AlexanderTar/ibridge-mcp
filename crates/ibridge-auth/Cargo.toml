@@ -12,6 +12,7 @@ ibridge-core.workspace = true
 keyring-core.workspace = true
 secrecy.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 trait-variant.workspace = true
 
 [dev-dependencies]

@@ -21,16 +21,28 @@ const ID_HEADERS: [&str; 4] = [
     "resent-message-id",
 ];
 
-/// Headers a relay adds on the way. They hold the sender's address, hostnames
-/// and queue ids, so they are dropped rather than edited.
-const TRACE_HEADERS: [&str; 6] = [
+/// Headers a relay adds on the way. They hold the sender's address, hostnames,
+/// queue ids and opaque per-account tokens, so they are dropped rather than edited.
+const TRACE_HEADERS: [&str; 15] = [
     "received",
     "x-originating-ip",
     "authentication-results",
     "received-spf",
     "arc-authentication-results",
     "x-apple-originating-ip",
+    "dkim-signature",
+    "original-recipient",
+    "x-apple-uuid",
+    "x-icl-repid",
+    "x-apple-movetofolder",
+    "x-apple-action",
+    "x-mantsh",
+    "x-jnj",
+    "x-authority-info-out",
 ];
+
+/// Header families that vary from message to message (Proofpoint scores, Cloudmark flags).
+const TRACE_PREFIXES: [&str; 2] = ["x-proofpoint-", "x-clx-"];
 const IPV4: &str = "192.0.2.1";
 const IPV6: &str = "2001:db8::1";
 
@@ -157,9 +169,10 @@ impl Scrubber {
                 id_header = name
                     .as_deref()
                     .is_some_and(|name| ID_HEADERS.contains(&name));
-                trace_header = name
-                    .as_deref()
-                    .is_some_and(|name| TRACE_HEADERS.contains(&name));
+                trace_header = name.as_deref().is_some_and(|name| {
+                    TRACE_HEADERS.contains(&name)
+                        || TRACE_PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+                });
             }
             if in_headers && trace_header {
                 continue;
@@ -218,6 +231,12 @@ Received: from [192.168.1.20] (unknown [203.0.113.77])\r\n\
 \tby relay-17.mr.icloud.com with ESMTPSA id 9f8e7d\r\n\
 \tfor <ada.lovelace@icloud.com>; Wed, 4 Nov 2026 12:30:45 +0000\r\n\
 X-Originating-IP: [2001:db8:85a3::8a2e:370:7334]\r\n\
+Dkim-Signature: v=1; d=icloud.com; b=opaque\r\n\
+X-Apple-UUID: 3e53b733\r\n\
+X-Proofpoint-Spam-Info: proofpointtoken\r\n\
+X-CLX-Spam: false\r\n\
+X-JNJ: opaquetoken\r\n\
+\tcontinued\r\n\
 Date: Wed, 4 Nov 2026 12:30:45 +0000\r\n\
 Message-ID: <aaa111@mail.icloud.com>\r\n\
 In-Reply-To: <bbb222@mail.icloud.com>\r\n\
@@ -251,6 +270,12 @@ dsid 12345678901\r\n";
             "p09-",
             "aaa111",
             "bbb222",
+            "Dkim-Signature",
+            "X-Apple-UUID",
+            "opaquetoken",
+            "proofpointtoken",
+            "X-CLX-Spam",
+            "continued",
         ] {
             assert!(
                 !scrubbed.contains(leaked),

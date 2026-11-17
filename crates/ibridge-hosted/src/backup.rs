@@ -277,8 +277,9 @@ mod tests {
         names
     }
 
-    /// Waits until the schedule has read the clock `reads` times, which it does only
-    /// after its file work is done, as it goes back to waiting on the clock.
+    /// Waits until the schedule has read the clock `reads` times. Each wait for the next
+    /// copy starts with a read after the directory listing, so a count that lands there
+    /// means the file work before it is done.
     ///
     /// The schedule's file work runs on Tokio's blocking pool, outside the paused clock,
     /// so yielding a fixed number of times is not enough: the pool may not have run yet.
@@ -295,6 +296,16 @@ mod tests {
             tokio::task::yield_now().await;
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    /// Checks the schedule stays asleep: it reads the clock as soon as it wakes to take a
+    /// copy, before any file work, so letting it run and seeing no new read proves it
+    /// did not wake.
+    async fn stays_at(seen: &Reads, reads: usize, what: &str) {
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(seen.load(Ordering::SeqCst), reads, "{what}");
     }
 
     /// A copy that is a one-line text file, so the schedule can be tested without a database.
@@ -338,6 +349,7 @@ mod tests {
         );
 
         tokio::time::advance(Duration::from_hours(23)).await;
+        stays_at(&reads, 2, "nothing is due after 23 hours").await;
         assert_eq!(names(&backups).len(), 1, "nothing is due after 23 hours");
 
         tokio::time::advance(Duration::from_hours(1)).await;
@@ -364,6 +376,7 @@ mod tests {
         let second = spawn(backups.clone(), now, marker);
         // The one read comes after the copy on disk is found, as the wait begins.
         settle(&reads, 1).await;
+        stays_at(&reads, 1, "a restart does not take an extra copy").await;
         assert_eq!(
             names(&backups).len(),
             1,

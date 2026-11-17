@@ -110,7 +110,11 @@ impl ReplayImap {
 
 /// Recorded text with every line ending as CRLF and none missing at the end.
 fn crlf(text: &str) -> String {
-    text.lines().map(|line| format!("{line}\r\n")).collect()
+    text.lines().fold(String::new(), |mut out, line| {
+        out.push_str(line);
+        out.push_str("\r\n");
+        out
+    })
 }
 
 /// A `CalDAV` server that answers from the recorded `caldav` fixtures.
@@ -191,8 +195,7 @@ fn caldav_reply(
         files
             .iter()
             .find(|(candidate, _)| *candidate == name)
-            .map(|(_, text)| text.clone())
-            .unwrap_or_default()
+            .map_or_else(String::new, |(_, text)| text.clone())
     };
     let xml = |status: u16, body: String| {
         wiremock::ResponseTemplate::new(status).set_body_raw(body, "application/xml")
@@ -238,17 +241,20 @@ fn first_href(xml: &str) -> String {
     xml.split_once("<href>")
         .and_then(|(_, rest)| rest.split_once("</href>"))
         .map(|(href, _)| href.to_owned())
-        .unwrap_or_else(|| panic!("a recorded multistatus holds an href"))
+        .expect("a recorded multistatus holds an href")
 }
 
 /// The first `<href>` that ends with `extension`, such as `.ics`.
 fn first_resource(xml: &str, extension: &str) -> String {
-    xml.split("<href>")
+    let found = xml
+        .split("<href>")
         .skip(1)
         .filter_map(|part| part.split_once("</href>").map(|(href, _)| href))
-        .find(|href| href.ends_with(extension))
-        .map(str::to_owned)
-        .unwrap_or_else(|| panic!("a recorded report holds a {extension} resource"))
+        .find(|href| href.ends_with(extension));
+    let Some(href) = found else {
+        panic!("a recorded report holds a {extension} resource");
+    };
+    href.to_owned()
 }
 
 /// The `getetag` the report gives for `href`. A real `GET` answers with the same value.
@@ -259,14 +265,14 @@ fn etag_of(report: &str, href: &str) -> String {
         .and_then(|(_, rest)| rest.split_once('>'))
         .and_then(|(_, rest)| rest.split_once("</getetag>"))
         .map(|(etag, _)| etag.trim().to_owned())
-        .unwrap_or_else(|| panic!("a recorded report gives an ETag for its resource"))
+        .expect("a recorded report gives an ETag for its resource")
 }
 
 /// The collection a resource path lives in, with its trailing slash.
 fn parent(path: &str) -> String {
     path.rsplit_once('/')
         .map(|(collection, _)| format!("{collection}/"))
-        .unwrap_or_else(|| panic!("a recorded resource path has a collection"))
+        .expect("a recorded resource path has a collection")
 }
 
 /// A `CardDAV` server that answers from the recorded `carddav` fixtures.
@@ -334,8 +340,7 @@ fn carddav_reply(
         files
             .iter()
             .find(|(candidate, _)| *candidate == name)
-            .map(|(_, text)| text.clone())
-            .unwrap_or_default()
+            .map_or_else(String::new, |(_, text)| text.clone())
     };
     let xml = |status: u16, body: String| {
         wiremock::ResponseTemplate::new(status).set_body_raw(body, "application/xml")

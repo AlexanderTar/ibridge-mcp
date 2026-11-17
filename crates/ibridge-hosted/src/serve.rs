@@ -15,6 +15,9 @@ use crate::store::{Store, StoreError};
 /// File name of the database inside the data directory.
 pub const DATABASE_FILE: &str = "ibridge.db";
 
+/// Folder of daily snapshots inside the data directory.
+pub const BACKUP_DIR: &str = "backups";
+
 /// Why the server stopped.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -50,13 +53,16 @@ pub async fn serve<B: Backend>(
         Some(cap) => store.with_signup_cap(cap),
         None => store,
     };
+    let backups = crate::backup::spawn_daily(store.clone(), config.data_dir.join(BACKUP_DIR));
     let app = crate::app::app(config.oauth, store, backend, checker, info, &config.guards).await?;
-    axum::serve(
+    let served = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown)
-    .await?;
+    .await;
+    backups.abort();
+    served?;
     Ok(())
 }
 
@@ -108,6 +114,24 @@ mod tests {
             data_dir.join(super::DATABASE_FILE).exists(),
             "the database lives in the data directory"
         );
+
+        // The first snapshot is taken at start-up.
+        let backups = data_dir.join(super::BACKUP_DIR);
+        let mut taken = 0;
+        for _ in 0..100 {
+            // A copy still being written ends in `.partial` and does not count yet.
+            taken = std::fs::read_dir(&backups)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".db"))
+                .count();
+            if taken > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(taken, 1, "a snapshot is waiting in {backups:?}");
 
         stop.send(()).expect("server is running");
         server.await.expect("task").expect("clean stop");

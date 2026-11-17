@@ -7,7 +7,8 @@
 //! `ibridge_auth::with_call_credentials`). A call without credentials, or with another
 //! account's, fails before anything is sent.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use ibridge_calendar::CalDavProvider;
 use ibridge_contacts::CardDavProvider;
@@ -15,7 +16,9 @@ use ibridge_core::{
     AppleId, Attachment, CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId,
 };
 use ibridge_dav::{DavClient, DavHttp};
-use ibridge_mail::{Connect, IcloudConnect, ImapPool, MailSession, SmtpClient};
+use ibridge_mail::{
+    Connect, IcloudConnect, ImapPool, MailSession, SendLimits, SendWindow, SmtpClient,
+};
 use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
 
 use crate::provider::{Backend, Providers};
@@ -40,6 +43,31 @@ enum SmtpTarget {
     Loopback(String, u16),
 }
 
+/// Accounts tracked before windows with no send in the last hour are swept out.
+const SWEEP_AT: usize = 10_000;
+
+/// One hourly send window per account.
+///
+/// The windows outlive the account cache's entries. The cache drops an idle entry after five
+/// minutes and keeps one per set of services, so a window kept in the entry would let an
+/// account send its cap again every five minutes, or once per entry.
+#[derive(Debug, Default)]
+struct SendWindows(Mutex<HashMap<AppleId, Arc<SendWindow>>>);
+
+impl SendWindows {
+    fn for_account(&self, apple_id: &AppleId) -> Arc<SendWindow> {
+        let mut windows = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if windows.len() >= SWEEP_AT {
+            windows.retain(|_, window| !window.is_idle());
+        }
+        Arc::clone(
+            windows
+                .entry(apple_id.clone())
+                .or_insert_with(|| Arc::new(SendWindow::new(SendLimits::default()))),
+        )
+    }
+}
+
 /// Builds each account's providers from per-call credentials.
 #[derive(Debug)]
 pub struct IcloudBackend<C: Connect + Clone> {
@@ -47,6 +75,7 @@ pub struct IcloudBackend<C: Connect + Clone> {
     http: DavHttp,
     dav: DavTarget,
     smtp: SmtpTarget,
+    sends: SendWindows,
 }
 
 impl IcloudBackend<IcloudConnect> {
@@ -62,6 +91,7 @@ impl IcloudBackend<IcloudConnect> {
             http: DavHttp::new()?,
             dav: DavTarget::Icloud,
             smtp: SmtpTarget::Icloud,
+            sends: SendWindows::default(),
         })
     }
 }
@@ -88,6 +118,7 @@ impl<C: Connect + Clone> IcloudBackend<C> {
                 carddav: carddav_url.to_owned(),
             },
             smtp: SmtpTarget::Loopback(smtp_host.to_owned(), smtp_port),
+            sends: SendWindows::default(),
         })
     }
 
@@ -136,7 +167,11 @@ impl<C: Connect + Clone + 'static> Backend for IcloudBackend<C> {
         apple_id: &AppleId,
     ) -> Providers<SessionMail<C>, CalDavProvider, CardDavProvider> {
         let pool = ImapPool::per_call(apple_id.clone(), self.imap.clone());
-        let mail = MailSession::new(pool, self.smtp_client(apple_id));
+        let mail = MailSession::with_window(
+            pool,
+            self.smtp_client(apple_id),
+            self.sends.for_account(apple_id),
+        );
         Providers {
             mail: Arc::new(SessionMail(mail)),
             calendar: Arc::new(CalDavProvider::new(self.caldav_client(apple_id))),
@@ -438,6 +473,79 @@ mod tests {
             !rig.contacts.requests().is_empty(),
             "contacts sent DAV requests"
         );
+    }
+
+    /// Sends `count` mails as `credentials` through `providers`, one call each.
+    async fn send_many(
+        providers: &crate::provider::Providers<
+            super::SessionMail<FakeConnect>,
+            ibridge_calendar::CalDavProvider,
+            ibridge_contacts::CardDavProvider,
+        >,
+        credentials: &Arc<Credentials>,
+        count: usize,
+    ) {
+        for _ in 0..count {
+            as_call(Arc::clone(credentials), async {
+                providers
+                    .mail
+                    .send(&draft())
+                    .await
+                    .expect("send is within the cap");
+            })
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn send_cap_survives_cache_eviction() {
+        let rig = rig().await;
+        let credentials = credentials_for("ada@icloud.com");
+        let before_eviction = rig.backend.open(&ada());
+        send_many(&before_eviction, &credentials, 20).await;
+        // The cache drops an idle entry and builds a new one with a fresh `open`.
+        drop(before_eviction);
+        let rebuilt = rig.backend.open(&ada());
+        let refused = as_call(Arc::clone(&credentials), async {
+            rebuilt.mail.send(&draft()).await
+        })
+        .await;
+        assert!(
+            matches!(refused, Err(CoreError::RateLimited { .. })),
+            "the 21st send in the hour is refused after the entry was rebuilt, got {refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_cap_is_shared_by_every_entry_of_one_account() {
+        let rig = rig().await;
+        let credentials = credentials_for("ada@icloud.com");
+        // Two grants that found different services on get two cache entries, so two opens.
+        let first = rig.backend.open(&ada());
+        let second = rig.backend.open(&ada());
+        send_many(&first, &credentials, 10).await;
+        send_many(&second, &credentials, 10).await;
+        let refused = as_call(Arc::clone(&credentials), async {
+            first.mail.send(&draft()).await
+        })
+        .await;
+        assert!(
+            matches!(refused, Err(CoreError::RateLimited { .. })),
+            "ten sends through each entry use the one hourly cap, got {refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_cap_is_per_account() {
+        let rig = rig().await;
+        let ada_calls = credentials_for("ada@icloud.com");
+        let bob_calls = credentials_for("bob@icloud.com");
+        let ada_providers = rig.backend.open(&ada());
+        send_many(&ada_providers, &ada_calls, 20).await;
+        let bob_providers = rig
+            .backend
+            .open(&AppleId::try_from("bob@icloud.com").expect("apple id"));
+        send_many(&bob_providers, &bob_calls, 1).await;
     }
 
     #[tokio::test]

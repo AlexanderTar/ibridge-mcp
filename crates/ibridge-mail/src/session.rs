@@ -2,6 +2,8 @@
 
 //! One account's IMAP pool and SMTP client.
 
+use std::sync::Arc;
+
 use ibridge_core::{CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId};
 
 use crate::imap::{Connect, ImapPool};
@@ -22,7 +24,7 @@ pub struct SendOutcome {
 pub struct MailSession<C: Connect> {
     imap: ImapPool<C>,
     smtp: SmtpClient,
-    sends: SendWindow,
+    sends: Arc<SendWindow>,
 }
 
 impl<C: Connect> MailSession<C> {
@@ -37,11 +39,16 @@ impl<C: Connect> MailSession<C> {
     /// Builds a session with explicit send caps.
     #[must_use]
     pub fn with_limits(imap: ImapPool<C>, smtp: SmtpClient, limits: SendLimits) -> Self {
-        Self {
-            imap,
-            smtp,
-            sends: SendWindow::new(limits),
-        }
+        Self::with_window(imap, smtp, Arc::new(SendWindow::new(limits)))
+    }
+
+    /// Builds a session on a send window the caller keeps.
+    ///
+    /// A host that drops and rebuilds sessions passes the same window each time, so the
+    /// hourly cap belongs to the account and not to the session.
+    #[must_use]
+    pub const fn with_window(imap: ImapPool<C>, smtp: SmtpClient, sends: Arc<SendWindow>) -> Self {
+        Self { imap, smtp, sends }
     }
 
     /// The IMAP pool, for reads.

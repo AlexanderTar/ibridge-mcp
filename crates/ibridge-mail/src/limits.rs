@@ -38,8 +38,11 @@ struct Window {
 }
 
 /// Rolling hour of send times for one account.
+///
+/// A [`crate::MailSession`] built with [`crate::MailSession::with_window`] shares it, so a
+/// host that rebuilds sessions keeps one cap per account.
 #[derive(Debug)]
-pub(crate) struct SendWindow {
+pub struct SendWindow {
     limits: SendLimits,
     state: Mutex<Window>,
 }
@@ -52,7 +55,9 @@ pub(crate) struct Reservation<'a> {
 }
 
 impl SendWindow {
-    pub(crate) fn new(limits: SendLimits) -> Self {
+    /// An empty window with `limits`.
+    #[must_use]
+    pub fn new(limits: SendLimits) -> Self {
         Self {
             limits,
             state: Mutex::new(Window {
@@ -101,6 +106,14 @@ impl SendWindow {
             id,
             armed: true,
         })
+    }
+
+    /// No send is inside the rolling hour, so the window can be forgotten.
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
+        let hour = Duration::from_hours(1);
+        let state = self.state.lock().expect("send window");
+        state.sent.iter().all(|slot| slot.at.elapsed() >= hour)
     }
 
     fn release(&self, id: u64) {

@@ -26,3 +26,32 @@ npx skills add morganlinton/BeautifulRust@b9718436d77ee7bcf17cdcb6aa27628feb95d9
 ```
 
 Do not enable its remote MCP server.
+
+## Tests with a paused clock
+
+`#[tokio::test(start_paused = true)]` freezes Tokio's clock. A test moves it with `tokio::time::advance`. The paused clock does not stop real work.
+
+**`tokio::fs` runs on the blocking pool.** Every `tokio::fs` call, and `spawn_blocking`, hands the work to a separate thread. A fixed number of `yield_now().await` calls only lets other tasks run; it does not wait for that thread. On a slow or busy machine, such as GitHub's 2-core Linux runner, the test looks at the disk before the work has finished. The backup schedule tests in `crates/ibridge-hosted/src/backup.rs` failed this way, with `the first copy is taken at once` and `a restart does not take an extra copy`, while they usually passed on a quiet Mac (a cold-build run on a Mac failed too).
+
+What to do:
+
+- Wait for something the code under test does, not for a number of yields. In the backup tests the clock closure counts its reads, and `settle(&reads, n)` waits until the count reaches `n`. The code reads the clock right before it sleeps, so the count says it is waiting again. A test that asserts nothing happened (no extra copy after a restart) waits on the same signal first. Otherwise it passes because the code has not run yet.
+- Poll with `yield_now().await` and a short `std::thread::sleep`, and bound the poll by real time (`std::time::Instant`), with a message that says what never happened. Do not poll with `tokio::time::sleep`; under a paused clock it moves the clock the test is checking.
+
+What never to do: raise the yield count, add a retry, loosen an assertion, or add `#[ignore]` to get a green run. They hide the race and it comes back on a slower machine.
+
+Find a flake of this kind by loading the machine and repeating the tests. Twelve busy loops reproduced the failure on a Mac in 6 of 100 runs; the first run after a cold build also failed:
+
+```sh
+for i in $(seq 12); do (yes >/dev/null &); done
+cargo nextest run -p ibridge-hosted -E 'test(/backup::tests/)' --no-fail-fast --stress-count 300
+pkill -x yes
+```
+
+Stop the loops with `pkill -x yes` when it ends, or the machine stays loaded. A test counts as fixed when every iteration passes under that load. To match CI more closely, run the tests in a Linux container with two CPUs (`docker run --cpus=2`, behind `lockf -k <repo>/.git/ibridge-docker.lock`).
+
+Traps:
+
+- A quiet machine hides the race. 50 stress iterations with no load all passed. Always add load.
+- `--stress-count` runs the whole filtered set each iteration. A failure's name tells which test; do not assume it is the one named in CI. The rotation test failed too.
+- A fixed `std::thread::sleep` in a test is also a guess, not a fix. Wait for the signal.

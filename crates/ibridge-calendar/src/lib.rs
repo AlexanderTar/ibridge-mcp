@@ -8,6 +8,8 @@ mod ical;
 mod recurrence;
 mod reminders;
 #[cfg(test)]
+mod replay;
+#[cfg(test)]
 mod test_support;
 
 #[cfg(test)]

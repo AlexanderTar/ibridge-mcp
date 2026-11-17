@@ -129,7 +129,8 @@ pub(crate) fn status_error(status: StatusCode) -> CoreError {
     match status {
         StatusCode::NOT_FOUND | StatusCode::GONE => CoreError::NotFound,
         StatusCode::PRECONDITION_FAILED | StatusCode::CONFLICT => CoreError::Conflict,
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => CoreError::Auth,
+        StatusCode::UNAUTHORIZED => CoreError::Auth,
+        StatusCode::FORBIDDEN => CoreError::Forbidden,
         _ => protocol(),
     }
 }
@@ -140,4 +141,18 @@ pub(crate) fn multistatus(exchange: &Exchange) -> Result<Vec<Entry>, CoreError> 
         return Err(status_error(exchange.status));
     }
     multistatus::parse(&exchange.body).map_err(|_| protocol())
+}
+
+#[cfg(test)]
+mod tests {
+    use http::StatusCode;
+    use ibridge_core::CoreError;
+
+    use super::status_error;
+
+    #[test]
+    fn a_403_with_a_dav_error_body_is_a_permission_error_not_a_login_failure() {
+        assert_eq!(status_error(StatusCode::FORBIDDEN), CoreError::Forbidden);
+        assert_eq!(status_error(StatusCode::UNAUTHORIZED), CoreError::Auth);
+    }
 }

@@ -34,6 +34,9 @@ pub fn map_core_error(error: &CoreError) -> MappedError {
         CoreError::Conflict => {
             MappedError::Tool(Cow::Borrowed("changed since you read it; fetch it again"))
         }
+        CoreError::Forbidden => MappedError::Tool(Cow::Borrowed(
+            "iCloud refused this change; the calendar or address book may be read-only, or the item may not be valid",
+        )),
         CoreError::Auth => {
             MappedError::Tool(Cow::Borrowed("authentication failed; run ibridge login"))
         }
@@ -48,6 +51,17 @@ mod tests {
     use rmcp::model::ErrorCode;
 
     use super::{MappedError, map_core_error};
+
+    #[test]
+    fn forbidden_is_a_tool_error_that_does_not_ask_to_reconnect() {
+        let MappedError::Tool(message) = map_core_error(&CoreError::Forbidden) else {
+            panic!("a refused change is a tool error the model can read");
+        };
+        assert!(
+            message.contains("read-only") && !message.contains("login"),
+            "the message names the cause and not the password, got {message}"
+        );
+    }
 
     #[test]
     fn error_map_hides_server_text() {

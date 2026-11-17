@@ -474,7 +474,10 @@ pub(crate) async fn execute(
             outgoing.headers.remove(http::header::AUTHORIZATION);
             continue;
         }
-        let gated = auth_gate(exchange_from(response, outgoing.uri.clone()).await?);
+        let gated = auth_gate(
+            &outgoing.method,
+            exchange_from(response, outgoing.uri.clone()).await?,
+        );
         report_verdict(&gated);
         return gated;
     }
@@ -482,7 +485,7 @@ pub(crate) async fn execute(
 
 /// Tells the hosted call what the server said to its password.
 ///
-/// A 401, or a 403 that is not a precondition, refuses the password. A response
+/// A 401, or a 403 on a read that is not a precondition, refuses the password. A response
 /// that got past the auth gate with a success status accepts it. Throttling and
 /// server errors say nothing, so they report nothing.
 fn report_verdict(gated: &Result<Exchange, DavError>) {
@@ -495,16 +498,34 @@ fn report_verdict(gated: &Result<Exchange, DavError>) {
     }
 }
 
-/// 401, and a 403 that is not a `WebDAV` precondition, are an auth failure.
+/// Maps a response onto the failure the caller should see.
 ///
-/// A 403 whose body is a `DAV:error` (for example `valid-sync-token`) stays a
-/// response the caller can parse.
-fn auth_gate(exchange: Exchange) -> Result<Exchange, DavError> {
+/// A 401 is a refused password: iCloud answers a wrong or revoked app-specific password
+/// that way. A 403 with no `DAV:error` body on a read (discovery, `PROPFIND`, `REPORT`) is
+/// treated the same, so a server that refuses a bad password with 403 is still caught. On a
+/// write the same 403 means the account may not make this change, such as a write to a
+/// read-only shared calendar, or iCloud refused the item. That is [`DavError::Forbidden`],
+/// and it says nothing about the password.
+///
+/// A 403 whose body is a `DAV:error` (for example `valid-sync-token`) stays a response the
+/// caller can parse.
+fn auth_gate(method: &Method, exchange: Exchange) -> Result<Exchange, DavError> {
     match exchange.status {
         StatusCode::UNAUTHORIZED => Err(DavError::Auth),
-        StatusCode::FORBIDDEN if !dav_precondition(&exchange.body) => Err(DavError::Auth),
+        StatusCode::FORBIDDEN if !dav_precondition(&exchange.body) => Err(if is_read(method) {
+            DavError::Auth
+        } else {
+            DavError::Forbidden
+        }),
         _ => Ok(exchange),
     }
+}
+
+fn is_read(method: &Method) -> bool {
+    matches!(
+        method.as_str(),
+        "GET" | "HEAD" | "OPTIONS" | "PROPFIND" | "REPORT"
+    )
 }
 
 fn dav_precondition(body: &[u8]) -> bool {
@@ -735,20 +756,55 @@ mod tests {
     async fn logged_call(
         status: u16,
     ) -> (Result<StatusCode, DavError>, Arc<ibridge_auth::LoginLog>) {
+        logged_request(status, propfind("https://caldav.icloud.com/")).await
+    }
+
+    async fn logged_request(
+        status: u16,
+        request: Request<String>,
+    ) -> (Result<StatusCode, DavError>, Arc<ibridge_auth::LoginLog>) {
         let script = Script::new(move |_request| empty(status));
         let log = Arc::new(ibridge_auth::LoginLog::new());
         let outcome =
             ibridge_auth::with_call_credentials(Arc::new(credentials()), Arc::clone(&log), async {
-                execute(
-                    &script,
-                    &credentials(),
-                    propfind("https://caldav.icloud.com/"),
-                )
-                .await
-                .map(|exchange| exchange.status)
+                execute(&script, &credentials(), request)
+                    .await
+                    .map(|exchange| exchange.status)
             })
             .await;
         (outcome, log)
+    }
+
+    fn write(method: &str) -> Request<String> {
+        Request::builder()
+            .method(method)
+            .uri("https://caldav.icloud.com/123/calendars/shared/event.ics")
+            .body(String::new())
+            .expect("request")
+    }
+
+    #[tokio::test]
+    async fn bare_403_on_a_write_is_forbidden_and_not_a_login_verdict() {
+        for method in ["PUT", "DELETE"] {
+            let (outcome, log) = logged_request(403, write(method)).await;
+            assert_eq!(
+                outcome,
+                Err(DavError::Forbidden),
+                "a {method} the account may not make is a permission error"
+            );
+            assert!(
+                !log.rejected(),
+                "a {method} 403 must not count toward revoking the grant"
+            );
+            assert!(!log.accepted());
+        }
+        let (outcome, log) = logged_request(401, write("PUT")).await;
+        assert_eq!(
+            outcome,
+            Err(DavError::Auth),
+            "a 401 on a write is a wrong password"
+        );
+        assert!(log.rejected());
     }
 
     #[tokio::test]

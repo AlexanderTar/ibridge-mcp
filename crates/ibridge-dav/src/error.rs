@@ -27,6 +27,11 @@ pub enum DavError {
     /// A conditional write lost a race with another client.
     #[error("conflict")]
     Conflict,
+    /// The service refused a change the signed-in account may not make.
+    ///
+    /// The password was accepted, so this is not [`DavError::Auth`].
+    #[error("forbidden")]
+    Forbidden,
     /// The service asked us to slow down.
     #[error("rate limited")]
     RateLimited {
@@ -54,6 +59,7 @@ impl From<DavError> for CoreError {
             DavError::Protocol => Self::Protocol(String::new()),
             DavError::NotFound => Self::NotFound,
             DavError::Conflict => Self::Conflict,
+            DavError::Forbidden => Self::Forbidden,
             DavError::RateLimited { retry_after } => Self::RateLimited { retry_after },
             DavError::Unsupported(reason) => Self::Unsupported(reason),
             DavError::HostNotAllowed => Self::HostNotAllowed,

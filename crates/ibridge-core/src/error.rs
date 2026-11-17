@@ -59,6 +59,12 @@ pub enum CoreError {
     /// A conditional write lost a race with another client.
     #[error("conflict")]
     Conflict,
+    /// The service refused a change the signed-in account may not make.
+    ///
+    /// For example a write to a read-only shared calendar. The password was accepted, so
+    /// this is not [`CoreError::Auth`].
+    #[error("forbidden")]
+    Forbidden,
     /// The service asked us to slow down.
     #[error("rate limited")]
     RateLimited {

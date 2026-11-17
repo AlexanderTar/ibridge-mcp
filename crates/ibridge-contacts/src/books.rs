@@ -26,7 +26,8 @@ pub(crate) fn status_error(status: StatusCode) -> CoreError {
     match status {
         StatusCode::NOT_FOUND | StatusCode::GONE => CoreError::NotFound,
         StatusCode::PRECONDITION_FAILED | StatusCode::CONFLICT => CoreError::Conflict,
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => CoreError::Auth,
+        StatusCode::UNAUTHORIZED => CoreError::Auth,
+        StatusCode::FORBIDDEN => CoreError::Forbidden,
         _ => protocol(),
     }
 }
@@ -107,5 +108,19 @@ impl CardDavProvider {
             .ok_or_else(protocol)?;
         let text = String::from_utf8(exchange.body.to_vec()).map_err(|_| protocol())?;
         Ok(Fetched { etag, text })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use http::StatusCode;
+    use ibridge_core::CoreError;
+
+    use super::status_error;
+
+    #[test]
+    fn a_403_with_a_dav_error_body_is_a_permission_error_not_a_login_failure() {
+        assert_eq!(status_error(StatusCode::FORBIDDEN), CoreError::Forbidden);
+        assert_eq!(status_error(StatusCode::UNAUTHORIZED), CoreError::Auth);
     }
 }

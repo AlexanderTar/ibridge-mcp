@@ -631,8 +631,15 @@ mod tests {
                 "text/calendar",
             )
             .await
-            .expect_err("a rejected password is not a protocol error");
-            assert_eq!(error, DavError::Auth, "put status {status}");
+            .expect_err("a refused write is not a protocol error");
+            // A 401 is a wrong password. A bare 403 on a write is a permission error: the
+            // password was accepted, the account may not change this calendar.
+            let expected = if status == 401 {
+                DavError::Auth
+            } else {
+                DavError::Forbidden
+            };
+            assert_eq!(error, expected, "put status {status}");
         }
 
         let script = Script::new(|request| {

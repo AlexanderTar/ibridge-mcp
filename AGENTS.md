@@ -26,11 +26,12 @@ Binary features: `mail`, `calendar`, `contacts`, `stdio` and `http` are on by de
 
 ## Error mapping
 
-Each provider crate maps protocol failures onto `Auth`, `Network`, `Protocol`, `NotFound`, `Conflict`, `RateLimited`, `Unsupported`, `HostNotAllowed` and `InvalidInput`. One conversion in `ibridge-server` turns those into MCP errors:
+Each provider crate maps protocol failures onto `Auth`, `Network`, `Protocol`, `NotFound`, `Conflict`, `Forbidden`, `RateLimited`, `Unsupported`, `HostNotAllowed` and `InvalidInput`. One conversion in `ibridge-server` turns those into MCP errors:
 
 - Bad input becomes `invalid_params`.
 - `NotFound` and `Conflict` become tool errors that say what to do next.
 - `Auth` in local mode says to run `ibridge login`. Auth failures are never retried inside a call.
+- `Forbidden` is a refused change (a write to a read-only shared calendar, or an item iCloud rejects). The password was accepted. DAV maps only a 401, or a bare 403 on a read, to `Auth`; a bare 403 on a write is `Forbidden` and never counts toward revoking a grant.
 - Every other failure becomes an internal error. The message has no secrets and no raw server text.
 
 ## Secrets

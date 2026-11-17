@@ -13,6 +13,7 @@ use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use ibridge_auth::Credentials;
 use tracing::Instrument;
+use zeroize::Zeroizing;
 
 use crate::discovery::{self, CollectionHome};
 use crate::error::DavError;
@@ -462,7 +463,24 @@ pub(crate) async fn execute(
             outgoing.headers.remove(http::header::AUTHORIZATION);
             continue;
         }
-        return auth_gate(exchange_from(response, outgoing.uri.clone()).await?);
+        let gated = auth_gate(exchange_from(response, outgoing.uri.clone()).await?);
+        report_verdict(&gated);
+        return gated;
+    }
+}
+
+/// Tells the hosted call what the server said to its password.
+///
+/// A 401, or a 403 that is not a precondition, refuses the password. A response
+/// that got past the auth gate with a success status accepts it. Throttling and
+/// server errors say nothing, so they report nothing.
+fn report_verdict(gated: &Result<Exchange, DavError>) {
+    match gated {
+        Err(DavError::Auth) => ibridge_auth::report_login(ibridge_auth::LoginVerdict::Rejected),
+        Ok(exchange) if exchange.status.is_success() => {
+            ibridge_auth::report_login(ibridge_auth::LoginVerdict::Accepted);
+        }
+        _ => {}
     }
 }
 
@@ -541,13 +559,17 @@ impl Outgoing {
 }
 
 fn attach_basic(headers: &mut HeaderMap, credentials: &Credentials) -> Result<(), DavError> {
-    let mut raw = format!("{}:", credentials.apple_id);
+    // Every copy of the password but the header's own is wiped when it drops.
+    let mut raw = Zeroizing::new(format!("{}:", credentials.apple_id));
     credentials.with_secret(|secret| raw.push_str(secret));
-    let token = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, raw.as_bytes());
-    // The copy of the password has to live in the header. Drop the source string here.
-    raw.clear();
-    let value = HeaderValue::try_from(format!("Basic {token}"))
+    let token = Zeroizing::new(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        raw.as_bytes(),
+    ));
+    let line = Zeroizing::new(format!("Basic {}", token.as_str()));
+    let mut value = HeaderValue::try_from(line.as_str())
         .map_err(|_| DavError::InvalidInput("credentials are not valid header text".to_owned()))?;
+    value.set_sensitive(true);
     headers.insert(http::header::AUTHORIZATION, value);
     Ok(())
 }
@@ -697,6 +719,59 @@ mod tests {
             .status(status)
             .body(Full::new(Bytes::new()))
             .expect("response")
+    }
+
+    async fn logged_call(
+        status: u16,
+    ) -> (Result<StatusCode, DavError>, Arc<ibridge_auth::LoginLog>) {
+        let script = Script::new(move |_request| empty(status));
+        let log = Arc::new(ibridge_auth::LoginLog::new());
+        let outcome =
+            ibridge_auth::with_call_credentials(Arc::new(credentials()), Arc::clone(&log), async {
+                execute(
+                    &script,
+                    &credentials(),
+                    propfind("https://caldav.icloud.com/"),
+                )
+                .await
+                .map(|exchange| exchange.status)
+            })
+            .await;
+        (outcome, log)
+    }
+
+    #[tokio::test]
+    async fn dav_per_call_reports_login_verdicts() {
+        let (outcome, log) = logged_call(401).await;
+        assert_eq!(outcome, Err(DavError::Auth));
+        assert!(log.rejected(), "a 401 is the server refusing the password");
+        assert!(!log.accepted());
+
+        let (outcome, log) = logged_call(403).await;
+        assert_eq!(outcome, Err(DavError::Auth));
+        assert!(log.rejected(), "a bare 403 is an auth failure too");
+
+        let (outcome, log) = logged_call(207).await;
+        assert_eq!(outcome, Ok(StatusCode::MULTI_STATUS));
+        assert!(log.accepted(), "a 207 means the password was accepted");
+        assert!(!log.rejected());
+
+        let (_, log) = logged_call(500).await;
+        assert!(
+            !log.accepted() && !log.rejected(),
+            "a server error says nothing about the password"
+        );
+    }
+
+    #[test]
+    fn basic_auth_header_is_sensitive() {
+        let mut headers = http::HeaderMap::new();
+        super::attach_basic(&mut headers, &credentials()).expect("header");
+        let value = headers
+            .get(http::header::AUTHORIZATION)
+            .expect("authorization");
+        assert!(value.is_sensitive(), "the password must not show in Debug");
+        assert!(!format!("{headers:?}").contains("Basic"));
     }
 
     #[tokio::test]

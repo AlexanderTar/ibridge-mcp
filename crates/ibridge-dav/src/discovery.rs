@@ -114,8 +114,7 @@ pub(crate) async fn discover_caldav_from(
     if let Some(home) = load(&cache.caldav) {
         return Ok(home);
     }
-    let (principal, landed) =
-        propfind_href(transport, credentials, base, path, &CURRENT_USER_PRINCIPAL).await?;
+    let (principal, landed) = principal_href(transport, credentials, base, path).await?;
     let principal_path = href_path(&principal)?;
     let home_base = if principal.host().is_some() {
         origin_of(&principal)?
@@ -166,8 +165,7 @@ pub(crate) async fn discover_carddav_from(
     if let Some(home) = load(&cache.carddav) {
         return Ok(home);
     }
-    let (principal, landed) =
-        propfind_href(transport, credentials, base, path, &CURRENT_USER_PRINCIPAL).await?;
+    let (principal, landed) = principal_href(transport, credentials, base, path).await?;
     let principal_path = href_path(&principal)?;
     let home_base = if principal.host().is_some() {
         origin_of(&principal)?
@@ -187,6 +185,22 @@ pub(crate) async fn discover_carddav_from(
     };
     store(&cache.carddav, &home);
     Ok(home)
+}
+
+/// Asks for the current user's principal at `path`. A reply that carries no
+/// principal (iCloud answers `/.well-known/carddav` with a 207 that marks the
+/// property 404) is asked again once at the server root.
+async fn principal_href(
+    transport: &impl Transport,
+    credentials: &impl CredentialSource,
+    base: &Uri,
+    path: &str,
+) -> Result<(Uri, Uri), DavError> {
+    let first = propfind_href(transport, credentials, base, path, &CURRENT_USER_PRINCIPAL).await;
+    if path == "/" || first != Err(DavError::Protocol) {
+        return first;
+    }
+    propfind_href(transport, credentials, base, "/", &CURRENT_USER_PRINCIPAL).await
 }
 
 async fn propfind_href(
@@ -517,6 +531,53 @@ mod tests {
             .position(|logged| logged.body.contains("addressbook-home-set"))
             .expect("an addressbook-home-set request");
         assert!(principal_at < home_at, "principal before the home set");
+    }
+
+    /// Real iCloud answers `PROPFIND /.well-known/carddav` with a 207 that marks
+    /// `current-user-principal` as 404, and answers the same request at `/` properly.
+    #[tokio::test]
+    async fn discover_carddav_falls_back_to_root_when_well_known_has_no_principal() {
+        let script = Script::new(|request| {
+            let body = request.body();
+            if body.contains("current-user-principal") {
+                if request.uri().path() == "/.well-known/carddav" {
+                    return Response::builder()
+                        .status(207)
+                        .body(Full::new(Bytes::from(
+                            r#"<?xml version="1.0" encoding="UTF-8"?>
+                            <multistatus xmlns="DAV:"><response>
+                            <href>/.well-known/carddav/</href>
+                            <propstat><prop><current-user-principal/></prop>
+                            <status>HTTP/1.1 404 Not Found</status></propstat>
+                            </response></multistatus>"#,
+                        )))
+                        .expect("response");
+                }
+                return multistatus(&format!(
+                    "<current-user-principal><href>{ADA_PRINCIPAL}</href></current-user-principal>"
+                ));
+            }
+            if body.contains("addressbook-home-set") {
+                return multistatus(&format!(
+                    "<CARD:addressbook-home-set><href>{ADA_CONTACTS_HOME}</href></CARD:addressbook-home-set>"
+                ));
+            }
+            empty(404)
+        });
+        let home = discover_carddav(&script, &credentials(), &ShardCache::new())
+            .await
+            .expect("a well-known reply without a principal falls back to the root");
+        assert_eq!(home.url, ADA_CONTACTS_HOME);
+        let paths: Vec<String> = script
+            .requests()
+            .iter()
+            .map(|logged| logged.uri.path().to_owned())
+            .collect();
+        assert_eq!(
+            &paths[..2],
+            ["/.well-known/carddav", "/"],
+            "well-known is tried first, then the root, saw {paths:?}"
+        );
     }
 
     #[tokio::test]

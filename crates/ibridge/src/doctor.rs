@@ -158,7 +158,9 @@ fn from_sign_in(report: &ValidationReport, name: &str) -> Check {
         _ => &report.contacts,
     };
     match check {
-        ServiceCheck::Failed { reason } => Check::Failed(reason.clone()),
+        ServiceCheck::Failed { reason } | ServiceCheck::Unreachable { reason } => {
+            Check::Failed(reason.clone())
+        }
         _ => Check::Ok(String::new()),
     }
 }

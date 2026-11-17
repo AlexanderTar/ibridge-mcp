@@ -21,6 +21,10 @@ pub struct Services {
 
 impl Services {
     /// What the sign-in check reported.
+    ///
+    /// Only a refusal turns a service off. A service the check could not reach
+    /// ([`ServiceCheck::Unreachable`]) stays on, so a brief outage at sign-in does not hide
+    /// it for the life of the grant.
     #[must_use]
     pub fn from_report(report: &ValidationReport) -> Self {
         let reason = |check: &ServiceCheck| match check {

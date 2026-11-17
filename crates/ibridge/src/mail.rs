@@ -188,11 +188,11 @@ impl Validator for ImapValidator {
             Err(CoreError::Auth) => ServiceCheck::Failed {
                 reason: "iCloud Mail rejected the address or app-specific password; use your primary iCloud address and an app-specific password".to_owned(),
             },
-            Err(CoreError::RateLimited { .. }) => ServiceCheck::Failed {
+            Err(CoreError::RateLimited { .. }) => ServiceCheck::Unreachable {
                 reason: "iCloud Mail is limiting sign-ins; wait a few minutes and try again"
                     .to_owned(),
             },
-            Err(_) => ServiceCheck::Failed {
+            Err(_) => ServiceCheck::Unreachable {
                 reason: "iCloud Mail could not be reached".to_owned(),
             },
         };

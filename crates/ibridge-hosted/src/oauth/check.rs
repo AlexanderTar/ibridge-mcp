@@ -60,7 +60,8 @@ impl<M: Validator + Sync, D: Validator + Sync> Validator for Combined<M, D> {
         if mail.is_err() && dav.is_err() {
             return Err(AuthError::Validation);
         }
-        let unavailable = |what: &str| ServiceCheck::Failed {
+        // A validator that could not run says nothing about its services: not a refusal.
+        let unavailable = |what: &str| ServiceCheck::Unreachable {
             reason: format!("{what} could not be checked"),
         };
         let (mail, calendar, contacts) = match (mail, dav) {
@@ -74,5 +75,84 @@ impl<M: Validator + Sync, D: Validator + Sync> Validator for Combined<M, D> {
             calendar,
             contacts,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ibridge_auth::{AuthError, ServiceCheck, ValidationReport, Validator};
+
+    use super::Combined;
+    use crate::store::Services;
+
+    /// A validator that answers with a fixed result.
+    struct Fixed(Result<ValidationReport, AuthError>);
+
+    impl Validator for Fixed {
+        async fn validate(&self) -> Result<ValidationReport, AuthError> {
+            self.0.clone()
+        }
+    }
+
+    fn dav_ok() -> Fixed {
+        let failed = |reason: &str| ServiceCheck::Failed {
+            reason: reason.to_owned(),
+        };
+        Fixed(Ok(ValidationReport {
+            mail: failed("not checked"),
+            calendar: ServiceCheck::Ok,
+            contacts: ServiceCheck::Ok,
+        }))
+    }
+
+    fn mail_report(mail: ServiceCheck) -> Fixed {
+        let failed = |reason: &str| ServiceCheck::Failed {
+            reason: reason.to_owned(),
+        };
+        Fixed(Ok(ValidationReport {
+            mail,
+            calendar: failed("not checked"),
+            contacts: failed("not checked"),
+        }))
+    }
+
+    #[tokio::test]
+    async fn transient_failure_at_sign_in_keeps_the_service_on() {
+        let combined = Combined {
+            mail: Fixed(Err(AuthError::Validation)),
+            dav: dav_ok(),
+        };
+        let services = Services::from_report(&combined.validate().await.expect("dav accepted"));
+        assert_eq!(services.mail, None, "an unchecked service is not a refusal");
+    }
+
+    #[tokio::test]
+    async fn unreachable_mail_at_sign_in_keeps_mail_on() {
+        let combined = Combined {
+            mail: mail_report(ServiceCheck::Unreachable {
+                reason: "iCloud Mail could not be reached".to_owned(),
+            }),
+            dav: dav_ok(),
+        };
+        let services = Services::from_report(&combined.validate().await.expect("dav accepted"));
+        assert_eq!(
+            services.mail, None,
+            "an unreachable service is not a refusal"
+        );
+    }
+
+    #[tokio::test]
+    async fn refused_mail_at_sign_in_is_stored_off_with_its_reason() {
+        let combined = Combined {
+            mail: mail_report(ServiceCheck::Failed {
+                reason: "iCloud Mail rejected the password".to_owned(),
+            }),
+            dav: dav_ok(),
+        };
+        let services = Services::from_report(&combined.validate().await.expect("dav accepted"));
+        assert_eq!(
+            services.mail.as_deref(),
+            Some("iCloud Mail rejected the password")
+        );
     }
 }

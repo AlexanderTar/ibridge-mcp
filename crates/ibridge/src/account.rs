@@ -104,7 +104,9 @@ impl State {
 
 fn reason(check: &ServiceCheck) -> Option<String> {
     match check {
-        ServiceCheck::Failed { reason } => Some(reason.clone()),
+        ServiceCheck::Failed { reason } | ServiceCheck::Unreachable { reason } => {
+            Some(reason.clone())
+        }
         _ => None,
     }
 }

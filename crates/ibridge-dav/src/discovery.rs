@@ -320,6 +320,11 @@ impl<T: Transport + Sync> Validator for DavValidator<T> {
 fn service_check(result: Result<CollectionHome, DavError>) -> ServiceCheck {
     match result {
         Ok(_) => ServiceCheck::Ok,
+        Err(error @ (DavError::Network | DavError::RateLimited { .. })) => {
+            ServiceCheck::Unreachable {
+                reason: error.to_string(),
+            }
+        }
         Err(error) => ServiceCheck::Failed {
             reason: error.to_string(),
         },
@@ -589,6 +594,19 @@ mod tests {
             report.any_service_ok(),
             "sign-in succeeds when only calendar validates"
         );
+    }
+
+    #[tokio::test]
+    async fn dav_validator_reports_rate_limit_as_unreachable_not_failed() {
+        let script = Script::new(|_| empty(429));
+        let validator =
+            super::DavValidator::from_transport(script.clone(), std::sync::Arc::new(credentials()));
+        let report = validator.validate().await.expect("a report");
+        assert!(
+            matches!(report.calendar, ServiceCheck::Unreachable { .. }),
+            "a rate limit says nothing about the password, got {report:?}"
+        );
+        assert!(!report.any_service_ok());
     }
 
     #[tokio::test]

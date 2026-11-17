@@ -66,8 +66,14 @@ pub enum AuthError {
 pub enum ServiceCheck {
     /// The service accepted the credentials.
     Ok,
-    /// The service rejected them or could not be reached.
+    /// The service rejected them, or this check does not cover the service.
     Failed {
+        /// A safe reason to show the user. Never a secret.
+        reason: String,
+    },
+    /// The check could not run (network failure, rate limit, outage), so the service
+    /// neither accepted nor refused the credentials.
+    Unreachable {
         /// A safe reason to show the user. Never a secret.
         reason: String,
     },

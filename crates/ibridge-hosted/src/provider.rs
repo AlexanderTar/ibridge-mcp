@@ -290,6 +290,28 @@ impl<B: Backend> AccountCache<B> {
             .remove(apple_id);
     }
 
+    /// Closes idle accounts on a timer, so a quiet server does not keep sockets open.
+    ///
+    /// The task ends when the cache is dropped.
+    pub fn spawn_sweeper(&self) -> tokio::task::JoinHandle<()> {
+        let entries = Arc::downgrade(&self.entries);
+        let idle = self.idle;
+        let every = (idle / 4).max(Duration::from_millis(10));
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(every);
+            loop {
+                tick.tick().await;
+                let Some(entries) = entries.upgrade() else {
+                    return;
+                };
+                entries
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .retain(|_, entry| !entry.gate.expired(idle));
+            }
+        })
+    }
+
     fn build(&self, apple_id: &AppleId) -> Entry<AccountServer<B>> {
         let providers = self.backend.open(apple_id);
         let account = AccountSnapshot {
@@ -337,8 +359,7 @@ impl<B: Backend> ServerSource for AccountCache<B> {
 
     fn servers(&self, call: &CallAuth) -> Arc<ScopedServers<Self::Server>> {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        // Idle accounts go when any account is next called. ponytail: sockets of an account
-        // nobody calls again stay open until then; a sweeper task would close them on time.
+        // Also dropped here, so a cache with no sweeper still forgets idle accounts.
         entries.retain(|_, entry| !entry.gate.expired(self.idle));
         let entry = entries
             .entry(call.apple_id().clone())
@@ -866,6 +887,30 @@ mod tests {
             2,
             "each spelling opens its own connection with its own pool"
         );
+    }
+
+    #[tokio::test]
+    async fn sweeper_closes_idle_sessions_with_no_further_calls() {
+        let rig = rig(FakeScript::default(), None, Duration::from_millis(100)).await;
+        let _sweeper = rig.cache.spawn_sweeper();
+        let ada = token(&rig.store, "ada@icloud.com", "pw-1", Scope::Read).await;
+        assert!(succeeded(&list_mailboxes(&rig.app, &ada).await));
+        assert_eq!(rig.live.load(Ordering::SeqCst), 1, "a session is pooled");
+
+        // Nobody calls again: only the timer can close it.
+        for _ in 0..100 {
+            if rig.live.load(Ordering::SeqCst) == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(
+            rig.live.load(Ordering::SeqCst),
+            0,
+            "the idle session closed without another call"
+        );
+        assert!(rig.cache.is_empty(), "the idle account was dropped");
     }
 
     /// A server that accepts only `pw-current`, and an account with a stale and a current grant.

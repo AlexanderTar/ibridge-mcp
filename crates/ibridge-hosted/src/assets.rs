@@ -19,13 +19,24 @@ const STYLESHEET: &str = concat!(
     include_str!("../../../site/design/components.css"),
     include_str!("../assets/server.css"),
 );
-/// Apple's logo, which is licensed artwork and is not in the repository. When the file is
-/// added, `build.rs` turns on `cfg(apple_logo)`: the server then serves it, and the button
-/// shows it as a mask in the button's own colour.
+/// Apple's logo, which is licensed artwork and is not in the repository. When both files are
+/// added, `build.rs` turns on `cfg(apple_logo)`: the server then serves them unmodified, and
+/// the button shows the white logo on its black light-mode background and the black one on
+/// its white dark-mode background. Each file draws its own button-coloured square, so the
+/// button keeps one flat colour (no hover tint) for the square to blend into.
 #[cfg(apple_logo)]
-const APPLE_LOGO: &str = include_str!("../assets/apple-logo.svg");
+const APPLE_LOGO_WHITE: &str = include_str!("../assets/apple-logo-white.svg");
 #[cfg(apple_logo)]
-const APPLE_LOGO_CSS: &str = "\n.btn-apple::before { content: \"\"; flex: none; width: 44px; height: 44px; margin-left: -8px; background: currentColor; -webkit-mask: url(/static/apple-logo.svg) center / contain no-repeat; mask: url(/static/apple-logo.svg) center / contain no-repeat; }\n";
+const APPLE_LOGO_BLACK: &str = include_str!("../assets/apple-logo-black.svg");
+/// The logo files are 56 × 56 with the 44 × 44 button-coloured square inset by 6, so the image
+/// is laid out at 44 × 44 and its transparent margin overhangs the button.
+#[cfg(apple_logo)]
+const APPLE_LOGO_CSS: &str = "
+:root { --apple-logo: url(/static/apple-logo-white.svg); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme=\"light\"]) { --apple-logo: url(/static/apple-logo-black.svg); } }
+:root[data-theme=\"dark\"] { --apple-logo: url(/static/apple-logo-black.svg); }
+.btn-apple::before { content: \"\"; flex: none; width: 56px; height: 56px; margin: -6px -6px -6px -14px; background: var(--apple-logo) center / 56px 56px no-repeat; }
+";
 const FAVICON: &str = include_str!("../../../site/design/icons/b-cloud-arch-favicon.svg");
 const MARK_LIGHT: &str = include_str!("../../../site/design/icons/b-cloud-arch-mark-light.svg");
 const MARK_DARK: &str = include_str!("../../../site/design/icons/b-cloud-arch-mark-dark.svg");
@@ -74,10 +85,15 @@ pub(crate) fn routes() -> Router {
             get(|| async { asset("image/png", TOUCH_ICON) }),
         );
     #[cfg(apple_logo)]
-    let router = router.route(
-        "/static/apple-logo.svg",
-        get(|| async { asset("image/svg+xml", APPLE_LOGO.as_bytes()) }),
-    );
+    let router = router
+        .route(
+            "/static/apple-logo-white.svg",
+            get(|| async { asset("image/svg+xml", APPLE_LOGO_WHITE.as_bytes()) }),
+        )
+        .route(
+            "/static/apple-logo-black.svg",
+            get(|| async { asset("image/svg+xml", APPLE_LOGO_BLACK.as_bytes()) }),
+        );
     router
 }
 

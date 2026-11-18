@@ -133,31 +133,59 @@ async fn every_page_links_the_assets_and_nothing_external() {
     }
 }
 
-/// Apple's logo artwork is licensed, so it is not in the repository: the button is text-only
-/// until `assets/apple-logo.svg` is added, and only then does the server serve and use it.
-#[cfg(not(apple_logo))]
-#[tokio::test]
-async fn the_apple_logo_is_absent_until_its_file_is_added() {
-    let h = harness(Access::MultiTenant).await;
-    let css = h.get_path(CSS, IP, None).await.text;
-    assert!(
-        !css.contains("/static/apple-logo.svg"),
-        "no rule points at a missing logo"
-    );
-    let logo = h.get_path("/static/apple-logo.svg", IP, None).await;
-    assert_eq!(logo.status, StatusCode::NOT_FOUND, "{}", logo.text);
+const LOGO_FILES: [&str; 2] = ["apple-logo-white.svg", "apple-logo-black.svg"];
+
+fn logo_path(file: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join(file)
 }
 
-#[cfg(apple_logo)]
+/// Apple's logo artwork is licensed, so it is never in the repository: the hosted build
+/// adds `assets/apple-logo-white.svg` and `assets/apple-logo-black.svg`. With both files the
+/// server serves them and the button shows the logo (white on the black light-mode button,
+/// black on the white dark-mode one); with either missing the button is text-only and nothing
+/// points at a missing file. Run the suite in both states.
 #[tokio::test]
-async fn the_apple_logo_is_served_and_used_when_its_file_is_present() {
+async fn the_apple_logo_is_used_exactly_when_its_files_are_present() {
+    let present = LOGO_FILES.iter().all(|f| logo_path(f).exists());
     let h = harness(Access::MultiTenant).await;
     let css = h.get_path(CSS, IP, None).await.text;
-    assert!(
-        css.contains("/static/apple-logo.svg"),
-        "the button shows the logo"
-    );
-    let logo = h.get_path("/static/apple-logo.svg", IP, None).await;
-    assert_eq!(logo.status, StatusCode::OK, "{}", logo.text);
-    assert_eq!(logo.headers[header::CONTENT_TYPE], "image/svg+xml");
+    for file in LOGO_FILES {
+        let url = format!("/static/{file}");
+        assert_eq!(
+            css.contains(&url),
+            present,
+            "the button's logo rule names {url} only when it exists"
+        );
+        let logo = h.get_path(&url, IP, None).await;
+        if present {
+            assert_eq!(logo.status, StatusCode::OK, "{url}: {}", logo.text);
+            assert_eq!(logo.headers[header::CONTENT_TYPE], "image/svg+xml");
+            assert_eq!(logo.text, std::fs::read_to_string(logo_path(file)).unwrap());
+        } else {
+            assert_eq!(logo.status, StatusCode::NOT_FOUND, "{url}: {}", logo.text);
+        }
+    }
+}
+
+/// The artwork must not be committable, and the hosted deploy must still upload it:
+/// `railway up` skips what `.gitignore` names unless `.railwayignore` re-includes it.
+#[test]
+fn the_logo_files_are_ignored_by_git_and_included_in_the_railway_upload() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let gitignore = std::fs::read_to_string(root.join(".gitignore")).expect(".gitignore");
+    let railwayignore =
+        std::fs::read_to_string(root.join(".railwayignore")).expect(".railwayignore");
+    for file in LOGO_FILES {
+        let line = format!("/crates/ibridge-hosted/assets/{file}");
+        assert!(
+            gitignore.lines().any(|l| l == line),
+            ".gitignore ignores {file}"
+        );
+        assert!(
+            railwayignore.lines().any(|l| l == format!("!{line}")),
+            ".railwayignore re-includes {file}"
+        );
+    }
 }

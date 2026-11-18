@@ -75,20 +75,20 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
    are black on a light page and white on a dark one; it is 44px high (Apple's default) with
    the system font at 43% of that height (19px); it is never narrower than 140px, and the
    corner radius follows the other buttons (a capsule). The Apple logo is licensed artwork
-   and is not in this repository; assets.rs adds it only when assets/apple-logo.svg exists. */
-:root { --apple-bg: #000; --apple-bg-hover: #262626; --apple-fg: #fff; }
+   and is not in this repository; assets.rs adds it only when both assets/apple-logo-*.svg exist. */
+:root { --apple-bg: #000; --apple-fg: #fff; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --apple-bg: #fff; --apple-bg-hover: #dcdcdc; --apple-fg: #000; }
+  :root:not([data-theme="light"]) { --apple-bg: #fff; --apple-fg: #000; }
 }
-:root[data-theme="dark"] { --apple-bg: #fff; --apple-bg-hover: #dcdcdc; --apple-fg: #000; }
+:root[data-theme="dark"] { --apple-bg: #fff; --apple-fg: #000; }
 .btn-apple {
   display: flex; align-items: center; justify-content: center; gap: 0;
   width: 100%; min-width: 140px; height: 44px; margin-top: var(--space-5); padding: 0 8%;
   border-radius: var(--radius-pill); background: var(--apple-bg); color: var(--apple-fg);
   font-family: var(--font-sans); font-size: 19px; font-weight: var(--weight-medium); line-height: 1;
   text-decoration: none; white-space: nowrap; cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out);
+  transition: opacity var(--duration-fast) var(--ease-out);
 }
-.btn-apple:hover { background: var(--apple-bg-hover); text-decoration: none; }
+.btn-apple:hover { opacity: 0.88; text-decoration: none; }
 .btn-apple:active { transform: scale(0.98); }
 .panel .btn-apple { color: var(--apple-fg); }

@@ -1,1 +1,5 @@
 /target
+# Apple's Sign in with Apple logo is licensed artwork: never commit it. The hosted build adds
+# it by hand; .railwayignore re-includes it for `railway up`.
+/crates/ibridge-hosted/assets/apple-logo-white.svg
+/crates/ibridge-hosted/assets/apple-logo-black.svg

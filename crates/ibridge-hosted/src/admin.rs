@@ -129,6 +129,7 @@ mod tests {
                 &SecretString::from(ASP_ALL),
                 Scope::ReadWrite,
                 now,
+                None,
             )
             .await
             .expect("seal");
@@ -183,7 +184,13 @@ mod tests {
             "it cannot refresh its way back in"
         );
         let again = store
-            .seal_under_code(&apple(ADA), &SecretString::from(ASP_ALL), Scope::Read, now)
+            .seal_under_code(
+                &apple(ADA),
+                &SecretString::from(ASP_ALL),
+                Scope::Read,
+                now,
+                None,
+            )
             .await;
         assert!(
             matches!(again, Err(StoreError::Suspended)),

@@ -201,7 +201,7 @@ async fn submit(
     };
     let issued = match shared
         .store
-        .seal_validated_under_code(&validated, scope, SystemTime::now())
+        .seal_validated_under_code(&validated, scope, SystemTime::now(), None)
         .await
     {
         Ok(issued) => issued,

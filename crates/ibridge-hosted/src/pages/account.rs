@@ -328,7 +328,7 @@ async fn mint(
     };
     match shared
         .store
-        .mint_api_key(&validated, name, scope, SystemTime::now())
+        .mint_api_key(&validated, name, scope, SystemTime::now(), None)
         .await
     {
         Ok(key) => {
@@ -543,7 +543,13 @@ mod tests {
     async fn oauth_grant(store: &Store, id: &str, asp: &str) -> IssuedTokens {
         let now = SystemTime::now();
         let code = store
-            .seal_under_code(&apple(id), &SecretString::from(asp), Scope::ReadWrite, now)
+            .seal_under_code(
+                &apple(id),
+                &SecretString::from(asp),
+                Scope::ReadWrite,
+                now,
+                None,
+            )
             .await
             .expect("seal");
         store
@@ -559,7 +565,7 @@ mod tests {
             .await
             .expect("accepted");
         store
-            .mint_api_key(&validated, name, scope, SystemTime::now())
+            .mint_api_key(&validated, name, scope, SystemTime::now(), None)
             .await
             .expect("mint")
     }

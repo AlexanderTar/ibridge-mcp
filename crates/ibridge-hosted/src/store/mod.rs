@@ -6,10 +6,12 @@ mod manage;
 mod redact;
 mod seal;
 mod services;
+mod users;
 
 pub(crate) use manage::{GrantKind, GrantSummary};
 pub use redact::{RedactingFields, redact};
 pub use services::Services;
+pub use users::{User, UserId};
 
 use std::error::Error;
 use std::fmt;
@@ -48,6 +50,15 @@ pub enum StoreError {
     /// The account is new and the service is already at its account limit.
     #[error("the service is not taking new accounts")]
     SignupsFull,
+    /// The user is already linked to a different iCloud address.
+    #[error("the user is linked to a different address")]
+    LinkedToOther {
+        /// The address the user is linked to.
+        linked: AppleId,
+    },
+    /// Another user is already linked to this iCloud address.
+    #[error("the address belongs to another user")]
+    AddressTaken,
     /// The database could not be opened or updated.
     #[error("the store failed")]
     Internal {
@@ -290,8 +301,9 @@ impl Store {
         asp: &SecretString,
         scope: Scope,
         now: SystemTime,
+        link: Option<UserId>,
     ) -> Result<IssuedCode, StoreError> {
-        self.seal_with(apple_id, asp, scope, &Services::default(), now)
+        self.seal_with(apple_id, asp, scope, &Services::default(), now, link)
             .await
     }
 
@@ -302,19 +314,15 @@ impl Store {
         scope: Scope,
         services: &Services,
         now: SystemTime,
+        link: Option<UserId>,
     ) -> Result<IssuedCode, StoreError> {
         let now = unix(now)?;
         let mut tx = begin(&self.pool).await?;
-        let result = seal_in(
-            &mut tx,
-            apple_id,
-            asp,
-            scope,
-            services,
-            now,
-            self.signup_cap,
-        )
-        .await;
+        let admission = Admission {
+            cap: self.signup_cap,
+            link,
+        };
+        let result = seal_in(&mut tx, apple_id, asp, scope, services, now, admission).await;
         settle(tx, result).await
     }
 
@@ -329,6 +337,7 @@ impl Store {
         validated: &ValidatedCredentials,
         scope: Scope,
         now: SystemTime,
+        link: Option<UserId>,
     ) -> Result<IssuedCode, StoreError> {
         self.seal_with(
             &validated.apple_id,
@@ -336,6 +345,7 @@ impl Store {
             scope,
             &validated.services,
             now,
+            link,
         )
         .await
     }
@@ -481,15 +491,20 @@ impl Store {
         name: &str,
         scope: Scope,
         now: SystemTime,
+        link: Option<UserId>,
     ) -> Result<ApiKey, StoreError> {
         let now = unix(now)?;
         let mut tx = begin(&self.pool).await?;
-        let result = mint_key_in(&mut tx, validated, name, scope, now, self.signup_cap).await;
+        let admission = Admission {
+            cap: self.signup_cap,
+            link,
+        };
+        let result = mint_key_in(&mut tx, validated, name, scope, now, admission).await;
         settle(tx, result).await
     }
 }
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Version 2 added `accounts.suspended`.
 const UPGRADE_1_TO_2: &str =
@@ -498,6 +513,29 @@ const UPGRADE_1_TO_2: &str =
 /// Version 3 added `grants.services`: what the sign-in found out about each service, as JSON
 /// with no secret. A grant made before it has none, which reads as every service on.
 const UPGRADE_2_TO_3: &str = "ALTER TABLE grants ADD COLUMN services TEXT;";
+
+/// Version 4 added `users` (one row per Sign in with Apple identity, linked one to one to an
+/// account) and `stripe_events` (event ids already handled). It must match `schema.sql`.
+const UPGRADE_3_TO_4: &str = "
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT NOT NULL UNIQUE,
+    apple_sub TEXT NOT NULL,
+    email TEXT,
+    account_id INTEGER UNIQUE REFERENCES accounts (id),
+    stripe_customer TEXT UNIQUE,
+    stripe_subscription TEXT,
+    status TEXT,
+    period_end INTEGER,
+    complimentary INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stripe_events (
+    id TEXT PRIMARY KEY,
+    seen_at INTEGER NOT NULL
+);
+";
 
 async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
@@ -508,9 +546,14 @@ async fn apply_schema(pool: &SqlitePool) -> Result<(), StoreError> {
         0 => apply_schema_script(pool, include_str!("schema.sql"), SCHEMA_VERSION).await?,
         1 => {
             apply_schema_script(pool, UPGRADE_1_TO_2, 2).await?;
-            apply_schema_script(pool, UPGRADE_2_TO_3, SCHEMA_VERSION).await?;
+            apply_schema_script(pool, UPGRADE_2_TO_3, 3).await?;
+            apply_schema_script(pool, UPGRADE_3_TO_4, SCHEMA_VERSION).await?;
         }
-        2 => apply_schema_script(pool, UPGRADE_2_TO_3, SCHEMA_VERSION).await?,
+        2 => {
+            apply_schema_script(pool, UPGRADE_2_TO_3, 3).await?;
+            apply_schema_script(pool, UPGRADE_3_TO_4, SCHEMA_VERSION).await?;
+        }
+        3 => apply_schema_script(pool, UPGRADE_3_TO_4, SCHEMA_VERSION).await?,
         SCHEMA_VERSION => {}
         _ => {
             return Err(internal(StoreFault(
@@ -654,9 +697,9 @@ async fn seal_in(
     scope: Scope,
     services: &Services,
     now: i64,
-    cap: Option<usize>,
+    admission: Admission,
 ) -> Result<IssuedCode, StoreError> {
-    let account = upsert_account(tx, apple_id, now, cap).await?;
+    let account = admit(tx, apple_id, now, admission).await?;
     let grant = random_bytes::<16>()?;
     sqlx::query(
         "INSERT INTO grants (id, account_id, kind, name, scope, status, services, created_at)
@@ -703,14 +746,14 @@ async fn mint_key_in(
     name: &str,
     scope: Scope,
     now: i64,
-    cap: Option<usize>,
+    admission: Admission,
 ) -> Result<ApiKey, StoreError> {
     let ValidatedCredentials {
         apple_id,
         secret: asp,
         services,
     } = validated;
-    let account = upsert_account(tx, apple_id, now, cap).await?;
+    let account = admit(tx, apple_id, now, admission).await?;
     let grant = random_bytes::<16>()?;
     sqlx::query(
         "INSERT INTO grants (id, account_id, kind, name, scope, status, services, created_at)
@@ -970,6 +1013,29 @@ async fn drop_expired(tx: &mut WriteTx, hit: &Hit) -> Result<(), StoreError> {
 /// The account's row id. A new account is refused once `cap` accounts exist; one that
 /// exists is always found. The count and the insert share one `BEGIN IMMEDIATE`
 /// transaction, so two sign-ups cannot both take the last place.
+/// What a sign-up under the cap may also do: link the account to a user.
+#[derive(Clone, Copy)]
+struct Admission {
+    cap: Option<usize>,
+    link: Option<UserId>,
+}
+
+/// Finds or creates the account under the sign-up cap, then links it to the user.
+///
+/// A refusal here leaves nothing behind: the caller drops its transaction.
+async fn admit(
+    tx: &mut WriteTx,
+    apple_id: &AppleId,
+    now: i64,
+    admission: Admission,
+) -> Result<i64, StoreError> {
+    let account = upsert_account(tx, apple_id, now, admission.cap).await?;
+    if let Some(user) = admission.link {
+        users::link_in(tx, user, account).await?;
+    }
+    Ok(account)
+}
+
 async fn upsert_account(
     tx: &mut WriteTx,
     apple_id: &AppleId,
@@ -1278,7 +1344,13 @@ mod tests {
     async fn seal_code(store: &Store, now: SystemTime) -> super::IssuedCode {
         let apple = AppleId::try_from("ada@icloud.com").unwrap();
         store
-            .seal_under_code(&apple, &SecretString::from(ASP), Scope::ReadWrite, now)
+            .seal_under_code(
+                &apple,
+                &SecretString::from(ASP),
+                Scope::ReadWrite,
+                now,
+                None,
+            )
             .await
             .unwrap()
     }
@@ -1289,7 +1361,13 @@ mod tests {
         for spelling in ["Ada@icloud.com", "ada@icloud.com", "ADA@iCloud.com"] {
             let apple = AppleId::try_from(spelling).unwrap();
             store
-                .seal_under_code(&apple, &SecretString::from(ASP), Scope::ReadWrite, at(0))
+                .seal_under_code(
+                    &apple,
+                    &SecretString::from(ASP),
+                    Scope::ReadWrite,
+                    at(0),
+                    None,
+                )
                 .await
                 .unwrap_or_else(|error| panic!("{spelling} is the one account, got {error:?}"));
         }
@@ -1330,15 +1408,17 @@ mod tests {
                 "accounts".to_owned(),
                 "grants".to_owned(),
                 "seals".to_owned(),
+                "stripe_events".to_owned(),
+                "users".to_owned(),
             ],
-            "migration must create the credential tables"
+            "migration must create the credential and user tables"
         );
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&store.pool)
             .await
             .unwrap();
         assert_eq!(
-            version, 3,
+            version, 4,
             "the schema records user_version so a later package can migrate"
         );
         let temp = TempDb::new();
@@ -1351,7 +1431,7 @@ mod tests {
             .fetch_one(&opened.pool)
             .await
             .unwrap();
-        assert_eq!(again, 3, "opening an existing database keeps user_version");
+        assert_eq!(again, 4, "opening an existing database keeps user_version");
     }
 
     #[tokio::test]
@@ -1384,6 +1464,7 @@ mod tests {
             .unwrap();
         assert_eq!(suspended, 0, "an account that existed is not suspended");
         store.ready().await.expect("the upgraded database is ready");
+        assert_user_tables(&store).await;
     }
 
     #[tokio::test]
@@ -1397,7 +1478,9 @@ mod tests {
             .await
             .unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            "CREATE TABLE grants (id BLOB NOT NULL PRIMARY KEY, account_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT, scope TEXT NOT NULL, status TEXT NOT NULL, failure_count INTEGER NOT NULL DEFAULT 0, first_failure_at INTEGER, created_at INTEGER NOT NULL);
+            "CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, apple_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, suspended INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE grants (id BLOB NOT NULL PRIMARY KEY, account_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT, scope TEXT NOT NULL, status TEXT NOT NULL, failure_count INTEGER NOT NULL DEFAULT 0, first_failure_at INTEGER, created_at INTEGER NOT NULL);
+             INSERT INTO accounts (apple_id, created_at) VALUES ('ada@icloud.com', 1);
              INSERT INTO grants (id, account_id, kind, scope, status, created_at) VALUES (x'00', 1, 'oauth', 'read', 'active', 1);
              PRAGMA user_version = 2;"
                 .to_owned(),
@@ -1418,6 +1501,85 @@ mod tests {
             "a grant that existed has no recorded services"
         );
         store.ready().await.expect("the upgraded database is ready");
+        assert_user_tables(&store).await;
+    }
+
+    /// The upgraded database has both version 4 tables, and a user can link to an old account.
+    async fn assert_user_tables(store: &Store) {
+        for table in ["users", "stripe_events"] {
+            let found: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+            )
+            .bind(table)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+            assert_eq!(found, 1, "the upgrade must create {table}");
+        }
+        let user = store
+            .upsert_user("uid-1", "sub-1", None)
+            .await
+            .expect("a user can be stored in the upgraded database");
+        assert_eq!(user.account, None);
+    }
+
+    #[tokio::test]
+    async fn a_version_3_database_gains_the_user_tables() {
+        let temp = TempDb::new();
+        let options = SqliteConnectOptions::new()
+            .filename(temp.path())
+            .create_if_missing(true);
+        let old = SqlitePoolOptions::new()
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            "CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, apple_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, suspended INTEGER NOT NULL DEFAULT 0);
+             INSERT INTO accounts (apple_id, created_at) VALUES ('ada@icloud.com', 1);
+             PRAGMA user_version = 3;"
+                .to_owned(),
+        ))
+        .execute(&old)
+        .await
+        .unwrap();
+        old.close().await;
+
+        let store = Store::open(&temp.path()).await.unwrap();
+
+        store.ready().await.expect("the upgraded database is ready");
+        assert_user_tables(&store).await;
+        let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(accounts, 1, "the upgrade keeps the accounts it found");
+    }
+
+    #[tokio::test]
+    async fn the_upgrade_script_and_the_fresh_schema_make_the_same_user_tables() {
+        let fresh = Store::memory().await.unwrap();
+        let upgraded = empty_pool().await;
+        super::apply_schema_script(&upgraded, super::UPGRADE_3_TO_4, 4)
+            .await
+            .unwrap();
+        let definitions = |pool: SqlitePool| async move {
+            let rows: Vec<String> = sqlx::query_scalar(
+                "SELECT sql FROM sqlite_master WHERE name IN ('users', 'stripe_events') ORDER BY name",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            rows.iter()
+                .map(|sql| sql.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect::<Vec<_>>()
+        };
+        let from_fresh = definitions(fresh.pool.clone()).await;
+        assert_eq!(from_fresh.len(), 2, "fresh schema has both tables");
+        assert_eq!(
+            from_fresh,
+            definitions(upgraded).await,
+            "schema.sql and UPGRADE_3_TO_4 must agree"
+        );
     }
 
     async fn empty_pool() -> SqlitePool {
@@ -2049,7 +2211,7 @@ mod tests {
         .await
         .unwrap();
         store
-            .mint_api_key(&validated, "laptop", scope, at(0))
+            .mint_api_key(&validated, "laptop", scope, at(0), None)
             .await
             .unwrap()
     }
@@ -2085,7 +2247,7 @@ mod tests {
             .await
             .expect("one accepting service is enough to mint");
         let minted = store
-            .mint_api_key(&validated, "laptop", Scope::ReadWrite, at(0))
+            .mint_api_key(&validated, "laptop", Scope::ReadWrite, at(0), None)
             .await
             .unwrap();
         assert!(

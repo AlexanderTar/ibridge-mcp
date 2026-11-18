@@ -678,7 +678,7 @@ mod tests {
         let now = SystemTime::now();
         let apple = AppleId::try_from(apple_id).expect("apple id");
         let code = store
-            .seal_under_code(&apple, &SecretString::from(asp), scope, now)
+            .seal_under_code(&apple, &SecretString::from(asp), scope, now, None)
             .await
             .expect("seal");
         let issued = store

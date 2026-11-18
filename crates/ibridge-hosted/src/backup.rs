@@ -436,6 +436,7 @@ mod tests {
             &SecretString::from("pw"),
             Scope::Read,
             SystemTime::now(),
+            None,
         )
         .await
         .expect("seal");

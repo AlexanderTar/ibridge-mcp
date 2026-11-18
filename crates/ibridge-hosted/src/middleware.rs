@@ -179,7 +179,7 @@ mod tests {
     async fn tokens(store: &Store, scope: Scope) -> IssuedTokens {
         let now = SystemTime::now();
         let code = store
-            .seal_under_code(&ada(), &SecretString::from(ASP), scope, now)
+            .seal_under_code(&ada(), &SecretString::from(ASP), scope, now, None)
             .await
             .expect("seal");
         store
@@ -207,7 +207,7 @@ mod tests {
                 .await
                 .expect("validated");
         let key = store
-            .mint_api_key(&validated, "test key", scope, SystemTime::now())
+            .mint_api_key(&validated, "test key", scope, SystemTime::now(), None)
             .await
             .expect("key");
         key.key.expose_secret().to_owned()

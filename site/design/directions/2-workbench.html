@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ibridge · iCloud for your AI assistant</title>
+<title>ibridge · Connect iCloud to your AI assistant</title>
 <meta name="description" content="ibridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts.">
 <link rel="icon" href="../icons/d-i-pylon-favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="../icons/d-i-pylon-tile-light.svg">
@@ -22,13 +22,20 @@
   .consent .window-body { display: grid; gap: var(--space-4); }
   .consent-head { display: flex; align-items: center; gap: var(--space-3); }
   .consent-head img { width: 40px; height: 40px; }
-  .consent-head b { display: block; font-size: 1.0625rem; letter-spacing: -0.01em; }
-  .consent-head span { font-size: var(--text-caption); color: var(--color-text-tertiary); }
-  .consent-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-  .consent-list li { display: flex; align-items: center; gap: var(--space-3); padding: 12px 14px; font-size: var(--text-small); font-weight: var(--weight-medium); }
-  .consent-list li + li { border-top: 1px solid var(--color-border); }
-  .consent-list svg { width: 20px; height: 20px; color: var(--color-link); flex: none; }
-  .consent .segmented { display: grid; grid-template-columns: 1fr 1fr; text-align: center; }
+  .consent-head b { font-size: 1.0625rem; letter-spacing: -0.01em; }
+  .consent-lede { font-size: var(--text-small); color: var(--color-text-secondary); }
+  /* Pictures of the real connect page's fields: flat boxes, inside the inert .window only. */
+  .field { display: grid; gap: 6px; }
+  .field-label { font-size: var(--text-caption); font-weight: var(--weight-semibold); color: var(--color-text); }
+  .field-box { display: block; padding: 10px 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); font-size: var(--text-small); color: var(--color-text); }
+  .field-box--secret { font-family: var(--font-mono); letter-spacing: 0.04em; }
+  .field-hint { font-size: var(--text-caption); line-height: var(--leading-caption); color: var(--color-text-tertiary); }
+  .check { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-3); font-size: var(--text-small); color: var(--color-text-secondary); }
+  .check b { color: var(--color-text); }
+  .check-box { width: 20px; height: 20px; margin-top: 1px; border-radius: 6px; border: 1.5px solid var(--color-border-strong); background: var(--color-surface); }
+  .check-box { position: relative; }
+  .check-box[data-checked] { background: var(--color-brand); border-color: var(--color-brand); }
+  .check-box[data-checked]::after { content: ""; position: absolute; inset: 0; background: var(--color-on-brand); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3.2 3.2L15 6.8' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 18px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3.2 3.2L15 6.8' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 18px no-repeat; }
   .consent .btn { width: 100%; }
   .bento { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-4); }
   .tile { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-6); }
@@ -40,7 +47,6 @@
   .app .feature-icon { background: var(--color-surface); }
   .app b { display: block; margin-top: var(--space-3); font-size: var(--text-small); }
   .app span { display: block; font-size: var(--text-caption); line-height: var(--leading-caption); color: var(--color-text-tertiary); margin-top: 2px; }
-  .tile .segmented { margin-top: var(--space-4); }
   .step-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); counter-reset: step; list-style: none; margin: 0; padding: 0; }
   .step-cards li { counter-increment: step; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5); }
   .step-cards li::before { content: counter(step); display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--color-brand-tint); color: var(--color-link); font-weight: var(--weight-bold); font-size: var(--text-small); margin-bottom: var(--space-4); }
@@ -74,7 +80,7 @@
 <body>
 <nav class="nav" aria-label="Main">
   <div class="container nav-inner">
-    <a class="logo" href="#top"><img class="logo-light" src="../icons/d-i-pylon-mark-light.svg" alt=""><img class="logo-dark" src="../icons/d-i-pylon-mark-dark.svg" alt=""><span>ibridge</span></a>
+    <a class="logo" href="#top"><img class="when-light" src="../icons/d-i-pylon-mark-light.svg" alt=""><img class="when-dark" src="../icons/d-i-pylon-mark-dark.svg" alt=""><span>ibridge</span></a>
     <ul class="nav-links"><li><a href="#how">How it works</a></li><li><a href="#security">Security</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#faq">FAQ</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
     <a class="btn btn--primary" href="#how">Connect</a>
     <details class="nav-menu"><summary aria-label="Menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h14M3 14h14"/></svg></summary>
@@ -95,18 +101,15 @@
       <div class="window" aria-hidden="true">
         <div class="window-bar"><i></i><i></i><i></i><span>mcp.ibridge.fyi</span></div>
         <div class="window-body">
-          <div class="consent-head"><picture><source srcset="../icons/d-i-pylon-tile-dark.svg" media="(prefers-color-scheme: dark)"><img src="../icons/d-i-pylon-tile-light.svg" alt=""></picture><div><b>Choose access</b><span>For your AI assistant</span></div></div>
-          <ul class="consent-list">
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M4 7.5l8 5.5 8-5.5"/></svg>Mail</li>
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Calendar</li>
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 7h10M10 12h10M10 17h10"/><path d="M3.5 7l1.5 1.5L7.5 6M3.5 12l1.5 1.5L7.5 11"/><circle cx="5.25" cy="17" r="1.5"/></svg>Reminders</li>
-            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.2-3.6 4-5 7-5s5.8 1.4 7 5"/></svg>Contacts</li>
-          </ul>
-          <span class="segmented"><span aria-current="true">Read-only</span><span>Full access</span></span>
-          <span class="btn btn--primary">Approve</span>
+          <div class="consent-head"><img class="when-light" src="../icons/d-i-pylon-tile-light.svg" alt=""><img class="when-dark" src="../icons/d-i-pylon-tile-dark.svg" alt=""><b>Connect iCloud to Claude</b></div>
+          <p class="consent-lede">Claude is asking to use your iCloud Mail, Calendar, Reminders and Contacts.</p>
+          <div class="field"><span class="field-label">Your primary iCloud address</span><span class="field-box">you@icloud.com</span></div>
+          <div class="field"><span class="field-label">App-specific password</span><span class="field-box field-box--secret">••••-••••-••••-••••</span><span class="field-hint">Never use your main Apple ID password here.</span></div>
+          <div class="check"><span class="check-box" data-checked></span><span><b>Read-only access.</b> Claude can read but cannot send, move, change or delete anything.</span></div>
+          <span class="btn btn--primary">Connect</span>
         </div>
       </div>
-      <figcaption class="caption" style="margin-top:var(--space-3);text-align:center">Illustration: you pick read-only or full access when you connect.</figcaption>
+      <figcaption class="caption" style="margin-top:var(--space-3);text-align:center">Illustration with example data: the connect step, shown in the new design. You enter your iCloud address and an app-specific password, and tick read-only if you want it.</figcaption>
     </figure>
   </header>
 
@@ -126,7 +129,7 @@
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
         <h3 class="h3">Read-only or full access</h3>
         <p>Read-only lets the assistant look. Full access lets it manage things for you.</p>
-        <span class="segmented" aria-hidden="true"><span aria-current="true">Read-only</span><span>Full</span></span>
+        <ul class="access-modes"><li><b>Read-only</b>Reads, but cannot send, move, change or delete anything.</li><li><b>Full access</b>Reads and manages your mail, events, reminders and contacts.</li></ul>
       </div>
       <div class="tile span-2" id="security">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg></div>
@@ -155,8 +158,8 @@
       <ol class="step-cards">
         <li><b>Add the connector</b><p>In Claude, open Settings, then Connectors, and add a custom connector with the address below.</p></li>
         <li><b>Sign in with Apple</b><p>Claude opens the ibridge sign-in page. Sign in with Apple there.</p></li>
-        <li><b>Connect iCloud</b><p>Enter your iCloud address and an app-specific password, never your main Apple ID password.</p></li>
-        <li><b>Choose access</b><p>Read-only or full access. Revoke it any time.</p></li>
+        <li><b>Choose a plan</b><p>Subscribe for US$1.99/month or US$19.99/year. Tax is added at checkout.</p></li>
+        <li><b>Connect iCloud</b><p>Enter your iCloud address and an app-specific password, never your main Apple ID password. Tick “Read-only access” if the assistant should only read. Revoke it any time.</p></li>
       </ol>
       <div class="connect-row">
         <div class="tile"><span class="copy-box-label">Connector address</span><span class="copy-box"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span><p>Assistants that support MCP sign-in use the same address.</p></div>
@@ -215,7 +218,7 @@
 <footer class="footer">
   <div class="container">
     <div class="footer-top">
-      <a class="logo" href="#top"><img class="logo-light" src="../icons/d-i-pylon-mark-light.svg" alt=""><img class="logo-dark" src="../icons/d-i-pylon-mark-dark.svg" alt=""><span>ibridge</span></a>
+      <a class="logo" href="#top"><img class="when-light" src="../icons/d-i-pylon-mark-light.svg" alt=""><img class="when-dark" src="../icons/d-i-pylon-mark-dark.svg" alt=""><span>ibridge</span></a>
       <ul class="footer-links"><li><a href="https://mcp.ibridge.fyi/privacy">Privacy</a></li><li><a href="https://mcp.ibridge.fyi/terms">Terms</a></li><li><a href="https://mcp.ibridge.fyi/account">Account</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
     </div>
     <p class="disclaimer">ibridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>

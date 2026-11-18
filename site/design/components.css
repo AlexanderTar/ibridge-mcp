@@ -47,13 +47,19 @@ h1, h2, h3, p { margin: 0; }
 .eyebrow { display: inline-block; font-size: var(--text-eyebrow); letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; font-weight: var(--weight-semibold); color: var(--color-accent-text); margin-bottom: var(--space-3); }
 .muted { color: var(--color-text-secondary); }
 
+/* ---------- Light / dark image swap ----------
+   One rule for every themed image (logo mark, hero tile, tool-chip mark):
+   put both files side by side, class="when-light" and class="when-dark".
+   It follows the OS setting and a data-theme="light|dark" override on <html>,
+   which a <picture> media query cannot do. Only hides; never sets display. */
+:root[data-theme="light"] .when-dark,
+:root[data-theme="dark"] .when-light { display: none; }
+@media (prefers-color-scheme: light) { :root:not([data-theme]) .when-dark { display: none; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) .when-light { display: none; } }
+
 /* ---------- Logo lockup ---------- */
 .logo { display: inline-flex; align-items: center; gap: 10px; color: var(--color-text); text-decoration: none; font-weight: var(--weight-bold); font-size: 1.25rem; letter-spacing: -0.03em; }
 .logo img { width: 28px; height: 28px; }
-.logo .logo-dark { display: none; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .logo .logo-light { display: none; } :root:not([data-theme="light"]) .logo .logo-dark { display: block; } }
-:root[data-theme="dark"] .logo .logo-light { display: none; }
-:root[data-theme="dark"] .logo .logo-dark { display: block; }
 
 /* ---------- Nav ---------- */
 .nav { position: sticky; top: 0; z-index: var(--z-nav); background: color-mix(in srgb, var(--color-bg) 82%, transparent); backdrop-filter: saturate(180%) blur(16px); -webkit-backdrop-filter: saturate(180%) blur(16px); border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent); }
@@ -149,10 +155,12 @@ h1, h2, h3, p { margin: 0; }
 .callout p { color: var(--color-text-secondary); font-size: var(--text-small); margin-top: var(--space-1); }
 .callout--warn .feature-icon { background: var(--color-accent-tint); color: var(--color-accent-text); }
 
-/* ---------- Segmented choice (read-only / full access) ---------- */
-.segmented { display: inline-grid; grid-auto-flow: column; gap: 2px; padding: 3px; border-radius: var(--radius-pill); background: var(--color-surface-sunken); border: 1px solid var(--color-border); }
-.segmented span { padding: 8px 16px; border-radius: var(--radius-pill); font-size: var(--text-small); font-weight: var(--weight-semibold); color: var(--color-text-secondary); }
-.segmented span[aria-current="true"] { background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-sm); }
+/* ---------- Access modes (read-only / full access) ----------
+   A plain two-row comparison, not a control: no pill, fill, shadow or hover,
+   so nobody tries to tap it. Wording matches the real connect page. */
+.access-modes { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: grid; gap: var(--space-3); font-size: var(--text-small); }
+.access-modes li { padding-left: var(--space-4); border-left: 3px solid var(--color-brand-tint); color: var(--color-text-secondary); }
+.access-modes b { display: block; color: var(--color-text); font-weight: var(--weight-semibold); }
 
 /* ---------- Disclaimer ---------- */
 .disclaimer { font-size: var(--text-caption); line-height: var(--leading-caption); color: var(--color-text-tertiary); max-width: 72ch; }
@@ -165,7 +173,10 @@ h1, h2, h3, p { margin: 0; }
 .footer-links a:hover { color: var(--color-text); text-decoration: underline; }
 .footer .disclaimer { margin-top: var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--color-border); }
 
-/* ---------- Product window (illustration frame) ---------- */
+/* ---------- Product window (illustration frame) ----------
+   The only place control-like pictures (buttons, fields) may appear on the
+   marketing site. Always aria-hidden="true"; it is inert to the pointer too. */
+.window[aria-hidden="true"] { pointer-events: none; user-select: none; -webkit-user-select: none; }
 .window { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); overflow: hidden; text-align: left; }
 .window-bar { display: flex; align-items: center; gap: 6px; padding: 12px 14px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-subtle); }
 .window-bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--color-border-strong); }

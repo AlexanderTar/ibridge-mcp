@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ibridge · iCloud for your AI assistant</title>
+<title>ibridge · Connect iCloud to your AI assistant</title>
 <meta name="description" content="ibridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts.">
 <link rel="icon" href="../icons/b-cloud-arch-favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="../icons/b-cloud-arch-tile-light.svg">
@@ -17,7 +17,6 @@
   .hero-shot figcaption { text-align: center; margin-top: var(--space-3); }
   .control-grid { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
   .control-grid .feature-card { padding: var(--space-6); }
-  .control-grid .segmented { margin-top: var(--space-4); }
   .how { display: grid; gap: var(--space-7); grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; }
   .side-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
   .side-card p { color: var(--color-text-secondary); font-size: var(--text-small); margin: var(--space-2) 0 var(--space-4); }
@@ -31,7 +30,7 @@
 <body>
 <nav class="nav" aria-label="Main">
   <div class="container nav-inner">
-    <a class="logo" href="#top"><img class="logo-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="logo-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+    <a class="logo" href="#top"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
     <ul class="nav-links"><li><a href="#how">How it works</a></li><li><a href="#security">Security</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#faq">FAQ</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
     <a class="btn btn--primary" href="#how">Connect</a>
     <details class="nav-menu"><summary aria-label="Menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h14M3 14h14"/></svg></summary>
@@ -42,10 +41,8 @@
 <main id="top">
   <header class="sky">
     <div class="container hero">
-      <picture>
-        <source srcset="../icons/b-cloud-arch-tile-dark.svg" media="(prefers-color-scheme: dark)">
-        <img class="hero-icon" src="../icons/b-cloud-arch-tile-light.svg" alt="" width="96" height="96">
-      </picture>
+      <img class="hero-icon when-light" src="../icons/b-cloud-arch-tile-light.svg" alt="" width="96" height="96">
+      <img class="hero-icon when-dark" src="../icons/b-cloud-arch-tile-dark.svg" alt="" width="96" height="96">
       <h1 class="display">Your iCloud,<br> in your AI&nbsp;assistant.</h1>
       <p class="lede">ibridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts. Choose read-only or full access, and revoke it any time.</p>
       <div class="btn-row"><a class="btn btn--primary btn--lg" href="#how">Connect ibridge</a><a class="btn btn--secondary btn--lg" href="#free">Run it for free</a></div>
@@ -57,12 +54,12 @@
           <div class="window-body chat">
             <div class="bubble bubble--user">What's on my calendar tomorrow? And remind me to call Sam after the dentist.</div>
             <div class="bubble bubble--assistant">
-              <span class="tool-chip"><img src="../icons/b-cloud-arch-mark-light.svg" alt="">ibridge · Calendar</span>
+              <span class="tool-chip"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt="">ibridge · Calendar</span>
               <div class="event-row"><span>Team planning</span><time>09:30</time></div>
               <div class="event-row"><span>Dentist</span><time>14:00</time></div>
             </div>
             <div class="bubble bubble--assistant">
-              <span class="tool-chip"><img src="../icons/b-cloud-arch-mark-light.svg" alt="">ibridge · Reminders</span>
+              <span class="tool-chip"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt="">ibridge · Reminders</span>
               <div>Added “Call Sam” for tomorrow at 15:00.</div>
             </div>
           </div>
@@ -99,7 +96,7 @@
           <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
           <h3 class="h3">Choose when you connect</h3>
           <p>Pick read-only if you only want the assistant to look. Pick full access when you want it to manage things for you.</p>
-          <span class="segmented" aria-hidden="true"><span aria-current="true">Read-only</span><span>Full access</span></span>
+          <ul class="access-modes"><li><b>Read-only</b>Reads, but cannot send, move, change or delete anything.</li><li><b>Full access</b>Reads and manages your mail, events, reminders and contacts.</li></ul>
         </div>
         <div class="feature-card">
           <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></div>
@@ -121,8 +118,8 @@
           <li><span class="step-title">Add the connector</span><span class="step-body">In Claude, open Settings, then Connectors, and add a custom connector with this address.
             <span class="copy-box"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span></span></li>
           <li><span class="step-title">Sign in with Apple</span><span class="step-body">Claude opens the ibridge sign-in page. Sign in with Apple there.</span></li>
-          <li><span class="step-title">Connect iCloud</span><span class="step-body">Enter your iCloud address and an app-specific password. Never use your main Apple ID password.</span></li>
-          <li><span class="step-title">Choose access</span><span class="step-body">Read-only or full access. You can revoke it any time.</span></li>
+          <li><span class="step-title">Choose a plan</span><span class="step-body">Subscribe for US$1.99/month or US$19.99/year. Tax is added at checkout.</span></li>
+          <li><span class="step-title">Connect iCloud</span><span class="step-body">Enter your iCloud address and an app-specific password, never your main Apple ID password. Tick “Read-only access” if the assistant should only read. You can revoke it any time.</span></li>
         </ol>
         <div>
           <div class="side-card">
@@ -198,7 +195,7 @@
 <footer class="footer">
   <div class="container">
     <div class="footer-top">
-      <a class="logo" href="#top"><img class="logo-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="logo-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+      <a class="logo" href="#top"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
       <ul class="footer-links"><li><a href="https://mcp.ibridge.fyi/privacy">Privacy</a></li><li><a href="https://mcp.ibridge.fyi/terms">Terms</a></li><li><a href="https://mcp.ibridge.fyi/account">Account</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
     </div>
     <p class="disclaimer">ibridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>

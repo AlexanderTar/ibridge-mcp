@@ -30,6 +30,16 @@ const options = [
     <path d="M10 57 Q32 17 54 57" stroke="${c.ink}"/>
     <path d="M5 36 H59" stroke="${c.coral}"/>
   </g>`,
+    // 16 px: filled cloud, thicker arch and deck, so the cloud no longer fades.
+    small: {
+      box: [2, 4, 60, 60],
+      draw: (c) => `
+  <path d="${CLOUD}" fill="${c.teal}" transform="translate(-6.4 -9.6) scale(1.2)"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 61 Q32 23 53 61" stroke="${c.ink}" stroke-width="7"/>
+    <path d="M4 42 H60" stroke="${c.coral}" stroke-width="7"/>
+  </g>`,
+    },
   },
   {
     id: "b-cloud-arch",
@@ -75,6 +85,17 @@ const options = [
     <path d="M18 18 V54 M46 18 V54" stroke="${c.ink}" stroke-width="5"/>
     <path d="M3 46 H61" stroke="${c.ink}" stroke-width="4.5"/>
   </g>`,
+    // 16 px: drop the side spans, keep two towers, one main cable and a bigger cloud.
+    small: {
+      box: [0, 0, 64, 64],
+      draw: (c) => `
+  <path d="${CLOUD}" fill="${c.teal}" transform="translate(9.5 -6) scale(0.7)"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 28 Q32 58 50 28" stroke="${c.coral}" stroke-width="6"/>
+    <path d="M14 26 V60 M50 26 V60" stroke="${c.ink}" stroke-width="7"/>
+    <path d="M4 50 H60" stroke="${c.ink}" stroke-width="6"/>
+  </g>`,
+    },
   },
   {
     id: "f-two-shores",
@@ -85,6 +106,14 @@ const options = [
   <path d="M15 42 Q32 6 49 42" fill="none" stroke="${c.coral}" stroke-width="5" stroke-linecap="round"/>
   <path d="${CLOUD}" fill="${c.teal}" transform="translate(-1.5 26) scale(0.5)"/>
   <path d="${CLOUD}" fill="${c.ink}" transform="translate(33.5 26) scale(0.5)"/>`,
+    // 16 px: bigger clouds and a taller, thicker span, filling the square.
+    small: {
+      box: [0, 0, 64, 64],
+      draw: (c) => `
+  <path d="M13 50 Q32 -14 51 50" fill="none" stroke="${c.coral}" stroke-width="7" stroke-linecap="round"/>
+  <path d="${CLOUD}" fill="${c.teal}" transform="translate(-6 31) scale(0.7)"/>
+  <path d="${CLOUD}" fill="${c.ink}" transform="translate(26 31) scale(0.7)"/>`,
+    },
   },
 ];
 
@@ -105,21 +134,26 @@ const tile = (o, mode) => {
 };
 
 // Favicon: the bare mark, switching colours with the browser theme.
+const small = (o) => o.small ?? { box: o.box, draw: o.draw };
+
 const favicon = (o) => {
   const L = palette.light;
   const D = palette.dark;
-  let inner = o.draw({ ink: "var(--ink)", teal: "var(--teal)", coral: "var(--coral)" });
+  const { box, draw } = small(o);
+  let inner = draw({ ink: "var(--ink)", teal: "var(--teal)", coral: "var(--coral)" });
   const style = `
   <style>:root{--ink:${L.ink};--teal:${L.teal};--coral:${L.coral}}@media (prefers-color-scheme:dark){:root{--ink:${D.ink};--teal:${D.teal};--coral:${D.coral}}}</style>`;
   // SVG presentation attributes don't resolve var(); move colours into style attributes.
   inner = inner.replace(/(fill|stroke)="var\((--[a-z]+)\)"/g, 'style="$1:var($2)"');
-  return svg(inner, style, o.box);
+  return svg(inner, style, box);
 };
 
 for (const o of options) {
   for (const mode of ["light", "dark"]) {
     writeFileSync(join(here, `${o.id}-mark-${mode}.svg`), svg(o.draw(palette[mode]), "", o.box));
     writeFileSync(join(here, `${o.id}-tile-${mode}.svg`), tile(o, mode));
+    const sm = small(o);
+    writeFileSync(join(here, `${o.id}-small-${mode}.svg`), svg(sm.draw(palette[mode]), "", sm.box));
   }
   writeFileSync(join(here, `${o.id}-favicon.svg`), favicon(o));
 }
@@ -129,13 +163,13 @@ const panel = (o, mode) => `
       <div class="panel ${mode}">
         <div class="label">${mode === "light" ? "Light" : "Dark"}</div>
         <div class="row">
-          <figure><img src="${o.id}-mark-${mode}.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
-          <figure><canvas class="px" data-src="${o.id}-mark-${mode}.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="${o.id}-small-${mode}.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="${o.id}-small-${mode}.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
           <figure><img src="${o.id}-mark-${mode}.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
           <figure><img src="${o.id}-tile-${mode}.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
           <figure class="lockup"><img src="${o.id}-mark-${mode}.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
         </div>
-        <div class="tab"><img src="${o.id}-mark-${mode}.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+        <div class="tab"><img src="${o.id}-small-${mode}.svg" width="16" height="16" alt=""><span>ibridge · Connect iCloud to your AI assistant</span></div>
       </div>`;
 
 const page = `<!doctype html>
@@ -180,14 +214,14 @@ const page = `<!doctype html>
 <body>
 <header>
   <h1>ibridge icon options</h1>
-  <p>Six bridge-and-cloud marks. Each is shown as the bare mark (favicon) at 16 and 32&nbsp;px, the 16&nbsp;px render magnified ×4 to judge its pixels, the 180&nbsp;px touch tile, a wordmark lockup and a browser-tab mock, on light and dark. 512&nbsp;px tiles are further down. Teal, coral and ink are the brand colours; no option uses Apple's white-cloud-on-blue look.</p>
+  <p>Six bridge-and-cloud marks. Each is shown as the bare mark at 16 and 32&nbsp;px (A, E and F use a simplified variant at 16&nbsp;px, the same one their favicon uses), the 16&nbsp;px render magnified ×4 to judge its pixels, the 180&nbsp;px touch tile, a wordmark lockup and a browser-tab mock, on light and dark. 512&nbsp;px tiles are further down. Teal, coral and ink are the brand colours; no option uses Apple's white-cloud-on-blue look.</p>
 </header>
 <div class="grid">
 ${options
   .map(
     (o) => `  <section id="${o.id}">
     <h2>${o.name}</h2>
-    <p>${o.concept}</p>${panel(o, "light")}${panel(o, "dark")}
+    <p>${o.concept}${o.small ? " <b>Has a simplified 16&nbsp;px variant</b> (<code>-small-*.svg</code>, also used by the favicon)." : ""}</p>${panel(o, "light")}${panel(o, "dark")}
   </section>`,
   )
   .join("\n")}

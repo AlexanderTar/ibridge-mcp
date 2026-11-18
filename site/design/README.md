@@ -23,16 +23,18 @@ Ink `#0F2538`, teal `#0B7A80` and coral `#E0532B`. Teal is the interactive colou
 
 ## Icon options
 
-Each option ships as `<id>-mark-light.svg` / `-mark-dark.svg` (bare mark, for the logo), `-tile-light.svg` / `-tile-dark.svg` (rounded square, for the touch icon and app-style uses) and `-favicon.svg` (switches colours with the browser theme).
+Each option ships as `<id>-mark-light.svg` / `-mark-dark.svg` (bare mark, for the logo), `-small-light.svg` / `-small-dark.svg` (the 16 px version), `-tile-light.svg` / `-tile-dark.svg` (rounded square, for the touch icon and app-style uses) and `-favicon.svg` (the 16 px version, switching colours with the browser theme).
+
+A, E and F have a dedicated 16 px variant, because their full marks blur at that size: A fills the cloud and thickens the arch and deck, E drops the side spans and keeps two towers, one cable and a bigger cloud, and F enlarges both clouds and raises the span so the mark fills the square. For B, C and D the 16 px file is the full mark.
 
 | Option | Idea | Strengths | Weaknesses |
 | --- | --- | --- | --- |
-| **A · Cloud Deck** | Cloud outline riding on a bridge deck, carried by one arch | Says "bridge" and "cloud" equally; airy line art | Three strokes; at 16 px the arch dominates and the cloud is faint |
+| **A · Cloud Deck** | Cloud outline riding on a bridge deck, carried by one arch | Says "bridge" and "cloud" equally; airy line art | Three strokes; needs its simplified 16 px variant (filled cloud) to stay legible |
 | **B · Cloud Arch** | Solid cloud with an arch cut from its base, over a coral deck | Strongest at 16 px; simple, friendly, ownable silhouette | The bridge idea is subtle, carried by the notch and the deck line |
 | **C · Viaduct** | Three arches on piers whose tops trace a cloud | Clever single-line mark; very calm | Can read as a row of arches or an "m" before it reads as a cloud |
 | **D · i-Pylon** | Lowercase i: the stem is a tower, the dot is a cloud, cables hang from it | Ties to the name; distinctive monogram; good at 32 px and up | At 16 px it becomes a small tent shape |
-| **E · Suspension** | Two-tower suspension bridge reaching into a small cloud | Most literal and illustrative; pairs with the Dawn hero drawing | Busy at 16 px; looks like a generic bridge icon |
-| **F · Two Shores** | Two clouds joined by one arch span | Tells the story (your iCloud data ↔ your assistant) | Wide and short, so it is small inside a square favicon |
+| **E · Suspension** | Two-tower suspension bridge reaching into a small cloud | Most literal and illustrative; pairs with the Dawn hero drawing | Busy at full size, so 16 px uses a simplified variant; looks like a generic bridge icon |
+| **F · Two Shores** | Two clouds joined by one arch span | Tells the story (your iCloud data ↔ your assistant) | Wide and short; the 16 px variant restacks it taller so it fills the square |
 
 My pick is **B · Cloud Arch**, because it holds up best at favicon size. **D · i-Pylon** is the runner-up if you want the mark to spell the name.
 
@@ -43,10 +45,18 @@ All three use the same tokens, components and copy. Every fact from the brief ap
 | Direction | Look | Strengths | Trade-offs |
 | --- | --- | --- | --- |
 | **1 · Daylight** (icon B) | Centred, airy hero on a pale teal wash, a large app-style icon, then one picture of an assistant using ibridge | Closest to a modern Mac app page; calm and friendly; the illustration shows what it does at a glance | The connector URL first appears in the steps section; the long single column makes a long phone page |
-| **2 · Workbench** (icon D) | Split hero: text and the copyable connector URL on the left, an illustration of the read-only / full access choice on the right; bento grid on soft grey | Most product-led; the URL can be copied from the first screen; compact and scannable | Busier; the grey page and many cards feel less "light and airy" than the others |
+| **2 · Workbench** (icon D) | Split hero: text and the copyable connector URL on the left, an illustration of the real connect step (iCloud address, app-specific password, read-only checkbox) on the right; bento grid on soft grey | Most product-led; the URL can be copied from the first screen; compact and scannable | Busier; the grey page and many cards feel less "light and airy" than the others |
 | **3 · Dawn** (icon E) | Editorial: huge left-aligned headline on a dawn sky, a suspension bridge drawn across the hero, numbered chapters below | Most distinctive and memorable; strong brand moment; gives each topic room | The least "Apple-like"; the illustration is decorative rather than product-led; the nav doesn't stick |
 
 My pick is **1 · Daylight** with icon **B**, the closest match to "light, airy, product-led". If you want visitors to copy the URL in one step, take Workbench's hero copy box into Daylight.
+
+## Notes for the build
+
+- **Touch icon:** iOS ignores SVG touch icons. The mocks point `apple-touch-icon` at an SVG tile only as a placeholder; the build must export the chosen `-tile-light.svg` as a 180 × 180 PNG and link that.
+- **Light / dark images:** put both files side by side with `class="when-light"` and `class="when-dark"` (logo mark, hero tile, tool-chip marks). That one rule in `components.css` follows the OS and a `data-theme` override; don't use `<picture>` media queries for themed images.
+- **Pictures of UI:** buttons, fields and checkboxes appear only inside an `aria-hidden="true"` `.window` frame, which is also inert to the pointer. Outside it, read-only and full access are explained with `.access-modes`, a plain list that doesn't look tappable.
+- **How-to steps:** they follow the real hosted flow: add the connector, sign in with Apple, choose a plan (US$1.99/month or US$19.99/year, tax added at checkout), then connect iCloud with an app-specific password and tick "Read-only access" if wanted. Keep them in step with `crates/ibridge-hosted/templates/authorize.html` if that flow changes.
+- **Page title:** use a descriptive title such as "ibridge · Connect iCloud to your AI assistant", never one that presents ibridge as a version of iCloud.
 
 ## Checks run
 

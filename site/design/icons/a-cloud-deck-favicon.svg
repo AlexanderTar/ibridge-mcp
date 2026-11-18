@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 2 60 60" width="64" height="64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 4 60 60" width="64" height="64">
   <style>:root{--ink:#0F2538;--teal:#0B7A80;--coral:#E0532B}@media (prefers-color-scheme:dark){:root{--ink:#EAF2F5;--teal:#5CC8CC;--coral:#FF7F57}}</style>
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="5">
-    <path d="M18 40 A8 8 0 1 1 19 24.05 A12 12 0 0 1 42.87 22.26 A9 9 0 1 1 45 40" transform="translate(0 -4)" style="stroke:var(--teal)"/>
-    <path d="M10 57 Q32 17 54 57" style="stroke:var(--ink)"/>
-    <path d="M5 36 H59" style="stroke:var(--coral)"/>
+  <path d="M18 40 A8 8 0 1 1 19 24.05 A12 12 0 0 1 42.87 22.26 A9 9 0 1 1 45 40 Z" style="fill:var(--teal)" transform="translate(-6.4 -9.6) scale(1.2)"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 61 Q32 23 53 61" style="stroke:var(--ink)" stroke-width="7"/>
+    <path d="M4 42 H60" style="stroke:var(--coral)" stroke-width="7"/>
   </g>
 </svg>

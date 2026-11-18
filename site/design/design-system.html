@@ -15,6 +15,7 @@
   .ref-section > .container > .h2 { margin-bottom: var(--space-2); }
   .ref-section > .container > .muted { margin-bottom: var(--space-6); max-width: 70ch; }
   .ref-label { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--color-text-tertiary); }
+  .theme-switch { display: inline-grid; grid-auto-flow: column; gap: 2px; padding: 3px; border-radius: var(--radius-pill); background: var(--color-surface-sunken); border: 1px solid var(--color-border); }
   .theme-switch button { font: inherit; font-size: var(--text-small); font-weight: var(--weight-semibold); border: 0; background: none; padding: 8px 16px; border-radius: var(--radius-pill); color: var(--color-text-secondary); cursor: pointer; min-height: 36px; }
   .theme-switch button[aria-pressed="true"] { background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-sm); }
   .swatches { width: 100%; border-collapse: collapse; font-size: var(--text-small); }
@@ -44,11 +45,11 @@
 <body>
 <header class="ref-header">
   <div class="container">
-    <a class="logo" href="#"><img class="logo-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="logo-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+    <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
     <h1 class="h1" style="margin-top:var(--space-5)">Design system</h1>
     <p class="lede" style="margin-top:var(--space-3);max-width:62ch">Tokens and components for ibridge.fyi. Every value lives in <code>tokens.css</code> (mirrored in <code>tokens.json</code>); components in <code>components.css</code> use only those tokens. The logo here is a stand-in until an icon is chosen.</p>
     <div class="btn-row">
-      <div class="segmented theme-switch" role="group" aria-label="Colour scheme">
+      <div class="theme-switch" role="group" aria-label="Colour scheme">
         <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
         <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
         <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
@@ -126,7 +127,7 @@
       <div class="demo">
         <nav class="nav" style="position:relative" aria-label="Demo">
           <div class="container nav-inner">
-            <a class="logo" href="#"><img class="logo-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="logo-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+            <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
             <ul class="nav-links"><li><a href="#">How it works</a></li><li><a href="#">Security</a></li><li><a href="#">Pricing</a></li><li><a href="#">FAQ</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
             <a class="btn btn--primary" href="#">Connect</a>
             <details class="nav-menu"><summary aria-label="Menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h14M3 14h14"/></svg></summary>
@@ -138,10 +139,10 @@
 
     <div class="comp">
       <h3 class="h3">Hero</h3>
-      <p class="caption"><code>.hero</code>: optional icon (96&nbsp;px), display headline (max 15ch), lede (max 620&nbsp;px), button row.</p>
+      <p class="caption"><code>.hero</code>: optional icon (96&nbsp;px; two <code>&lt;img&gt;</code> tiles with <code>.when-light</code> / <code>.when-dark</code>, the same swap the logo uses, so it follows the Light / Dark switch as well as the OS), display headline (max 15ch), lede (max 620&nbsp;px), button row.</p>
       <div class="demo" style="background:linear-gradient(var(--color-bg-sky), var(--color-bg))">
         <div class="hero" style="padding:var(--space-7) var(--space-4)">
-          <img class="hero-icon" src="icons/b-cloud-arch-tile-light.svg" alt="">
+          <img class="hero-icon when-light" src="icons/b-cloud-arch-tile-light.svg" alt=""><img class="hero-icon when-dark" src="icons/b-cloud-arch-tile-dark.svg" alt="">
           <h1 class="display">Your iCloud, in your AI assistant.</h1>
           <p class="lede">ibridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts.</p>
           <div class="btn-row"><a class="btn btn--primary btn--lg" href="#">Connect ibridge</a><a class="btn btn--secondary btn--lg" href="#">Run it for free</a></div>
@@ -186,7 +187,8 @@
           <li><span class="step-title">Add the connector</span><span class="step-body">In Claude, open Settings, then Connectors, add a custom connector and paste this address.
             <span class="copy-box"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span></span></li>
           <li><span class="step-title">Sign in with Apple</span><span class="step-body">Claude opens the ibridge sign-in page. Sign in with Apple there.</span></li>
-          <li><span class="step-title">Connect iCloud</span><span class="step-body">Enter your iCloud address and an app-specific password. Never your main Apple ID password.</span></li>
+          <li><span class="step-title">Choose a plan</span><span class="step-body">Subscribe for US$1.99/month or US$19.99/year. Tax is added at checkout.</span></li>
+          <li><span class="step-title">Connect iCloud</span><span class="step-body">Enter your iCloud address and an app-specific password, never your main Apple ID password. Tick “Read-only access” if the assistant should only read. You can revoke it any time.</span></li>
         </ol>
         <div>
           <span class="copy-box-label">Copied state</span>
@@ -234,24 +236,24 @@
     </div>
 
     <div class="comp">
-      <h3 class="h3">Callout and access choice</h3>
-      <p class="caption"><code>.callout</code> for security notes (<code>--warn</code> uses coral). <code>.segmented</code> shows the read-only / full access choice in illustrations; it is a picture, not a control, on the marketing site.</p>
+      <h3 class="h3">Callout and access modes</h3>
+      <p class="caption"><code>.callout</code> for security notes (<code>--warn</code> uses coral). <code>.access-modes</code> explains read-only and full access as a plain list with a tinted left rule: no pill, fill or shadow, so it never looks like a control someone could tap. Its wording matches the real connect page, where read-only is a checkbox.</p>
       <div class="demo demo-pad two">
         <div class="callout"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg></div><div><h3 class="h3">Encrypted under your key</h3><p>Your app-specific password is stored encrypted under a key only your connected app holds.</p></div></div>
         <div class="callout callout--warn"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M21 12v2"/></svg></div><div><h3 class="h3">Never your main password</h3><p>Use an app-specific password, never your main Apple ID password.</p></div></div>
-        <div><span class="segmented" aria-label="Access level, illustration"><span aria-current="true">Read-only</span><span>Full access</span></span></div>
+        <div><ul class="access-modes"><li><b>Read-only</b>Reads, but cannot send, move, change or delete anything.</li><li><b>Full access</b>Reads and manages your mail, events, reminders and contacts.</li></ul></div>
       </div>
     </div>
 
     <div class="comp">
       <h3 class="h3">Product window (illustration)</h3>
-      <p class="caption"><code>.window</code> frame with neutral dots (no traffic-light colours), holding <code>.chat</code> bubbles and a <code>.tool-chip</code>. Example content only; marked <code>aria-hidden</code> on the site with a text caption instead.</p>
+      <p class="caption"><code>.window</code> frame with neutral dots (no traffic-light colours), holding <code>.chat</code> bubbles and a <code>.tool-chip</code>. Example content only; marked <code>aria-hidden="true"</code> on the site, which also makes it inert to the pointer, with a text caption instead. Pictures of buttons or fields appear only inside a <code>.window</code>. Theme-swapped images use <code>.when-light</code> / <code>.when-dark</code>.</p>
       <div class="demo demo-pad" style="max-width:520px">
-        <div class="window">
+        <div class="window" aria-hidden="true">
           <div class="window-bar"><i></i><i></i><i></i><span>Your assistant</span></div>
           <div class="window-body chat">
             <div class="bubble bubble--user">What's on my calendar tomorrow?</div>
-            <div class="bubble bubble--assistant"><span class="tool-chip"><img src="icons/b-cloud-arch-mark-light.svg" alt="">ibridge · Calendar</span>
+            <div class="bubble bubble--assistant"><span class="tool-chip"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt="">ibridge · Calendar</span>
               <div class="event-row"><span>Team planning</span><time>09:30</time></div>
               <div class="event-row"><span>Dentist</span><time>14:00</time></div>
             </div>
@@ -267,7 +269,7 @@
         <footer class="footer">
           <div class="container">
             <div class="footer-top">
-              <a class="logo" href="#"><img class="logo-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="logo-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+              <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
               <ul class="footer-links"><li><a href="https://mcp.ibridge.fyi/privacy">Privacy</a></li><li><a href="https://mcp.ibridge.fyi/terms">Terms</a></li><li><a href="https://mcp.ibridge.fyi/account">Account</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
             </div>
             <p class="disclaimer">ibridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>

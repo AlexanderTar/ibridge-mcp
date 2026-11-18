@@ -19,15 +19,31 @@ pub(crate) const GENERIC_FAILURE: &str =
 struct MessagePage<'a> {
     heading: &'a str,
     message: &'a str,
+    /// Shown as a problem; otherwise as plain news.
+    alert: bool,
 }
 
-/// A page that says `text` under `heading`.
+/// A page that says `text` under `heading`, as a problem.
 pub(crate) fn message(status: StatusCode, heading: &str, text: &str) -> Response {
     html(
         status,
         MessagePage {
             heading,
             message: text,
+            alert: true,
+        }
+        .render(),
+    )
+}
+
+/// A page that says `text` under `heading`, for something that went right.
+pub(crate) fn notice(status: StatusCode, heading: &str, text: &str) -> Response {
+    html(
+        status,
+        MessagePage {
+            heading,
+            message: text,
+            alert: false,
         }
         .render(),
     )

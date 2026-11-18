@@ -22,7 +22,7 @@ use super::signin;
 use crate::identity::{ReturnTo, SignedIn};
 use crate::oauth::Shared;
 use crate::store::User;
-use crate::web::{message, set_cookie};
+use crate::web::{message, notice, set_cookie};
 
 const TROUBLE: &str =
     "Something went wrong on our side. Nothing was deleted. Try again in a moment.";
@@ -90,7 +90,7 @@ pub(super) async fn complete(shared: &Shared, headers: &HeaderMap, signed: Signe
     if delete_firebase(shared, &user, &signed).await.is_err() {
         failed.push("Google");
     }
-    let mut response = message(
+    let mut response = notice(
         StatusCode::OK,
         "Account deleted",
         &farewell(shared, &user, &failed),
@@ -149,7 +149,7 @@ fn farewell(shared: &Shared, user: &User, failed: &[&str]) -> String {
     if !failed.is_empty() {
         parts.push(format!(
             "We could not finish removing you at {}. Everything on this service is deleted.",
-            failed.join(" and ")
+            list(failed)
         ));
         parts.push(match shared.config.contact_address() {
             Some(contact) => format!("Email {contact} and we will finish it."),
@@ -157,4 +157,13 @@ fn farewell(shared: &Shared, user: &User, failed: &[&str]) -> String {
         });
     }
     parts.join(" ")
+}
+
+/// `Stripe`, `Stripe and Apple`, or `Stripe, Apple and Google`.
+fn list(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => (*only).to_owned(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
 }

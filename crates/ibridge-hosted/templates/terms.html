@@ -28,7 +28,7 @@
 <li><strong>Cancelling.</strong> You can cancel at any time with Manage billing on the <a href="/account">account page</a>. A cancellation takes effect at the end of the period you have paid for, and you keep access until then.</li>
 <li><strong>Payment and tax.</strong> {% if stripe_sells %}Payments are handled by Stripe, which is the seller of record: it charges your card, collects and pays the tax, and handles refunds under its own policy, shown at checkout. To ask for a refund, use the receipt Stripe emails you{% if let Some(contact) = contact %}, or write to {{ contact }}{% endif %}.{% else %}Payments are processed by Stripe. We are the seller, and tax is added where it is due. To ask for a refund, write to {% if let Some(contact) = contact %}{{ contact }}{% else %}the operator of this service{% endif %}.{% endif %}</li>
 <li><strong>A failed payment.</strong> If a card payment fails, access continues while Stripe retries it, for up to about two weeks. After that the subscription ends.</li>
-<li><strong>If you cancel.</strong> The tools stop working when your paid period ends. Your connections and API keys are kept, so paying again restores access at once. Deleting your account removes them, and ends your subscription immediately without a refund of the current period.</li>
+<li><strong>If you cancel.</strong> The tools stop working when your paid period ends. Your connections and API keys are kept, so paying again restores access at once. Deleting your account removes them, and ends your subscription immediately.</li>
 </ul>
 {% endif %}
 

@@ -2,14 +2,11 @@
 {% block title %}Your ibridge account{% endblock %}
 {% block body %}
 <h1>Your account</h1>
-{% if let Some(profile) = profile %}
-<p>Signed in with Apple as <strong>{{ profile.email }}</strong>.</p>
-{% else %}
+{% if profile.is_none() %}
 <p>Signed in as <strong>{{ apple_id }}</strong>.</p>
 {% endif %}
 {% if let Some(message) = error %}<p class="error" role="alert">{{ message }}</p>{% endif %}
 {% if let Some(profile) = profile %}
-<h2>Your account</h2>
 <dl class="facts">
 <dt>Apple email</dt><dd>{{ profile.email }}</dd>
 <dt>iCloud address</dt><dd>{% if let Some(linked) = profile.linked %}{{ linked }}{% else %}No iCloud address connected yet{% endif %}</dd>

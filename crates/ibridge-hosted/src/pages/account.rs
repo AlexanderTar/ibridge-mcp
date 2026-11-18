@@ -29,8 +29,8 @@ use crate::billing::{Access, PRICE_TEXT, access};
 use crate::oauth::{Peer, Shared, address_key};
 use crate::store::{GrantId, GrantKind, GrantSummary, Scope, StoreError, User, UserId};
 use crate::web::{
-    GENERIC_FAILURE, cookie_value, csrf_matches, harden, html, message, random_token, set_cookie,
-    tokens_match,
+    GENERIC_FAILURE, cookie_value, csrf_matches, harden, html, message, notice, random_token,
+    set_cookie, tokens_match,
 };
 
 pub(crate) const SESSION_COOKIE: &str = "__Host-ibridge_session";
@@ -519,7 +519,7 @@ async fn delete(
         }
     }
     shared.sessions.end(&token);
-    let mut response = message(
+    let mut response = notice(
         StatusCode::OK,
         "Account deleted",
         "Everything stored for this account is deleted: the encrypted copies of your app-specific password, your connected apps and your API keys. They stop working now. To finish, revoke the app-specific password at Apple (Sign-In and Security, then App-Specific Passwords in your Apple Account), so nothing we held can still be used.",

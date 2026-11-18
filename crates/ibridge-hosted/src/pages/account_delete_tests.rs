@@ -175,6 +175,11 @@ async fn delete_revokes_apple_deletes_firebase_cancels_stripe_and_rows() {
         .await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.text);
     assert!(done.text.contains("Account deleted"), "{}", done.text);
+    assert!(
+        !done.text.contains(r#"role="alert""#),
+        "a deletion that worked is not shown as an error: {}",
+        done.text
+    );
     assert!(session_cleared(&done), "the session ends");
 
     // Apple: the grant from this fresh sign-in is revoked.
@@ -235,6 +240,11 @@ async fn delete_still_removes_rows_when_a_provider_call_fails() {
     assert_eq!(done.status, StatusCode::OK, "{}", done.text);
     assert_eq!(rows(&rig).await, [0, 0, 0, 0], "the rows are gone anyway");
     assert!(session_cleared(&done));
+    assert!(
+        done.text.contains("Stripe, Apple and Google"),
+        "the failed providers read as a list: {}",
+        done.text
+    );
     for provider in ["Apple", "Google", "Stripe"] {
         assert!(
             done.text.contains(provider),

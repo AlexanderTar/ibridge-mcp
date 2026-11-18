@@ -1,4 +1,4 @@
-/* ibridge design tokens. Source of truth for the site; tokens.json mirrors it.
+/* iBridge design tokens. Source of truth for the site; tokens.json mirrors it.
    Light is the default; dark follows the OS via prefers-color-scheme.
    A page may force a scheme with <html data-theme="light|dark">. */
 

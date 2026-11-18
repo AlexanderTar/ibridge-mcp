@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ibridge · Connect iCloud to your AI assistant</title>
-<meta name="description" content="ibridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts.">
+<title>iBridge · Connect iCloud to your AI assistant</title>
+<meta name="description" content="iBridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts.">
 <link rel="icon" href="../icons/b-cloud-arch-favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="../icons/b-cloud-arch-tile-light.svg">
 <link rel="stylesheet" href="../tokens.css">
@@ -30,7 +30,7 @@
 <body>
 <nav class="nav" aria-label="Main">
   <div class="container nav-inner">
-    <a class="logo" href="#top"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+    <a class="logo" href="#top"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt=""><span>iBridge</span></a>
     <ul class="nav-links"><li><a href="#how">How it works</a></li><li><a href="#security">Security</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#faq">FAQ</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
     <a class="btn btn--primary" href="#how">Connect</a>
     <details class="nav-menu"><summary aria-label="Menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h14M3 14h14"/></svg></summary>
@@ -44,8 +44,8 @@
       <img class="hero-icon when-light" src="../icons/b-cloud-arch-tile-light.svg" alt="" width="96" height="96">
       <img class="hero-icon when-dark" src="../icons/b-cloud-arch-tile-dark.svg" alt="" width="96" height="96">
       <h1 class="display">Your iCloud,<br> in your AI&nbsp;assistant.</h1>
-      <p class="lede">ibridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts. Choose read-only or full access, and revoke it any time.</p>
-      <div class="btn-row"><a class="btn btn--primary btn--lg" href="#how">Connect ibridge</a><a class="btn btn--secondary btn--lg" href="#free">Run it for free</a></div>
+      <p class="lede">iBridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts. Choose read-only or full access, and revoke it any time.</p>
+      <div class="btn-row"><a class="btn btn--primary btn--lg" href="#how">Connect iBridge</a><a class="btn btn--secondary btn--lg" href="#free">Run it for free</a></div>
       <p class="caption hero-note">Hosted from US$1.99/month. Free and open source to run yourself.</p>
 
       <figure class="hero-shot">
@@ -54,17 +54,17 @@
           <div class="window-body chat">
             <div class="bubble bubble--user">What's on my calendar tomorrow? And remind me to call Sam after the dentist.</div>
             <div class="bubble bubble--assistant">
-              <span class="tool-chip"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt="">ibridge · Calendar</span>
+              <span class="tool-chip"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt="">iBridge · Calendar</span>
               <div class="event-row"><span>Team planning</span><time>09:30</time></div>
               <div class="event-row"><span>Dentist</span><time>14:00</time></div>
             </div>
             <div class="bubble bubble--assistant">
-              <span class="tool-chip"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt="">ibridge · Reminders</span>
+              <span class="tool-chip"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt="">iBridge · Reminders</span>
               <div>Added “Call Sam” for tomorrow at 15:00.</div>
             </div>
           </div>
         </div>
-        <figcaption class="caption">Illustration with example data: an assistant using ibridge with full access.</figcaption>
+        <figcaption class="caption">Illustration with example data: an assistant using iBridge with full access.</figcaption>
       </figure>
     </div>
   </header>
@@ -117,14 +117,14 @@
         <ol class="steps">
           <li><span class="step-title">Add the connector</span><span class="step-body">In Claude, open Settings, then Connectors, and add a custom connector with this address.
             <span class="copy-box"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span></span></li>
-          <li><span class="step-title">Sign in with Apple</span><span class="step-body">Claude opens the ibridge sign-in page. Sign in with Apple there.</span></li>
+          <li><span class="step-title">Sign in with Apple</span><span class="step-body">Claude opens the iBridge sign-in page. Sign in with Apple there.</span></li>
           <li><span class="step-title">Choose a plan</span><span class="step-body">Subscribe for US$1.99/month or US$19.99/year. Tax is added at checkout.</span></li>
           <li><span class="step-title">Connect iCloud</span><span class="step-body">Enter your iCloud address and an app-specific password, never your main Apple ID password. Tick “Read-only access” if the assistant should only read. You can revoke it any time.</span></li>
         </ol>
         <div>
           <div class="side-card">
             <h3 class="h3">Using Claude Code?</h3>
-            <p>Add ibridge with one command.</p>
+            <p>Add iBridge with one command.</p>
             <span class="copy-box"><code>claude mcp add <span class="nobr">--transport</span> http ibridge https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span>
           </div>
           <div class="side-card">
@@ -144,7 +144,7 @@
       </div>
       <div class="security">
         <div class="callout"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg></div><div><h3 class="h3">Encrypted under your key</h3><p>Your app-specific password is stored encrypted under a key only your connected app holds.</p></div></div>
-        <div class="callout callout--warn"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M21 12v2"/></svg></div><div><h3 class="h3">Never your main Apple ID password</h3><p>ibridge only ever asks for an app-specific password. Never use your main Apple ID password with it.</p></div></div>
+        <div class="callout callout--warn"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M21 12v2"/></svg></div><div><h3 class="h3">Never your main Apple ID password</h3><p>iBridge only ever asks for an app-specific password. Never use your main Apple ID password with it.</p></div></div>
       </div>
       <p class="security-link"><a href="https://mcp.ibridge.fyi/privacy">Read the privacy policy</a></p>
     </div>
@@ -159,11 +159,11 @@
       <div class="pricing-grid" style="max-width:880px;margin:0 auto">
         <div class="price-card price-card--featured">
           <span class="tag">Hosted</span>
-          <h3 class="h3">ibridge hosted</h3>
+          <h3 class="h3">iBridge hosted</h3>
           <p class="price">US$1.99<small>/month</small></p>
           <p class="price-alt">or US$19.99/year. Tax added at checkout.</p>
           <ul><li>Connector URL for Claude and other assistants</li><li>Sign in with Apple</li><li>Read-only or full access</li><li>Revoke any time</li></ul>
-          <a class="btn btn--primary btn--lg" href="#how">Connect ibridge</a>
+          <a class="btn btn--primary btn--lg" href="#how">Connect iBridge</a>
         </div>
         <div class="price-card" id="free">
           <span class="tag">Free</span>
@@ -181,12 +181,12 @@
     <div class="container">
       <div class="section-head"><h2 class="h2">Questions</h2></div>
       <div class="faq faq-wrap">
-        <details><summary>Is ibridge made by Apple?</summary><div class="answer"><p>No. ibridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p></div></details>
+        <details><summary>Is iBridge made by Apple?</summary><div class="answer"><p>No. iBridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p></div></details>
         <details><summary>Which assistants can use it?</summary><div class="answer"><p>Claude, and other AI assistants that support MCP sign-in. In Claude Code, add it with one command.</p></div></details>
         <details><summary>Can my assistant change or delete things?</summary><div class="answer"><p>Only with full access. Choose read-only when you connect if you only want it to read. You can revoke access any time from your <a href="https://mcp.ibridge.fyi/account">account page</a>.</p></div></details>
         <details><summary>Which password do I give it?</summary><div class="answer"><p>An app-specific password, never your main Apple ID password. It is stored encrypted under a key only your connected app holds.</p></div></details>
         <details><summary>How much does it cost?</summary><div class="answer"><p>The hosted service is US$1.99/month or US$19.99/year, with tax added at checkout. Running it yourself is free.</p></div></details>
-        <details><summary>Can I run it myself?</summary><div class="answer"><p>Yes. ibridge is open source under Apache-2.0. Run it locally in Claude Desktop (.mcpb) or Claude Code, or self-host it with Docker. The code is on <a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a>.</p></div></details>
+        <details><summary>Can I run it myself?</summary><div class="answer"><p>Yes. iBridge is open source under Apache-2.0. Run it locally in Claude Desktop (.mcpb) or Claude Code, or self-host it with Docker. The code is on <a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a>.</p></div></details>
       </div>
     </div>
   </section>
@@ -195,10 +195,10 @@
 <footer class="footer">
   <div class="container">
     <div class="footer-top">
-      <a class="logo" href="#top"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+      <a class="logo" href="#top"><img class="when-light" src="../icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="../icons/b-cloud-arch-mark-dark.svg" alt=""><span>iBridge</span></a>
       <ul class="footer-links"><li><a href="https://mcp.ibridge.fyi/privacy">Privacy</a></li><li><a href="https://mcp.ibridge.fyi/terms">Terms</a></li><li><a href="https://mcp.ibridge.fyi/account">Account</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
     </div>
-    <p class="disclaimer">ibridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>
+    <p class="disclaimer">iBridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>
   </div>
 </footer>
 <script src="../copy.js"></script>

@@ -1,0 +1,11 @@
+/* Page layout for the home page, built from the tokens in tokens.css and the components in components.css. */
+.sky { background: linear-gradient(180deg, var(--color-bg-sky) 0%, var(--color-bg) 78%); }
+.hero .copy-box { max-width: 520px; margin: var(--space-5) auto 0; background: var(--color-surface); text-align: left; }
+.hero-note { margin-top: var(--space-4); }
+.how { display: grid; gap: var(--space-7); grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; }
+.side-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+.side-card .copy-box { margin-top: var(--space-4); }
+.feature-grid--three { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+.pricing-grid { max-width: 880px; margin: 0 auto; }
+.faq-wrap { max-width: 760px; margin: 0 auto; }
+@media (max-width: 860px) { .how { grid-template-columns: minmax(0, 1fr); } }

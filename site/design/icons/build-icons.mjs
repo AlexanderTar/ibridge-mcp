@@ -100,7 +100,7 @@ const options = [
   {
     id: "f-two-shores",
     name: "F · Two Shores",
-    concept: "Two clouds joined by one arch span: ibridge connects your iCloud data and your assistant.",
+    concept: "Two clouds joined by one arch span: iBridge connects your iCloud data and your assistant.",
     box: [2, 5, 60, 60],
     draw: (c) => `
   <path d="M15 42 Q32 6 49 42" fill="none" stroke="${c.coral}" stroke-width="5" stroke-linecap="round"/>
@@ -167,9 +167,9 @@ const panel = (o, mode) => `
           <figure><canvas class="px" data-src="${o.id}-small-${mode}.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
           <figure><img src="${o.id}-mark-${mode}.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
           <figure><img src="${o.id}-tile-${mode}.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
-          <figure class="lockup"><img src="${o.id}-mark-${mode}.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+          <figure class="lockup"><img src="${o.id}-mark-${mode}.svg" width="40" height="40" alt=""><span>iBridge</span><figcaption>lockup</figcaption></figure>
         </div>
-        <div class="tab"><img src="${o.id}-small-${mode}.svg" width="16" height="16" alt=""><span>ibridge · Connect iCloud to your AI assistant</span></div>
+        <div class="tab"><img src="${o.id}-small-${mode}.svg" width="16" height="16" alt=""><span>iBridge · Connect iCloud to your AI assistant</span></div>
       </div>`;
 
 const page = `<!doctype html>
@@ -177,7 +177,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ibridge icon options</title>
+<title>iBridge icon options</title>
 <style>
   :root { color-scheme: light; --text:#0F2538; --muted:#4A5B6B; --line:#DCE3E8; }
   * { box-sizing: border-box; }
@@ -213,7 +213,7 @@ const page = `<!doctype html>
 </head>
 <body>
 <header>
-  <h1>ibridge icon options</h1>
+  <h1>iBridge icon options</h1>
   <p>Six bridge-and-cloud marks. Each is shown as the bare mark at 16 and 32&nbsp;px (A, E and F use a simplified variant at 16&nbsp;px, the same one their favicon uses), the 16&nbsp;px render magnified ×4 to judge its pixels, the 180&nbsp;px touch tile, a wordmark lockup and a browser-tab mock, on light and dark. 512&nbsp;px tiles are further down. Teal, coral and ink are the brand colours; no option uses Apple's white-cloud-on-blue look.</p>
 </header>
 <div class="grid">

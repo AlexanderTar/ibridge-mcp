@@ -1,4 +1,4 @@
-# ibridge site design
+# iBridge site design
 
 Design work for the ibridge.fyi landing page: icon options, a design system, and three page directions. Pick one icon and one direction; any icon works with any direction.
 
@@ -44,7 +44,7 @@ All three use the same tokens, components and copy. Every fact from the brief ap
 
 | Direction | Look | Strengths | Trade-offs |
 | --- | --- | --- | --- |
-| **1 · Daylight** (icon B) | Centred, airy hero on a pale teal wash, a large app-style icon, then one picture of an assistant using ibridge | Closest to a modern Mac app page; calm and friendly; the illustration shows what it does at a glance | The connector URL first appears in the steps section; the long single column makes a long phone page |
+| **1 · Daylight** (icon B) | Centred, airy hero on a pale teal wash, a large app-style icon, then one picture of an assistant using iBridge | Closest to a modern Mac app page; calm and friendly; the illustration shows what it does at a glance | The connector URL first appears in the steps section; the long single column makes a long phone page |
 | **2 · Workbench** (icon D) | Split hero: text and the copyable connector URL on the left, an illustration of the real connect step (iCloud address, app-specific password, read-only checkbox) on the right; bento grid on soft grey | Most product-led; the URL can be copied from the first screen; compact and scannable | Busier; the grey page and many cards feel less "light and airy" than the others |
 | **3 · Dawn** (icon E) | Editorial: huge left-aligned headline on a dawn sky, a suspension bridge drawn across the hero, numbered chapters below | Most distinctive and memorable; strong brand moment; gives each topic room | The least "Apple-like"; the illustration is decorative rather than product-led; the nav doesn't stick |
 
@@ -56,7 +56,7 @@ My pick is **1 · Daylight** with icon **B**, the closest match to "light, airy,
 - **Light / dark images:** put both files side by side with `class="when-light"` and `class="when-dark"` (logo mark, hero tile, tool-chip marks). That one rule in `components.css` follows the OS and a `data-theme` override; don't use `<picture>` media queries for themed images.
 - **Pictures of UI:** buttons, fields and checkboxes appear only inside an `aria-hidden="true"` `.window` frame, which is also inert to the pointer. Outside it, read-only and full access are explained with `.access-modes`, a plain list that doesn't look tappable.
 - **How-to steps:** they follow the real hosted flow: add the connector, sign in with Apple, choose a plan (US$1.99/month or US$19.99/year, tax added at checkout), then connect iCloud with an app-specific password and tick "Read-only access" if wanted. Keep them in step with `crates/ibridge-hosted/templates/authorize.html` if that flow changes.
-- **Page title:** use a descriptive title such as "ibridge · Connect iCloud to your AI assistant", never one that presents ibridge as a version of iCloud.
+- **Page title:** use a descriptive title such as "iBridge · Connect iCloud to your AI assistant", never one that presents iBridge as a version of iCloud.
 
 ## Checks run
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ibridge design system</title>
+<title>iBridge design system</title>
 <link rel="icon" href="icons/b-cloud-arch-favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="components.css">
@@ -45,7 +45,7 @@
 <body>
 <header class="ref-header">
   <div class="container">
-    <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+    <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>iBridge</span></a>
     <h1 class="h1" style="margin-top:var(--space-5)">Design system</h1>
     <p class="lede" style="margin-top:var(--space-3);max-width:62ch">Tokens and components for ibridge.fyi. Every value lives in <code>tokens.css</code> (mirrored in <code>tokens.json</code>); components in <code>components.css</code> use only those tokens. The logo here is a stand-in until an icon is chosen.</p>
     <div class="btn-row">
@@ -127,7 +127,7 @@
       <div class="demo">
         <nav class="nav" style="position:relative" aria-label="Demo">
           <div class="container nav-inner">
-            <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+            <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>iBridge</span></a>
             <ul class="nav-links"><li><a href="#">How it works</a></li><li><a href="#">Security</a></li><li><a href="#">Pricing</a></li><li><a href="#">FAQ</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
             <a class="btn btn--primary" href="#">Connect</a>
             <details class="nav-menu"><summary aria-label="Menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h14M3 14h14"/></svg></summary>
@@ -144,8 +144,8 @@
         <div class="hero" style="padding:var(--space-7) var(--space-4)">
           <img class="hero-icon when-light" src="icons/b-cloud-arch-tile-light.svg" alt=""><img class="hero-icon when-dark" src="icons/b-cloud-arch-tile-dark.svg" alt="">
           <h1 class="display">Your iCloud, in your AI assistant.</h1>
-          <p class="lede">ibridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts.</p>
-          <div class="btn-row"><a class="btn btn--primary btn--lg" href="#">Connect ibridge</a><a class="btn btn--secondary btn--lg" href="#">Run it for free</a></div>
+          <p class="lede">iBridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts.</p>
+          <div class="btn-row"><a class="btn btn--primary btn--lg" href="#">Connect iBridge</a><a class="btn btn--secondary btn--lg" href="#">Run it for free</a></div>
         </div>
       </div>
     </div>
@@ -186,7 +186,7 @@
         <ol class="steps">
           <li><span class="step-title">Add the connector</span><span class="step-body">In Claude, open Settings, then Connectors, add a custom connector and paste this address.
             <span class="copy-box"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span></span></li>
-          <li><span class="step-title">Sign in with Apple</span><span class="step-body">Claude opens the ibridge sign-in page. Sign in with Apple there.</span></li>
+          <li><span class="step-title">Sign in with Apple</span><span class="step-body">Claude opens the iBridge sign-in page. Sign in with Apple there.</span></li>
           <li><span class="step-title">Choose a plan</span><span class="step-body">Subscribe for US$1.99/month or US$19.99/year. Tax is added at checkout.</span></li>
           <li><span class="step-title">Connect iCloud</span><span class="step-body">Enter your iCloud address and an app-specific password, never your main Apple ID password. Tick “Read-only access” if the assistant should only read. You can revoke it any time.</span></li>
         </ol>
@@ -200,17 +200,34 @@
     </div>
 
     <div class="comp">
+      <h3 class="h3">Copy icon button and Try-asking row</h3>
+      <p class="caption">The production copy box uses an icon button: <code>&lt;button aria-label="Copy"&gt;</code> holding <code>.icon-copy</code>, <code>.icon-done</code> and <code>.copy-done</code>. While <code>data-copied</code> is set the icon becomes a tick and "Copied" shows beside it; <code>copy.js</code> sets it for 2 seconds and announces it. <code>.try-asking</code> with <code>.prompt-list</code> shows example questions as quiet pills: a plain list, nothing to press.</p>
+      <div class="demo demo-pad two">
+        <div>
+          <span class="copy-box-label">Default</span>
+          <span class="copy-box"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button" aria-label="Copy"><svg class="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg><svg class="icon-done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span class="copy-done">Copied</span></button></span>
+          <span class="copy-box-label" style="margin-top:var(--space-5)">Copied state</span>
+          <span class="copy-box"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button" aria-label="Copy" data-copied><svg class="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg><svg class="icon-done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span class="copy-done">Copied</span></button></span>
+        </div>
+        <div class="try-asking">
+          <span class="eyebrow">Try asking</span>
+          <ul class="prompt-list"><li>"What's on my calendar tomorrow?"</li><li>"Move my 3pm to Friday"</li></ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="comp">
       <h3 class="h3">Pricing cards</h3>
       <p class="caption"><code>.pricing-grid</code> of <code>.price-card</code>; <code>--featured</code> adds the teal border and large shadow. Price shown exactly as US$1.99/month and US$19.99/year.</p>
       <div class="demo demo-pad">
         <div class="pricing-grid">
           <div class="price-card price-card--featured">
             <span class="tag">Hosted</span>
-            <h3 class="h3">ibridge hosted</h3>
+            <h3 class="h3">iBridge hosted</h3>
             <p class="price">US$1.99<small>/month</small></p>
             <p class="price-alt">or US$19.99/year. Tax added at checkout.</p>
             <ul><li>Connector URL for Claude and other assistants</li><li>Sign in with Apple</li><li>Read-only or full access</li><li>Revoke any time</li></ul>
-            <a class="btn btn--primary btn--lg" href="#">Connect ibridge</a>
+            <a class="btn btn--primary btn--lg" href="#">Connect iBridge</a>
           </div>
           <div class="price-card">
             <span class="tag">Free</span>
@@ -229,7 +246,7 @@
       <p class="caption"><code>.faq</code> of native <code>&lt;details&gt;</code>: keyboard and screen-reader support for free; chevron rotates (instant with reduced motion).</p>
       <div class="demo demo-pad">
         <div class="faq">
-          <details open><summary>Is ibridge made by Apple?</summary><div class="answer"><p>No. ibridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p></div></details>
+          <details open><summary>Is iBridge made by Apple?</summary><div class="answer"><p>No. iBridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p></div></details>
           <details><summary>Which password do I use?</summary><div class="answer"><p>An app-specific password. Never use your main Apple ID password.</p></div></details>
         </div>
       </div>
@@ -253,7 +270,7 @@
           <div class="window-bar"><i></i><i></i><i></i><span>Your assistant</span></div>
           <div class="window-body chat">
             <div class="bubble bubble--user">What's on my calendar tomorrow?</div>
-            <div class="bubble bubble--assistant"><span class="tool-chip"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt="">ibridge · Calendar</span>
+            <div class="bubble bubble--assistant"><span class="tool-chip"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt="">iBridge · Calendar</span>
               <div class="event-row"><span>Team planning</span><time>09:30</time></div>
               <div class="event-row"><span>Dentist</span><time>14:00</time></div>
             </div>
@@ -269,10 +286,10 @@
         <footer class="footer">
           <div class="container">
             <div class="footer-top">
-              <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>ibridge</span></a>
+              <a class="logo" href="#"><img class="when-light" src="icons/b-cloud-arch-mark-light.svg" alt=""><img class="when-dark" src="icons/b-cloud-arch-mark-dark.svg" alt=""><span>iBridge</span></a>
               <ul class="footer-links"><li><a href="https://mcp.ibridge.fyi/privacy">Privacy</a></li><li><a href="https://mcp.ibridge.fyi/terms">Terms</a></li><li><a href="https://mcp.ibridge.fyi/account">Account</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
             </div>
-            <p class="disclaimer">ibridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>
+            <p class="disclaimer">iBridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>
           </div>
         </footer>
       </div>

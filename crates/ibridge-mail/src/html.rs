@@ -3,9 +3,11 @@
 //! Drops hidden content from HTML mail before it becomes text.
 //!
 //! Covered: elements hidden by an inline `style` (`display:none`, `visibility:hidden`,
-//! `font-size:0`, `opacity:0`) or the `hidden` attribute, with everything inside them;
-//! `<script>`, `<style>`, `<head>` and `<template>` elements; comments. Not covered: text hidden
-//! by a style sheet rule, by matching its background colour, or by positioning it off screen.
+//! `font-size:0`, `opacity:0`, or a zero `height`/`max-height` with `overflow:hidden`) or the
+//! `hidden` attribute, with everything inside them; CSS comments and character references in the
+//! style are resolved first. Also `<script>`, `<style>`, `<head>` and `<template>` elements and
+//! comments. Not covered: text hidden by a style sheet rule, by matching its background colour,
+//! or by positioning it off screen.
 //! An unclosed element of the same name inside a hidden one hides more than it should, which
 //! fails safe.
 
@@ -122,9 +124,12 @@ fn is_hidden(tag: &str) -> bool {
 
 /// Whether an inline style hides what it applies to.
 fn hides(style: &str) -> bool {
-    style.to_ascii_lowercase().split(';').any(|declaration| {
+    let style = strip_css_comments(&decode_entities(style)).to_ascii_lowercase();
+    let mut collapsed = false;
+    let mut clipped = false;
+    for declaration in style.split(';') {
         let Some((property, value)) = declaration.split_once(':') else {
-            return false;
+            continue;
         };
         let value: String = value
             .chars()
@@ -132,12 +137,73 @@ fn hides(style: &str) -> bool {
             .collect::<String>()
             .replace("!important", "");
         match property.trim() {
-            "display" => value == "none",
-            "visibility" => value == "hidden",
-            "font-size" | "opacity" => is_zero(&value),
-            _ => false,
+            "display" if value == "none" => return true,
+            "visibility" if value == "hidden" => return true,
+            "font-size" | "opacity" if is_zero(&value) => return true,
+            "height" | "max-height" => collapsed = is_zero(&value),
+            "overflow" | "overflow-y" => clipped = value == "hidden",
+            _ => {}
         }
-    })
+    }
+    collapsed && clipped
+}
+
+/// `text` with every `/* ... */` replaced by a space; an unclosed comment runs to the end.
+fn strip_css_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("/*") {
+        out.push_str(&rest[..start]);
+        out.push(' ');
+        rest = rest[start + 2..]
+            .find("*/")
+            .map_or("", |end| &rest[start + 2 + end + 2..]);
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `text` with numeric character references and the few named ones a style can use decoded.
+fn decode_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let decoded = rest.find(';').filter(|end| *end <= 10).and_then(|end| {
+            let name = &rest[1..end];
+            let c = match name {
+                "colon" => Some(':'),
+                "semi" => Some(';'),
+                "amp" => Some('&'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                _ => name.strip_prefix('#').and_then(|digits| {
+                    match digits.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16),
+                        None => digits.parse(),
+                    }
+                    .ok()
+                    .and_then(char::from_u32)
+                }),
+            };
+            c.map(|c| (c, end))
+        });
+        match decoded {
+            Some((c, end)) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Whether a CSS number is zero, with or without a unit (`0`, `0px`, `0.0em`, `0%`).
@@ -193,6 +259,14 @@ mod tests {
             "font-size:0",
             "font-size: 0.0em",
             "opacity:0",
+            "display:/**/none",
+            "display&#58;none",
+            "display&colon;none",
+            "display&#x3a;none",
+            "display:&#110;one",
+            "max-height:0;overflow:hidden",
+            "overflow:hidden; MAX-HEIGHT: 0px !important",
+            "height:0;overflow:hidden",
         ] {
             let html = format!("a<div style=\"{style}\">x<div>y</div>z</div>b");
             assert_eq!(drop_hidden(&html), "ab", "style {style:?}");
@@ -204,6 +278,9 @@ mod tests {
         for html in [
             "<p style=\"font-size:0.9em\">t</p>",
             "<p style=\"opacity:0.5;display:block\">t</p>",
+            "<p style=\"max-height:0\">t</p>",
+            "<p style=\"overflow:hidden;max-height:2em\">t</p>",
+            "<p style=\"/* display:none */color:red\">t</p>",
             "<img alt=\"a hidden thing\" src=x>",
             "<p title='display:none'>t</p>",
         ] {

@@ -14,52 +14,42 @@
 
 use std::time::SystemTime;
 
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use super::account::session_of;
 use super::signin;
 use crate::identity::{ReturnTo, SignedIn};
 use crate::oauth::Shared;
-use crate::store::User;
+use crate::store::{User, UserId};
 use crate::web::{message, notice, set_cookie};
 
 const TROUBLE: &str =
     "Something went wrong on our side. Nothing was deleted. Try again in a moment.";
 
 /// Sends the person to Apple for the fresh sign-in that confirms the deletion.
-pub(super) fn ask_for_fresh_sign_in(shared: &Shared) -> Response {
+pub(super) fn ask_for_fresh_sign_in(shared: &Shared, user: UserId) -> Response {
     let Some(identity) = shared.identity.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    signin::begin(identity, ReturnTo::DeleteAccount)
+    signin::begin(identity, ReturnTo::DeleteAccount(user))
 }
 
 /// Finishes a deletion from the fresh sign-in's callback.
 ///
-/// Only the person whose session asked for it can finish it: the Apple account that just
-/// signed in must be the one the session belongs to.
-pub(super) async fn complete(shared: &Shared, headers: &HeaderMap, signed: SignedIn) -> Response {
-    let Some((token, session)) = session_of(shared, headers) else {
-        return message(
-            StatusCode::FORBIDDEN,
-            "Sign in again",
-            "You were signed out before this finished. Nothing was deleted. Go to your account page and start again.",
-        );
-    };
-    let user = match session.principal.user() {
-        Some(id) => match shared.store.user(id).await {
-            Ok(user) => user,
-            Err(error) => {
-                tracing::error!(%error, "could not read the user being deleted");
-                return message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Something went wrong",
-                    TROUBLE,
-                );
-            }
-        },
-        None => None,
+/// Apple posts the callback from another site, so the browser sends no session cookie. The
+/// user comes from the pending sign-in instead, which the session started and the binder
+/// cookie ties to this browser. The Apple account that just signed in must be that user's.
+pub(super) async fn complete(shared: &Shared, asked: UserId, signed: SignedIn) -> Response {
+    let user = match shared.store.user(asked).await {
+        Ok(user) => user,
+        Err(error) => {
+            tracing::error!(%error, "could not read the user being deleted");
+            return message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Something went wrong",
+                TROUBLE,
+            );
+        }
     };
     let Some(user) = user.filter(|user| user.firebase_uid == signed.firebase_uid) else {
         return message(
@@ -83,7 +73,7 @@ pub(super) async fn complete(shared: &Shared, headers: &HeaderMap, signed: Signe
             );
         }
     }
-    shared.sessions.end(&token);
+    shared.sessions.end_all_for(user.id);
     if revoke_apple(shared, &user, &signed).await.is_err() {
         failed.push("Apple");
     }
@@ -151,6 +141,11 @@ fn farewell(shared: &Shared, user: &User, failed: &[&str]) -> String {
             "We could not finish removing you at {}. Everything on this service is deleted.",
             list(failed)
         ));
+        if failed.contains(&"Stripe") {
+            parts.push(String::from(
+                "Your subscription may not be cancelled, so billing may continue until it is.",
+            ));
+        }
         parts.push(match shared.config.contact_address() {
             Some(contact) => format!("Email {contact} and we will finish it."),
             None => String::from("Ask whoever runs this service to finish it."),

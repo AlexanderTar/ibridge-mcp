@@ -68,8 +68,9 @@ pub enum ReturnTo {
     Account,
     /// A stored `/authorize` request, by its pending id.
     Authorize(String),
-    /// The delete-account step, which needs a fresh sign-in.
-    DeleteAccount,
+    /// The delete-account step, which needs a fresh sign-in. It names the user who asked,
+    /// because Apple's callback is a cross-site POST that carries no session cookie.
+    DeleteAccount(crate::store::UserId),
 }
 
 /// The form Apple posts to the callback. It has no `Debug`, so a code cannot reach a log.

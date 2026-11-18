@@ -104,6 +104,14 @@ impl Sessions {
             .unwrap_or_else(PoisonError::into_inner)
             .remove(token);
     }
+
+    /// Ends every session of `user`, wherever it was started.
+    pub(crate) fn end_all_for(&self, user: UserId) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, session| session.principal.user() != Some(user));
+    }
 }
 
 pub(crate) fn routes(shared: &Arc<Shared>) -> Router {
@@ -479,9 +487,9 @@ async fn delete(
     }
     // With Sign in with Apple on, deleting needs a fresh sign-in, which does the deleting.
     if shared.identity.is_some() {
-        if session.principal.user().is_none() {
+        let Some(user) = session.principal.user() else {
             return expired();
-        }
+        };
         if !shared.lookups.allow(&peer.0, Instant::now()) {
             return message(
                 StatusCode::TOO_MANY_REQUESTS,
@@ -489,7 +497,7 @@ async fn delete(
                 "Wait a minute, then try again.",
             );
         }
-        return super::delete::ask_for_fresh_sign_in(&shared);
+        return super::delete::ask_for_fresh_sign_in(&shared, user);
     }
     let address = match who(&shared, &session).await {
         Ok(Who {

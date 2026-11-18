@@ -106,24 +106,20 @@ async fn delete_requires_fresh_apple_sign_in() {
 
     // A link cannot start a deletion: this sign-in only goes back to the account page.
     let linked = rig.start_sign_in("?next=delete").await;
-    let done = rig
-        .callback(&linked, "another-code", Some(&browser.cookie))
-        .await;
+    let done = rig.callback(&linked, "another-code").await;
     assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.text);
     assert_eq!(rows(&rig).await, before, "a plain sign-in deletes nothing");
     assert_eq!(rig.apple.revoke_requests().len(), 0);
 
     // The same session finishing the fresh sign-in is what deletes.
     let started = super::test_rig::Started::of(&begun);
-    let finished = rig
-        .callback(&started, "fresh-code", Some(&browser.cookie))
-        .await;
+    let finished = rig.callback(&started, "fresh-code").await;
     assert_eq!(finished.status, StatusCode::OK, "{}", finished.text);
     assert_eq!(rows(&rig).await, [0, 0, 0, 0]);
 }
 
 #[tokio::test]
-async fn delete_with_another_apple_identity_or_no_session_refused() {
+async fn delete_with_another_apple_identity_refused() {
     let rig = Rig::billing().await;
     let (browser, user) = member(&rig).await;
     rig.subscribe(&user, "active").await;
@@ -136,26 +132,13 @@ async fn delete_with_another_apple_identity_or_no_session_refused() {
     let started = super::test_rig::Started::of(&begun);
     rig.firebase
         .edit_claims(|claims| claims["sub"] = serde_json::json!("some-other-uid"));
-    let other = rig
-        .callback(&started, "other-code", Some(&browser.cookie))
-        .await;
+    let other = rig.callback(&started, "other-code").await;
     assert_ne!(other.status, StatusCode::OK, "{}", other.text);
     assert_eq!(
         rows(&rig).await,
         before,
         "nothing of either user is deleted"
     );
-    assert_eq!(rig.firebase.deletes().len(), 0);
-
-    // No session on this browser: nothing to delete.
-    let begun = rig
-        .post("/account/delete", &browser, &[("confirm", "delete")])
-        .await;
-    let started = super::test_rig::Started::of(&begun);
-    rig.firebase.edit_claims(|_| {});
-    let anonymous = rig.callback(&started, "fresh-code", None).await;
-    assert_ne!(anonymous.status, StatusCode::OK, "{}", anonymous.text);
-    assert_eq!(count(&rig, "SELECT COUNT(*) FROM accounts").await, 1);
     assert_eq!(rig.firebase.deletes().len(), 0);
 }
 
@@ -170,9 +153,7 @@ async fn delete_revokes_apple_deletes_firebase_cancels_stripe_and_rows() {
         .post("/account/delete", &browser, &[("confirm", "delete")])
         .await;
     let started = super::test_rig::Started::of(&begun);
-    let done = rig
-        .callback(&started, "fresh-code", Some(&browser.cookie))
-        .await;
+    let done = rig.callback(&started, "fresh-code").await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.text);
     assert!(done.text.contains("Account deleted"), "{}", done.text);
     assert!(
@@ -234,15 +215,18 @@ async fn delete_still_removes_rows_when_a_provider_call_fails() {
         .post("/account/delete", &browser, &[("confirm", "delete")])
         .await;
     let started = super::test_rig::Started::of(&begun);
-    let done = rig
-        .callback(&started, "fresh-code", Some(&browser.cookie))
-        .await;
+    let done = rig.callback(&started, "fresh-code").await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.text);
     assert_eq!(rows(&rig).await, [0, 0, 0, 0], "the rows are gone anyway");
     assert!(session_cleared(&done));
     assert!(
         done.text.contains("Stripe, Apple and Google"),
         "the failed providers read as a list: {}",
+        done.text
+    );
+    assert!(
+        done.text.contains("billing may continue"),
+        "a failed Stripe cancel says the subscription may still renew: {}",
         done.text
     );
     for provider in ["Apple", "Google", "Stripe"] {
@@ -289,9 +273,7 @@ async fn delete_without_subscription_skips_stripe() {
         .post("/account/delete", &browser, &[("confirm", "delete")])
         .await;
     let started = super::test_rig::Started::of(&begun);
-    let done = rig
-        .callback(&started, "fresh-code", Some(&browser.cookie))
-        .await;
+    let done = rig.callback(&started, "fresh-code").await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.text);
     assert_eq!(
         rig.stripe_requests().len(),
@@ -310,9 +292,7 @@ async fn delete_without_subscription_skips_stripe() {
         .post("/account/delete", &browser, &[("confirm", "delete")])
         .await;
     let started = super::test_rig::Started::of(&begun);
-    let done = rig
-        .callback(&started, "fresh-code", Some(&browser.cookie))
-        .await;
+    let done = rig.callback(&started, "fresh-code").await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.text);
     assert_eq!(rows(&rig).await, [0, 0, 0, 0]);
     assert!(

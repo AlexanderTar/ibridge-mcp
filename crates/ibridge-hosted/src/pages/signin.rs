@@ -121,10 +121,10 @@ async fn callback(
         .await;
     let mut response = match finished {
         // A fresh sign-in that was asked for to delete the account does that, and nothing else.
-        Ok(signed) if signed.return_to == ReturnTo::DeleteAccount => {
-            super::delete::complete(&shared, &headers, signed).await
-        }
-        Ok(signed) => signed_in(&shared, signed).await,
+        Ok(signed) => match signed.return_to {
+            ReturnTo::DeleteAccount(user) => super::delete::complete(&shared, user, signed).await,
+            _ => signed_in(&shared, signed).await,
+        },
         Err(error) => failed(error),
     };
     // The binder has done its one job, whichever way the sign-in went.
@@ -172,7 +172,7 @@ async fn signed_in(shared: &Shared, signed: SignedIn) -> Response {
             let id: String = url::form_urlencoded::byte_serialize(id.as_bytes()).collect();
             format!("/authorize/resume?pending={id}")
         }
-        ReturnTo::Account | ReturnTo::DeleteAccount => "/account".to_owned(),
+        ReturnTo::Account | ReturnTo::DeleteAccount(_) => "/account".to_owned(),
     };
     let mut response = see_other(&location);
     set_cookie(&mut response, SESSION_COOKIE, &token, SESSION_SECS);

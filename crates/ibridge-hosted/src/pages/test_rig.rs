@@ -317,22 +317,16 @@ impl Rig {
         Started::of(&reply)
     }
 
-    /// Apple's callback for `started`, with `code`, from a browser that also sends `cookie`.
-    pub(crate) async fn callback(
-        &self,
-        started: &Started,
-        code: &str,
-        cookie: Option<&str>,
-    ) -> Reply {
-        let sent = match cookie {
-            Some(cookie) => format!("{cookie}; {}", started.binder),
-            None => started.binder.clone(),
-        };
+    /// Apple's callback for `started`, with `code`.
+    ///
+    /// Apple posts it as a cross-site form, so a browser sends only the `SameSite=None`
+    /// binder cookie and never the `Lax` session cookie. The rig does the same.
+    pub(crate) async fn callback(&self, started: &Started, code: &str) -> Reply {
         self.harness
             .post_path(
                 "/signin/apple/callback",
                 IP,
-                Some(&sent),
+                Some(&started.binder),
                 &[("code", code), ("state", &started.state)],
             )
             .await
@@ -341,7 +335,7 @@ impl Rig {
     /// Signs in with Apple through the real routes, with `code`, and returns the browser.
     pub(crate) async fn sign_in(&self, code: &str) -> Browser {
         let started = self.start_sign_in("").await;
-        let done = self.callback(&started, code, None).await;
+        let done = self.callback(&started, code).await;
         assert_eq!(
             done.status,
             axum::http::StatusCode::SEE_OTHER,

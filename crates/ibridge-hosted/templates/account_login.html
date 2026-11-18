@@ -1,22 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Your ibridge account{% endblock %}
+{% block title %}Your iBridge account{% endblock %}
 {% block body %}
-<h1>Your account</h1>
+<h1 class="h2">Your account</h1>
 {% if identity %}
 <p>Sign in to see your plan, which apps and API keys can reach your iCloud, to revoke any of them, or to delete everything we store about you.</p>
-<a class="button" href="/signin/apple">Sign in with Apple</a>
+<a class="btn btn--primary btn--lg" href="/signin/apple">Sign in with Apple</a>
 <p class="hint">We never see your Apple password. Your iCloud app-specific password is asked for separately, when you connect an app.</p>
 {% else %}
 <p>Sign in to see which apps and API keys can reach your iCloud, to revoke any of them, or to delete everything we store about you. Sign in the same way you connect an app: with your primary iCloud address and an app-specific password.</p>
-{% if let Some(message) = error %}<p class="error" role="alert">{{ message }}</p>{% endif %}
+{% if let Some(message) = error %}<p class="alert" role="alert">{{ message }}</p>{% endif %}
 <form method="post" action="/account/login" autocomplete="off">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-<label for="apple_id">Your primary iCloud address</label>
-<input id="apple_id" name="apple_id" type="email" inputmode="email" autocomplete="username" required maxlength="254" value="{{ apple_id }}">
-<label for="password">App-specific password</label>
-<input id="password" name="password" type="password" autocomplete="off" required maxlength="64">
+<div class="field"><label for="apple_id">Your primary iCloud address</label><input id="apple_id" name="apple_id" type="email" inputmode="email" autocomplete="username" required maxlength="254" value="{{ apple_id }}"></div>
+<div class="field"><label for="password">App-specific password</label><input id="password" name="password" type="password" autocomplete="off" required maxlength="64"></div>
 <p class="hint">Never use your main Apple ID password here. <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">Create an app-specific password</a> in your Apple Account if you need one. We check it with iCloud and do not keep it.</p>
-<button type="submit">Sign in</button>
+<button class="btn btn--primary btn--lg" type="submit">Sign in</button>
 </form>
 {% endif %}
 {% endblock %}

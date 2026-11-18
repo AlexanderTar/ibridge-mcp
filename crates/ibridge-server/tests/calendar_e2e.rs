@@ -757,3 +757,35 @@ async fn long_descriptions_and_notes_are_cut_with_a_marker() {
         "the error says both are needed"
     );
 }
+
+/// Claude reads the text content, not `structuredContent`: events and reminders must be in it,
+/// as the same JSON the structured content holds.
+#[tokio::test]
+async fn calendar_and_reminder_text_content_carries_the_data() {
+    let client = connect(
+        IbridgeServer::read_write(account(), Arc::new(NoMail))
+            .with_calendar(Arc::new(Fake::seeded())),
+    )
+    .await;
+    let events = call(
+        &client,
+        "calendar_list_events",
+        serde_json::json!({ "start": "2026-11-16T00:00:00Z", "end": "2026-11-17T00:00:00Z" }),
+    )
+    .await;
+    let reminders = call(&client, "reminders_list", serde_json::json!({})).await;
+    assert!(
+        text_of(&events).contains("2026-11-16T09:00:00Z"),
+        "{}",
+        text_of(&events)
+    );
+    assert!(
+        text_of(&reminders).contains("Wire the money"),
+        "{}",
+        text_of(&reminders)
+    );
+    for result in [&events, &reminders] {
+        let json = serde_json::to_string(structured(result)).expect("json");
+        assert!(text_of(result).contains(&json), "the JSON is in the text");
+    }
+}

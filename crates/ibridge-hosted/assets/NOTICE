@@ -1,0 +1,13 @@
+Apple's Sign in with Apple logo
+
+apple-logo-white.svg and apple-logo-black.svg are Apple's artwork, copied unmodified from
+Apple's "Sign in with Apple - Logo Only" set (the white and black logo-only SVG files). They
+are not covered by the Apache License that applies to the rest of this project. They may be used
+only under Apple's Human Interface Guidelines and the Sign in with Apple terms; do not change
+them.
+
+The server serves them only while both files exist (build.rs turns on cfg(apple_logo)). A
+self-hoster who does not want them can delete both files: the button is then text-only.
+The test `the_logo_files_are_apples_originals_committed_in_the_repo` (crates/ibridge-hosted/src/
+pages/assets_tests.rs) guards that this repository ships the files; delete it too when you delete
+the files. `the_apple_logo_is_used_exactly_when_its_files_are_present` passes either way.

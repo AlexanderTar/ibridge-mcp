@@ -141,8 +141,8 @@ fn logo_path(file: &str) -> std::path::PathBuf {
         .join(file)
 }
 
-/// Apple's logo artwork is licensed, so it is never in the repository: the hosted build
-/// adds `assets/apple-logo-white.svg` and `assets/apple-logo-black.svg`. With both files the
+/// Apple's logo artwork is in the repository as `assets/apple-logo-white.svg` and
+/// `assets/apple-logo-black.svg`; a self-hoster may delete it. With both files the
 /// server serves them and the button shows the logo (white on the black light-mode button,
 /// black on the white dark-mode one); with either missing the button is text-only and nothing
 /// points at a missing file. Run the suite in both states.
@@ -169,23 +169,57 @@ async fn the_apple_logo_is_used_exactly_when_its_files_are_present() {
     }
 }
 
-/// The artwork must not be committable, and the hosted deploy must still upload it:
-/// `railway up` skips what `.gitignore` names unless `.railwayignore` re-includes it.
+/// The logo files are Apple's own artwork, committed unmodified (these are the sha256 of the
+/// files in Apple's "Sign in with Apple - Logo Only" set), so a clean checkout and the Docker
+/// build serve the logo with no step to add it. Nothing ignores them, `build.rs` turns the logo on,
+/// and the notice says they are not under the Apache licence.
+///
+/// This guards the repository, not a fork: a self-hoster who deletes the files (the notice allows
+/// it) deletes this test with them. The test above passes in both states.
 #[test]
-fn the_logo_files_are_ignored_by_git_and_included_in_the_railway_upload() {
+fn the_logo_files_are_apples_originals_committed_in_the_repo() {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for (file, sha256) in LOGO_FILES.iter().zip([
+        "fd66b19f3f09ade3650cc3289a744ee9636764068243805d9c74deeecbde191b",
+        "7ee1bc1706bc228f37a937de914e2ebe1605aebba3c35f11c3963087573fc11f",
+    ]) {
+        let bytes = std::fs::read(logo_path(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+        let hex = Sha256::digest(&bytes)
+            .iter()
+            .fold(String::new(), |mut hex, byte| {
+                write!(hex, "{byte:02x}").expect("writing to a String");
+                hex
+            });
+        assert_eq!(hex, sha256, "{file} is Apple's original, unmodified");
+    }
+    const { assert!(cfg!(apple_logo), "build.rs turns the logo on") };
+
     let gitignore = std::fs::read_to_string(root.join(".gitignore")).expect(".gitignore");
-    let railwayignore =
-        std::fs::read_to_string(root.join(".railwayignore")).expect(".railwayignore");
-    for file in LOGO_FILES {
-        let line = format!("/crates/ibridge-hosted/assets/{file}");
+    assert!(
+        !gitignore.contains("apple-logo"),
+        "nothing ignores the logo files"
+    );
+    assert!(
+        !root.join(".railwayignore").exists(),
+        "no .railwayignore re-include is left"
+    );
+    for notice in [
+        root.join("NOTICE"),
+        root.join("crates/ibridge-hosted/assets/NOTICE"),
+    ] {
+        let text = std::fs::read_to_string(&notice)
+            .unwrap_or_else(|e| panic!("{notice:?}: {e}"))
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(
-            gitignore.lines().any(|l| l == line),
-            ".gitignore ignores {file}"
-        );
-        assert!(
-            railwayignore.lines().any(|l| l == format!("!{line}")),
-            ".railwayignore re-includes {file}"
+            text.contains("apple-logo-white.svg")
+                && text.contains("Apple")
+                && text.contains("not covered by the Apache"),
+            "{notice:?} labels the logo as Apple's artwork outside the licence: {text}"
         );
     }
 }

@@ -482,3 +482,35 @@ async fn the_apple_steps_are_just_a_heading_and_the_button() {
         "the long line is gone: {account}"
     );
 }
+
+/// The plan prompts state the price and that one plan covers one account, and say nothing about
+/// tax: the legal clause on the terms page is where tax is explained.
+#[tokio::test]
+async fn the_landing_account_and_authorize_plan_pages_do_not_mention_tax() {
+    let rig = Rig::billing().await;
+    let user = rig.user("uid-tax", Some("ada@example.com")).await;
+    let browser = rig.browser(&user);
+    let authorize = rig
+        .get(&Harness::authorize_path(&[], &[]), Some(&browser))
+        .await;
+    let account = rig.get("/account", Some(&browser)).await;
+    let landing = rig.get("/", None).await;
+    for (name, page) in [
+        ("authorize plan prompt", authorize),
+        ("account with a plan to buy", account),
+        ("landing", landing),
+    ] {
+        let text = visible_text(&page.text);
+        assert!(
+            text.contains("US$")
+                && text
+                    .to_lowercase()
+                    .contains("one plan covers one icloud account"),
+            "{name} still states the price and the one-account rule: {text}"
+        );
+        assert!(
+            !text.to_lowercase().contains("tax"),
+            "{name} mentions tax: {text}"
+        );
+    }
+}

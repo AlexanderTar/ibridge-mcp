@@ -600,3 +600,41 @@ async fn group_membership_adds_removes_and_refuses_other_actions() {
         "only add and remove are actions"
     );
 }
+
+/// Claude reads a tool's text content, not its structured content, so the text must carry the
+/// data: the summary first, then the same JSON the structured content holds.
+#[tokio::test]
+async fn the_text_content_carries_the_data_not_only_the_summary() {
+    let fake = Arc::new(Fake::seeded());
+    let client = serve(&fake).await;
+    let found = call(
+        &client,
+        "contacts_search",
+        serde_json::json!({ "query": "ada" }),
+    )
+    .await;
+    let blocks: Vec<&str> = found
+        .content
+        .iter()
+        .filter_map(|block| block.as_text().map(|text| text.text.as_str()))
+        .collect();
+    let all = blocks.join("\n");
+    assert!(
+        all.contains("+1 555 0100"),
+        "the phone is in the text: {all}"
+    );
+    assert!(
+        all.contains("untrusted"),
+        "the untrusted markers survive: {all}"
+    );
+    let json = blocks.last().expect("a text block");
+    assert_eq!(
+        &serde_json::from_str::<serde_json::Value>(json).expect("the last block is the JSON"),
+        structured(&found),
+        "the last text block is the structured content"
+    );
+    assert!(
+        blocks.len() > 1,
+        "the summary stays in its own block first: {blocks:?}"
+    );
+}

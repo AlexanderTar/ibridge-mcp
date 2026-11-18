@@ -75,6 +75,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/local-development.md](docs/local-d
 
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The one exception is Apple's Sign in with Apple logo in `crates/ibridge-hosted/assets/`: it is Apple's artwork, committed unmodified, and not covered by that licence.
 
 <!-- mcp-name: io.github.AlexanderTar/ibridge -->

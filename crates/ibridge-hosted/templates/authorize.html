@@ -8,7 +8,7 @@
 <a class="btn-apple" href="/signin/apple?next=authorize&amp;pending={{ pending }}">Sign in with Apple</a>
 {% else %}
 {% if let Some(plan) = plan %}
-<p>{{ client_name }} needs a plan to reach your iCloud: {{ price }}. Taxes are handled by Stripe at checkout, and one plan covers one iCloud account.</p>
+<p>{{ client_name }} needs a plan to reach your iCloud: {{ price }}. One plan covers one iCloud account.</p>
 <form method="post" action="/billing/checkout">
 <input type="hidden" name="csrf" value="{{ plan.csrf }}">
 <input type="hidden" name="pending" value="{{ plan.pending }}">

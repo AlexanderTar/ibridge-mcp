@@ -675,7 +675,9 @@ pub(crate) fn respond<T: serde::Serialize>(
     let json = serde_json::to_value(value)
         .map_err(|_| ErrorData::internal_error("internal error", None))?;
     let mut result = CallToolResult::structured(json);
-    result.content = vec![ContentBlock::text(summary)];
+    // Claude reads the text content, not `structuredContent`. `structured` already put the
+    // serialized JSON in `content`, which the MCP spec asks for; the summary goes in front.
+    result.content.insert(0, ContentBlock::text(summary));
     Ok(result)
 }
 

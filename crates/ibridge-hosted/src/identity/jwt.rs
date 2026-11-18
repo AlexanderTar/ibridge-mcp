@@ -74,6 +74,16 @@ pub struct Claims {
     pub iat: Option<i64>,
     /// Email, when the provider vouches for one.
     pub email: Option<String>,
+    /// Firebase's own claim: how the user signed in.
+    pub firebase: Option<FirebaseClaim>,
+}
+
+/// The `firebase` claim of a Firebase ID token.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FirebaseClaim {
+    /// The ids the user has with each provider, such as `apple.com`.
+    #[serde(default)]
+    pub identities: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// The header fields this server reads.
@@ -237,6 +247,35 @@ pub mod test_key {
             )
             .expect("signing works");
         format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature))
+    }
+
+    /// Whether `token` is an ES256 JWT signed by the P-256 key in `pem`.
+    ///
+    /// # Panics
+    ///
+    /// When `pem` is not a P-256 key or `token` is not a compact JWT.
+    pub fn es256_signed_by(token: &str, pem: &str) -> bool {
+        use ring::signature::{ECDSA_P256_SHA256_FIXED, KeyPair as _, UnparsedPublicKey};
+        let body: String = pem
+            .lines()
+            .filter(|line| !line.starts_with("-----"))
+            .collect();
+        let pkcs8 = base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .expect("the key is base64");
+        let pair = EcdsaKeyPair::from_pkcs8(
+            &ECDSA_P256_SHA256_FIXED_SIGNING,
+            &pkcs8,
+            &SystemRandom::new(),
+        )
+        .expect("the key is P-256");
+        let (signed, signature) = token.rsplit_once('.').expect("a compact JWT");
+        let signature = URL_SAFE_NO_PAD
+            .decode(signature)
+            .expect("a base64url signature");
+        UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, pair.public_key().as_ref())
+            .verify(signed.as_bytes(), &signature)
+            .is_ok()
     }
 
     /// A fresh P-256 key in the PEM form of Apple's `.p8` file.

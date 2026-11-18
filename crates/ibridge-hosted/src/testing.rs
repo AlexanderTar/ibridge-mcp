@@ -22,6 +22,7 @@ use ibridge_testkit::imap_fake::FakeImap;
 use rmcp::model::ServerConfig;
 use tokio::io::DuplexStream;
 
+pub use crate::identity::fakes::{FAKE_NOW_SECS, FakeApple, FakeFirebase, identity_config};
 use crate::oauth::{SignInCheck, validated_by};
 use crate::provider::{Backend, Providers};
 

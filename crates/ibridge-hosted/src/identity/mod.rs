@@ -2,6 +2,11 @@
 
 //! Sign in with Apple through Firebase: the settings that switch it on, and the clients.
 
+pub mod apple;
+#[cfg(any(test, feature = "testing"))]
+pub mod fakes;
+pub mod firebase;
+mod http;
 pub mod jwt;
 
 use secrecy::SecretString;
@@ -21,6 +26,24 @@ pub const APPLE_PRIVATE_KEY: &str = "IBRIDGE_APPLE_PRIVATE_KEY";
 pub const FIREBASE_PROJECT_ID: &str = "IBRIDGE_FIREBASE_PROJECT_ID";
 /// The Firebase web API key.
 pub const FIREBASE_API_KEY: &str = "IBRIDGE_FIREBASE_API_KEY";
+
+/// Why a sign-in step failed. The text is safe to log: it never holds a token or a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum IdentityError {
+    /// Firebase refused a new account because this server's address made too many sign-ups.
+    #[error("too many sign-ups right now, try again in an hour")]
+    TooManySignUps,
+    /// Apple or Google could not be reached, or answered nonsense.
+    #[error("the sign-in service could not be reached")]
+    Unreachable,
+    /// Apple or Firebase refused the code or token it was given.
+    #[error("the sign-in was refused")]
+    Refused,
+    /// A token failed its checks: signature, issuer, audience, expiry or issue time.
+    #[error("the sign-in token is not valid")]
+    InvalidToken,
+}
 
 /// Sign in with Apple and Firebase settings. All six are set, or none.
 #[derive(Debug, Clone)]

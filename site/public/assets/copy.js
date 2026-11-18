@@ -6,6 +6,7 @@ for (const box of document.querySelectorAll(".copy-box")) {
   const button = box.querySelector("button");
   const text = box.querySelector("code").textContent.trim();
   const iconOnly = button.querySelector("svg") !== null;
+  let timer;
   const status = document.createElement("span");
   status.className = "visually-hidden";
   status.setAttribute("role", "status");
@@ -23,7 +24,8 @@ for (const box of document.querySelectorAll(".copy-box")) {
       getSelection().addRange(range);
       status.textContent = "Selected. Press Command-C or Control-C to copy.";
     }
-    setTimeout(() => {
+    clearTimeout(timer); // a second click restarts the 2 s window
+    timer = setTimeout(() => {
       if (!iconOnly) button.textContent = "Copy";
       delete button.dataset.copied;
       status.textContent = "";

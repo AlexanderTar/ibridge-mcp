@@ -22,7 +22,12 @@ writeFileSync(out("apple-touch-icon.png"), png(square, 180));
 writeFileSync(out("icon-512.png"), png(tile, 512));
 
 // Open Graph card: the tile, the name and one line, on the hero's pale teal wash.
-const tileInner = tile.slice(tile.indexOf("<defs>"), tile.lastIndexOf("</svg>"));
+// The tile's border is a 1.5px hairline (non-scaling). resvg scales it inside the nested 260px svg (4.06x, about 6px),
+// so give it the width that renders as 1.5px: 1.5 / (260 / 64).
+const hairline = (1.5 / (260 / 64)).toFixed(2);
+const tileInner = tile.slice(tile.indexOf("<defs>"), tile.lastIndexOf("</svg>"))
+  .replace(' stroke-width="1.5" vector-effect="non-scaling-stroke"', ` stroke-width="${hairline}"`);
+if (!tileInner.includes(`stroke-width="${hairline}"`)) throw new Error("tile svg changed: update the og border rewrite");
 const og = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#EAF5F5"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient></defs>
   <rect width="1200" height="630" fill="url(#sky)"/>

@@ -30,7 +30,13 @@ function visibleText(html) {
     .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&rarr;/g, "→")
     .replace(/\s+/g, " ").trim();
 }
-const squash = (s) => s.replace(/\s+/g, "");
+// Copy is compared ignoring spacing and quote style; curly quotes are checked separately.
+const squash = (s) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, "");
+// Visible prose (not code, which keeps its identifiers as typed) uses curly quotes and apostrophes.
+function assertCurly(name, html) {
+  const prose = visibleText(html.replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, " "));
+  for (const m of prose.matchAll(/['"]/g)) fail(`${name}: straight quote in visible text near "${prose.slice(Math.max(0, m.index - 15), m.index + 15)}"`);
+}
 
 // ---------- Unit 1: page copy, naming, links ----------
 const CONNECTOR = "https://mcp.ibridge.fyi/mcp";
@@ -104,6 +110,8 @@ function checkPage() {
   const boxes = [...html.matchAll(/<(?:div|span)\b[^>]*class="copy-box"[^>]*>[\s\S]*?<\/button>/gi)].map((m) => m[0]);
   assert(boxes.length === 3, `expected 3 copy boxes, found ${boxes.length}`);
   for (const b of boxes) assert(/<button\b[^>]*aria-label="Copy"[^>]*>\s*<svg/.test(b), "copy box button needs aria-label=\"Copy\" and an icon");
+  for (const b of boxes) assert(/<(?:div|span)\b[^>]*role="group"/.test(b) && /<(?:div|span)\b[^>]*aria-label="[^"]+"/.test(b), "copy box needs role=\"group\" and an aria-label naming what it copies");
+  assertCurly("index", html);
   for (const b of boxes) assert(!/copy-done|>\s*Copied\s*</.test(b), "copy button must show only the tick icon, with no visible 'Copied' word");
   assert(html.includes("assets/copy.js"), "page must load assets/copy.js");
 
@@ -185,6 +193,7 @@ function checkLegal() {
     const text = visibleText(html);
     const flat = squash(text);
     for (const copy of required) assert(flat.includes(squash(copy)), `${name}: copy missing: "${copy}"`);
+    assertCurly(name, html);
     for (const re of LEGAL_BANNED) assert(!re.test(text), `${name}: banned text present: ${re}`);
     assert(!/\bibridge\b/.test(visibleText(html.replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, " "))), `${name}: lowercase 'ibridge' in visible text outside code`);
     assert(new RegExp(`<title>[^<]*iBridge[^<]*</title>`).test(html), `${name}: title must name iBridge`);
@@ -252,14 +261,23 @@ checkIcons();
 function readVercelConfig() {
   try { return JSON.parse(read(join(SITE, "vercel.json"))); } catch { return null; }
 }
-const headerMap = (headers) => Object.fromEntries(headers.map((h) => [h.key.toLowerCase(), h.value]));
-const globalHeaders = (config) => headerMap(config?.headers?.find((r) => r.source === "/(.*)")?.headers ?? []);
+// The headers Vercel sends for a path: every rule whose source matches (a source is a path-to-regexp pattern; ours are plain regex groups).
+const headersFor = (config, path) => Object.fromEntries((config?.headers ?? [])
+  .filter((r) => new RegExp(`^${r.source}$`).test(path))
+  .flatMap((r) => r.headers.map((h) => [h.key.toLowerCase(), h.value])));
 
 function checkVercelConfig(config) {
   if (!config) return fail("site/vercel.json is missing or not valid JSON");
   assert(config.cleanUrls === true, "vercel.json: cleanUrls must be true");
   assert(config.outputDirectory === "public", "vercel.json: outputDirectory must be public");
-  const all = globalHeaders(config);
+  const all = headersFor(config, "/");
+  assert(config.installCommand === "" && config.buildCommand === "", "vercel.json: installCommand and buildCommand must be empty strings (a static site; null would auto-detect and run npm install)");
+  for (const path of ["/favicon.svg", "/img/mark-light.svg", "/img/tile-dark.svg"]) {
+    assert(!("content-security-policy" in headersFor(config, path)), `vercel.json: no CSP on ${path} (its inline style needs one Firefox can render)`);
+    assert(headersFor(config, path)["x-content-type-options"] === "nosniff", `vercel.json: ${path} still needs the other security headers`);
+  }
+  for (const path of ["/privacy", "/terms", "/nope", "/assets/page.css"]) assert("content-security-policy" in headersFor(config, path), `vercel.json: CSP must be sent on ${path}`);
+  assert(!/interest-cohort/.test(all["permissions-policy"] ?? ""), "Permissions-Policy: drop interest-cohort (retired FLoC directive)");
   const csp = all["content-security-policy"] ?? "";
   assert(csp.includes("default-src 'self'"), "CSP must start from default-src 'self'");
   assert(!/unsafe-inline|unsafe-eval|https?:|\*/.test(csp), "CSP must allow only 'self' (no unsafe-*, hosts or wildcards)");
@@ -271,20 +289,20 @@ function checkVercelConfig(config) {
   assert(all["x-content-type-options"] === "nosniff", "X-Content-Type-Options must be nosniff");
   assert(/^(strict-origin|strict-origin-when-cross-origin|no-referrer|same-origin)$/.test(all["referrer-policy"] ?? ""), "Referrer-Policy must be a strict value");
   assert(Boolean(all["permissions-policy"]), "Permissions-Policy must be set");
-  const cached = config.headers?.find((r) => r.source !== "/(.*)" && r.headers.some((h) => h.key.toLowerCase() === "cache-control"));
+  const cached = config.headers?.find((r) => r.headers.some((h) => h.key.toLowerCase() === "cache-control"));
   assert(Boolean(cached), "vercel.json needs a Cache-Control rule for assets and images");
 }
 
 const notFoundPage = () => read(join(PUBLIC, "404.html")) || "Not found";
 const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 // Serves site/public the way Vercel will: the vercel.json security headers on every response, 404.html for unknown paths.
-function serve(headers) {
+function serve(config) {
   const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
     let file = join(PUBLIC, path === "/" ? "index.html" : path);
     if (!extname(file) && existsSync(`${file}.html`)) file += ".html"; // cleanUrls
     if (!file.startsWith(PUBLIC) || !existsSync(file) || statSync(file).isDirectory()) file = null;
-    for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
+    for (const [k, v] of Object.entries(headersFor(config, path))) res.setHeader(k, v);
     res.statusCode = file ? 200 : 404;
     res.setHeader("content-type", TYPES[extname(file ?? "x.html")] ?? "application/octet-stream");
     res.end(file ? readFileSync(file) : notFoundPage());
@@ -301,10 +319,13 @@ async function checkRendered(config) {
   } catch { return fail("puppeteer-core and axe-core are not installed (run: npm ci --prefix site)"); }
   const chrome = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => p && existsSync(p));
   if (!chrome) return fail("no Chrome found (set CHROME_PATH)");
-  const headers = Object.fromEntries((config?.headers?.find((r) => r.source === "/(.*)")?.headers ?? []).map((h) => [h.key, h.value]));
-  const server = await serve(headers);
+  const server = await serve(config);
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: ["--no-sandbox"] });
+  const served = async (path) => (await fetch(origin + path)).headers;
+  assert(!(await served("/favicon.svg")).has("content-security-policy"), "favicon.svg must be served without a CSP (its inline style is blocked by style-src 'self', and Firefox then renders it black)");
+  assert((await served("/")).has("content-security-policy"), "the home page must be served with a CSP");
+  await checkOgTile(browser, origin);
   const viewports = [
     { width: 1440, height: 900, deviceScaleFactor: 1 },
     { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }, // device emulation: headless Chrome's window can't go this narrow
@@ -338,6 +359,29 @@ async function checkRendered(config) {
   } finally { await browser.close(); server.close(); }
 }
 
+// The tile border on the Open Graph card is a hairline like the other icon sizes, not scaled up with the tile.
+async function checkOgTile(browser, origin) {
+  const page = await browser.newPage();
+  await page.goto(`${origin}/404`);
+  const thickness = await page.evaluate(async (url) => {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const c = Object.assign(document.createElement("canvas"), { width: img.width, height: img.height });
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    // Along the tile's middle (y=280), count the pixels of the border colour (#D5E3E6) left of the tile's fill.
+    let n = 0;
+    for (let x = 190; x < 260; x++) {
+      const [r, gr, b] = g.getImageData(x, 280, 1, 1).data;
+      if (Math.abs(r - 0xd5) < 14 && Math.abs(gr - 0xe3) < 14 && Math.abs(b - 0xe6) < 14) n++;
+    }
+    return n;
+  }, `${origin}/og.png`);
+  assert(thickness >= 1 && thickness <= 3, `og.png: the tile border is ${thickness}px thick; it should be a 1 to 3px hairline like the other icons, not scaled with the tile`);
+  await page.close();
+}
+
 async function checkCopyButtons(page, browser, origin) {
   await browser.defaultBrowserContext().overridePermissions(origin, ["clipboard-read", "clipboard-write", "clipboard-sanitized-write"]);
   const count = await page.$$eval(".copy-box button", (bs) => bs.length);
@@ -367,6 +411,13 @@ async function checkCopyButtons(page, browser, origin) {
     assert(clipboard === want[i], `copy button ${i + 1}: clipboard holds "${clipboard}"`);
     assert(JSON.stringify(before.sizes) === JSON.stringify(state.sizes), `copy button ${i + 1}: layout shifted when copied (${JSON.stringify(before.sizes)} -> ${JSON.stringify(state.sizes)})`);
   }
+  // A second click while the tick shows restarts the 2 s window: the first click's timer must not clear it early.
+  const first = (await page.$$(".copy-box button"))[0];
+  await first.click();
+  await new Promise((r) => setTimeout(r, 1200));
+  await first.click();
+  await new Promise((r) => setTimeout(r, 1200)); // 2.4 s after the first click, 1.2 s after the second
+  assert(await page.$eval(".copy-box button", (b) => "copied" in b.dataset), "copy.js must clear the previous timer: a second click was cut short by the first click's timeout");
   await new Promise((r) => setTimeout(r, 2200));
   assert(await page.$$eval(".copy-box button", (bs) => bs.every((b) => !("copied" in b.dataset))), "copy confirmation must clear after a moment");
 }
@@ -375,6 +426,7 @@ const config = readVercelConfig();
 checkVercelConfig(config);
 const notFound = read(join(PUBLIC, "404.html"));
 assert(/<h1\b/.test(notFound) && /href="\/"/.test(notFound), "404.html must exist with a heading and a link home");
+assertCurly("404", notFound);
 await checkRendered(config);
 
 if (failures.length) {

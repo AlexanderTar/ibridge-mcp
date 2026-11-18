@@ -37,10 +37,10 @@
       <ul>
         <li>Your iCloud address, and when your account was created.</li>
         <li>If you sign in with Apple: the email Apple gives us, which may be a private relay address, and the identifiers Apple and Firebase give you. We never see your Apple password.</li>
-        <li>Your plan: your Stripe customer and subscription ids, the subscription's status, and when the paid period ends. Stripe holds your payment details. We never see your card.</li>
+        <li>Your plan: your Stripe customer and subscription ids, the subscription’s status, and when the paid period ends. Stripe holds your payment details. We never see your card.</li>
         <li>For each connected app or API key: its kind, the name you gave a key, whether it was revoked, and when it was made.</li>
         <li>Encrypted copies of your app-specific password, and a one-way hash of each token, which is how we find the right copy. We never store a token itself.</li>
-        <li>For apps that register themselves with us: the app's name and its return addresses.</li>
+        <li>For apps that register themselves with us: the app’s name and its return addresses.</li>
         <li>Logs: one line per request with the method, the page address with any token removed, and the result. No passwords, tokens, request bodies, mail, events or contacts are written to them.</li>
         <li>In memory only: the network address and iCloud address of recent sign-in attempts, to rate-limit guessing. They are forgotten within 15 minutes. Our hosting platform may keep its own request logs, including network addresses, under its own retention.</li>
       </ul>
@@ -58,7 +58,7 @@
       <p>Whoever controls the running server could capture the password at those moments. For example, an operator or an attacker who changes the code the server runs could. The code is open source and each deployment names its exact version, which makes a change visible but does not prevent one. The <a href="https://github.com/AlexanderTar/icloud-mcp/blob/main/docs/security-model.md" target="_blank" rel="noopener noreferrer">security model</a> describes the encryption, its limits and the threats it does and does not cover. We keep logged-in mail connections open for up to five minutes after a request to save logging in again; the password is not kept with them. Mail, event and contact text passes through the server while a request runs.</p>
 
       <h2 class="h3">Revoke the password at Apple</h2>
-      <p>When you stop using iBridge, or if anything looks wrong, revoke the app-specific password at Apple. Sign in to your Apple Account, open Sign-In and Security, then App-Specific Passwords, and revoke the one you gave us (<a href="https://support.apple.com/102654" target="_blank" rel="noopener noreferrer">Apple's guide</a>). That is the one step that makes the password useless everywhere, whatever anyone holds. Deleting your account here removes our copies but does not revoke it for you, so you should revoke the app-specific password at Apple as well.</p>
+      <p>When you stop using iBridge, or if anything looks wrong, revoke the app-specific password at Apple. Sign in to your Apple Account, open Sign-In and Security, then App-Specific Passwords, and revoke the one you gave us (<a href="https://support.apple.com/102654" target="_blank" rel="noopener noreferrer">Apple’s guide</a>). That is the one step that makes the password useless everywhere, whatever anyone holds. Deleting your account here removes our copies but does not revoke it for you, so you should revoke the app-specific password at Apple as well.</p>
 
       <h2 class="h3">How long we keep things</h2>
       <ul>
@@ -70,7 +70,7 @@
       </ul>
 
       <h2 class="h3">Who else is involved</h2>
-      <p>Apple's iCloud receives your password when we log in on your behalf, under Apple's own terms. Our hosting platform runs the server and stores the database.</p>
+      <p>Apple’s iCloud receives your password when we log in on your behalf, under Apple’s own terms. Our hosting platform runs the server and stores the database.</p>
       <p>We also use these services, which are switched on for this service:</p>
       <ul>
         <li><strong>Apple</strong> (<code>appleid.apple.com</code>) runs Sign in with Apple. We send it the sign-in code Apple gave your browser. It tells us who you are and your email. We can ask it to revoke the sign-in when you delete your account.</li>

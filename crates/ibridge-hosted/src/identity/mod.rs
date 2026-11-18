@@ -93,7 +93,6 @@ impl std::fmt::Debug for CallbackForm {
 }
 
 /// Who signed in, with Firebase and Apple's answers already checked.
-#[derive(Debug)]
 pub struct SignedIn {
     /// Firebase's stable id for the user.
     pub firebase_uid: String,
@@ -107,6 +106,16 @@ pub struct SignedIn {
     pub apple_access: Option<SecretString>,
     /// The Firebase ID token from this sign-in, for deleting the Firebase user. Never stored.
     pub firebase_id_token: SecretString,
+}
+
+// No derive: the uid, Apple's `sub` and the email identify a person, so a log must not get them.
+impl std::fmt::Debug for SignedIn {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SignedIn")
+            .field("return_to", &self.return_to)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The Apple and Firebase clients and the sign-ins waiting for Apple's callback.
@@ -349,9 +358,31 @@ mod tests {
     use super::jwt::test_key::es256_pem;
     use super::{
         APPLE_KEY_ID, APPLE_PRIVATE_KEY, APPLE_SERVICES_ID, APPLE_TEAM_ID, FIREBASE_API_KEY,
-        FIREBASE_PROJECT_ID, IdentityConfig,
+        FIREBASE_PROJECT_ID, IdentityConfig, ReturnTo, SignedIn,
     };
     use crate::oauth::ConfigError;
+
+    #[test]
+    fn debug_of_a_signed_in_person_hides_who_they_are() {
+        let signed = SignedIn {
+            firebase_uid: "uid-that-must-not-leak".to_owned(),
+            apple_sub: "apple-sub-that-must-not-leak".to_owned(),
+            email: Some("ada@example.com".to_owned()),
+            return_to: ReturnTo::Account,
+            apple_access: Some(secrecy::SecretString::from("token-that-must-not-leak")),
+            firebase_id_token: secrecy::SecretString::from("jwt-that-must-not-leak"),
+        };
+        let text = format!("{signed:?}");
+        for secret in [
+            "uid-that",
+            "apple-sub-that",
+            "ada@example.com",
+            "must-not-leak",
+        ] {
+            assert!(!text.contains(secret), "{secret} reached Debug: {text}");
+        }
+        assert!(text.contains("SignedIn"), "{text}");
+    }
 
     const SECRET_VALUE: &str = "value-that-must-not-leak";
 

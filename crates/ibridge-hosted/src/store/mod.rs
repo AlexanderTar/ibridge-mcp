@@ -1027,9 +1027,6 @@ async fn drop_expired(tx: &mut WriteTx, hit: &Hit) -> Result<(), StoreError> {
     }
 }
 
-/// The account's row id. A new account is refused once `cap` accounts exist; one that
-/// exists is always found. The count and the insert share one `BEGIN IMMEDIATE`
-/// transaction, so two sign-ups cannot both take the last place.
 /// What a sign-up under the cap may also do: link the account to a user.
 #[derive(Clone, Copy)]
 struct Admission {
@@ -1053,6 +1050,9 @@ async fn admit(
     Ok(account)
 }
 
+/// The account's row id. A new account is refused once `cap` accounts exist; one that
+/// exists is always found. The count and the insert share one `BEGIN IMMEDIATE`
+/// transaction, so two sign-ups cannot both take the last place.
 async fn upsert_account(
     tx: &mut WriteTx,
     apple_id: &AppleId,

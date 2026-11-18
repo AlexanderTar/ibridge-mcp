@@ -26,7 +26,6 @@ const DEFAULT_KEY_LIFETIME: u64 = 300;
 const MAX_KEY_LIFETIME: u64 = 24 * 60 * 60;
 
 /// A Firebase user whose ID token passed every check.
-#[derive(Debug)]
 pub struct FirebaseUser {
     /// Firebase's stable id for the user.
     pub uid: String,
@@ -36,6 +35,15 @@ pub struct FirebaseUser {
     pub email: Option<String>,
     /// The Firebase ID token, for deleting the user right after a fresh sign-in.
     pub id_token: SecretString,
+}
+
+// No derive: the uid, Apple's `sub` and the email identify a person, so a log must not get them.
+impl std::fmt::Debug for FirebaseUser {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FirebaseUser")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Google's signing keys and when to fetch them again.
@@ -304,9 +312,29 @@ mod tests {
     use secrecy::{ExposeSecret, SecretString};
     use serde_json::json;
 
-    use super::FirebaseClient;
+    use super::{FirebaseClient, FirebaseUser};
     use crate::identity::IdentityError;
     use crate::identity::fakes::{FAKE_NOW_SECS, FakeFirebase, identity_config};
+
+    #[test]
+    fn debug_of_a_firebase_user_hides_who_they_are() {
+        let user = FirebaseUser {
+            uid: "uid-that-must-not-leak".to_owned(),
+            apple_sub: "apple-sub-that-must-not-leak".to_owned(),
+            email: Some("ada@example.com".to_owned()),
+            id_token: SecretString::from("jwt-that-must-not-leak"),
+        };
+        let text = format!("{user:?}");
+        for secret in [
+            "uid-that",
+            "apple-sub-that",
+            "ada@example.com",
+            "must-not-leak",
+        ] {
+            assert!(!text.contains(secret), "{secret} reached Debug: {text}");
+        }
+        assert!(text.contains("FirebaseUser"), "{text}");
+    }
 
     const REQUEST_URI: &str = "https://ibridge.example/signin/apple/callback";
 

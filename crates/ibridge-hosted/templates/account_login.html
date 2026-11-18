@@ -3,9 +3,8 @@
 {% block body %}
 <h1 class="h2">Your account</h1>
 {% if identity %}
-<p>Sign in to see your plan, which apps and API keys can reach your iCloud, to revoke any of them, or to delete everything we store about you.</p>
+<p>Sign in to manage your iBridge account.</p>
 <a class="btn-apple" href="/signin/apple">Sign in with Apple</a>
-<p class="hint">We never see your Apple password. Your iCloud app-specific password is asked for separately, when you connect an app.</p>
 {% else %}
 <p>Sign in to see which apps and API keys can reach your iCloud, to revoke any of them, or to delete everything we store about you. Sign in the same way you connect an app: with your primary iCloud address and an app-specific password.</p>
 {% if let Some(message) = error %}<p class="alert" role="alert">{{ message }}</p>{% endif %}

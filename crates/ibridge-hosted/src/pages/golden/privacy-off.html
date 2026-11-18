@@ -12,7 +12,7 @@
 <li>Logs: one line per request with the method, the page address with any token removed, and the result. No passwords, tokens, request bodies, mail, events or contacts are written to them.</li>
 <li>In memory only: the network address and iCloud address of recent sign-in attempts, to rate-limit guessing. They are forgotten within 15 minutes. Our hosting platform may keep its own request logs, including network addresses, under its own retention.</li>
 </ul>
-<p>We do not store the content of your mail, calendar, reminders or contacts. We do not sell or share your data, and we run no advertising or analytics.</p>
+<p>We do not store the content of your mail, calendar or contacts. We do not sell or share your data, and we run no advertising or analytics.</p>
 
 <h2 class="h3">Why we cannot decrypt your password from storage</h2>
 <p>Your app-specific password is encrypted with a key made from the token your connected app holds (or the API key you hold). We keep the encrypted copy and a hash of the token, and nothing else. The key is not on the server, and there is no master key. A copy of our database together with every server setting cannot decrypt a stored password, and neither can we or anyone who reads our storage. Each connected app or key has its own encrypted copy.</p>

@@ -406,3 +406,52 @@ async fn the_landing_page_uses_the_step_and_copy_box_components() {
         "the connector address is in a copy box: {landing}"
     );
 }
+
+#[tokio::test]
+async fn no_page_mentions_reminders() {
+    let rig = Rig::identity_only().await;
+    let path = Harness::authorize_path(&[], &[]);
+    let authorize = rig.harness.get_authorize(&path, IP).await;
+    let mut pages = vec![("authorize with Apple", authorize)];
+    for page in ["/", "/privacy", "/terms", "/account"] {
+        pages.push((page, rig.get(page, None).await));
+    }
+    let h = harness(Access::MultiTenant).await;
+    pages.push((
+        "authorize",
+        h.get_authorize(&Harness::authorize_path(&[], &[]), IP).await,
+    ));
+    for (name, page) in pages {
+        let text = visible_text(&page.text);
+        assert!(
+            !text.to_lowercase().contains("reminder"),
+            "{name} still mentions Reminders: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_apple_steps_are_just_a_heading_and_the_button() {
+    let rig = Rig::identity_only().await;
+    let path = Harness::authorize_path(&[], &[]);
+    let authorize = visible_text(&rig.harness.get_authorize(&path, IP).await.text);
+    assert!(
+        !authorize.contains("We never see your Apple password"),
+        "the authorize step has no reassurance line: {authorize}"
+    );
+    assert!(!authorize.contains("Sign in with Apple to continue"), "{authorize}");
+    let account = visible_text(&rig.get("/account", None).await.text);
+    assert!(
+        !account.contains("We never see your Apple password")
+            && !account.contains("asked for separately"),
+        "the account step has no hint under the button: {account}"
+    );
+    assert!(
+        account.contains("Sign in to manage your iBridge account."),
+        "the account card is one short line: {account}"
+    );
+    assert!(
+        !account.contains("to see your plan"),
+        "the long line is gone: {account}"
+    );
+}

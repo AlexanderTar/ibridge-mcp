@@ -2,10 +2,9 @@
 {% block title %}Connect iCloud to {{ client_name }}{% endblock %}
 {% block body %}
 <h1 class="h2">Connect iCloud to {{ client_name }}</h1>
-<p><strong>{{ client_name }}</strong> is asking to use your iCloud Mail, Calendar, Reminders and Contacts. {% if signed_in %}Once it is connected, your browser goes back to{% else %}After you sign in, your browser goes back to{% endif %} <strong>{{ redirect_host }}</strong>.</p>
+<p><strong>{{ client_name }}</strong> is asking to use your iCloud Mail, Calendar and Contacts. {% if signed_in %}Once it is connected, your browser goes back to{% else %}After you sign in, your browser goes back to{% endif %} <strong>{{ redirect_host }}</strong>.</p>
 {% if let Some(message) = error %}<p class="alert" role="alert">{{ message }}</p>{% endif %}
 {% if let Some(pending) = sign_in %}
-<p>Sign in with Apple to continue. We never see your Apple password.</p>
 <a class="btn-apple" href="/signin/apple?next=authorize&amp;pending={{ pending }}">Sign in with Apple</a>
 {% else %}
 {% if let Some(plan) = plan %}

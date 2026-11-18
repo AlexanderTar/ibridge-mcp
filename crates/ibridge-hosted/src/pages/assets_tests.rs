@@ -194,7 +194,11 @@ fn the_logo_files_are_ignored_by_git_and_included_in_the_railway_upload() {
 async fn the_stylesheet_has_a_destructive_colour_and_greys_the_delete_button_until_confirmed() {
     let h = harness(Access::MultiTenant).await;
     let css = h.get_path(CSS, IP, None).await.text;
-    for token in ["--color-danger:", "--color-danger-hover:", "--color-on-danger:"] {
+    for token in [
+        "--color-danger:",
+        "--color-danger-hover:",
+        "--color-on-danger:",
+    ] {
         // Light, then dark under both the media query and a forced theme.
         assert!(
             css.matches(token).count() >= 3,

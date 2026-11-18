@@ -442,7 +442,8 @@ async fn no_page_mentions_reminders() {
     let h = harness(Access::MultiTenant).await;
     pages.push((
         "authorize",
-        h.get_authorize(&Harness::authorize_path(&[], &[]), IP).await,
+        h.get_authorize(&Harness::authorize_path(&[], &[]), IP)
+            .await,
     ));
     for (name, page) in pages {
         let text = visible_text(&page.text);
@@ -462,7 +463,10 @@ async fn the_apple_steps_are_just_a_heading_and_the_button() {
         !authorize.contains("We never see your Apple password"),
         "the authorize step has no reassurance line: {authorize}"
     );
-    assert!(!authorize.contains("Sign in with Apple to continue"), "{authorize}");
+    assert!(
+        !authorize.contains("Sign in with Apple to continue"),
+        "{authorize}"
+    );
     let account = visible_text(&rig.get("/account", None).await.text);
     assert!(
         !account.contains("We never see your Apple password")

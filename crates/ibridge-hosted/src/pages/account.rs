@@ -66,7 +66,7 @@ impl Principal {
     }
 
     /// The Sign in with Apple user, which a key or a connection links to its address.
-    fn user(&self) -> Option<UserId> {
+    pub(crate) fn user(&self) -> Option<UserId> {
         match self {
             Self::Password(_) => None,
             Self::User { id, .. } => Some(*id),
@@ -75,8 +75,8 @@ impl Principal {
 }
 
 #[derive(Debug, Clone)]
-struct Session {
-    principal: Principal,
+pub(crate) struct Session {
+    pub(crate) principal: Principal,
     csrf: String,
     until: Instant,
 }
@@ -465,14 +465,14 @@ async fn delete(
 }
 
 /// The signed-in session of this request, with its cookie token.
-fn session_of(shared: &Shared, headers: &HeaderMap) -> Option<(String, Session)> {
+pub(crate) fn session_of(shared: &Shared, headers: &HeaderMap) -> Option<(String, Session)> {
     let token = cookie_value(headers, SESSION_COOKIE)?;
     let session = shared.sessions.get(token, Instant::now())?;
     Some((token.to_owned(), session))
 }
 
 /// The session, when the form's token is the one the session was given.
-fn checked_session(
+pub(crate) fn checked_session(
     shared: &Shared,
     headers: &HeaderMap,
     from_form: &str,

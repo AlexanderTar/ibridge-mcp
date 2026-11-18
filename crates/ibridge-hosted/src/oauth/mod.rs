@@ -2,7 +2,7 @@
 
 //! OAuth 2.1 authorization server for the hosted MCP endpoint.
 
-mod authorize;
+pub(crate) mod authorize;
 mod check;
 mod cimd;
 mod client;

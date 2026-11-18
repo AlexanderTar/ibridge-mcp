@@ -10,7 +10,7 @@ use ring::hmac;
 use serde_json::Value;
 
 use super::grants_access;
-use super::stripe::{BillingError, Stripe};
+use super::stripe::{BillingError, Stripe, Subscription};
 use crate::store::{Store, StoreError, User, UserId};
 
 /// How far an event's timestamp may be from now, in seconds, either way.
@@ -168,12 +168,28 @@ pub(crate) async fn apply(
         return Ok(Applied::Ignored("the event is not about a known user"));
     };
     let fetched = stripe.subscription(subscription).await?;
+    let applied = adopt(store, &user, &fetched).await?;
+    if applied == Applied::Refreshed {
+        tracing::info!(user = %user.id, event = %event.id, status = %fetched.status, "subscription refreshed");
+    }
+    Ok(applied)
+}
+
+/// Stores `fetched`, Stripe's current word on a subscription, as `user`'s plan.
+///
+/// A subscription of another customer is never adopted. A late report of an old
+/// subscription must not push out the one the user has now: it is stored only when the
+/// user has none, it is the one stored, or it grants access.
+pub(crate) async fn adopt(
+    store: &Store,
+    user: &User,
+    fetched: &Subscription,
+) -> Result<Applied, StoreError> {
     if user.stripe_customer.as_deref() != Some(fetched.customer.as_str()) {
         return Ok(Applied::Ignored(
             "the subscription belongs to another customer",
         ));
     }
-    // A late event about an old subscription must not push out the one the user has now.
     let replaces = user
         .stripe_subscription
         .as_deref()
@@ -184,7 +200,6 @@ pub(crate) async fn apply(
     store
         .set_subscription(user.id, &fetched.id, &fetched.status, fetched.period_end)
         .await?;
-    tracing::info!(user = %user.id, event = %event.id, status = %fetched.status, "subscription refreshed");
     Ok(Applied::Refreshed)
 }
 

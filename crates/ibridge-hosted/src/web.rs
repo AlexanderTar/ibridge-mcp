@@ -118,3 +118,13 @@ pub(crate) fn tokens_match(left: &str, right: &str) -> bool {
 pub(crate) fn csrf_matches(headers: &HeaderMap, cookie: &str, from_form: &str) -> bool {
     cookie_value(headers, cookie).is_some_and(|value| tokens_match(value, from_form))
 }
+
+/// A 303 to `location`, never cached.
+pub(crate) fn see_other(location: &str) -> Response {
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    if let Ok(value) = HeaderValue::from_str(location) {
+        response.headers_mut().insert(header::LOCATION, value);
+    }
+    harden(&mut response);
+    response
+}

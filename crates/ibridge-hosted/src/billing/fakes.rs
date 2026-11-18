@@ -163,6 +163,20 @@ impl FakeStripe {
         lock(&self.state.subscriptions).insert(id.to_owned(), object);
     }
 
+    /// Stores a Checkout Session as Stripe would hold it after a payment: complete, for
+    /// `customer` and `reference`, with `subscription` made. For tests of a session that
+    /// was not made through this server's checkout.
+    pub fn put_session(&self, id: &str, customer: &str, reference: &str, subscription: &str) {
+        let mut object = fixture(SESSION_MANAGED);
+        object["id"] = json!(id);
+        object["customer"] = json!(customer);
+        object["client_reference_id"] = json!(reference);
+        object["status"] = json!("complete");
+        object["payment_status"] = json!("paid");
+        object["subscription"] = json!(subscription);
+        lock(&self.state.sessions).insert(id.to_owned(), object);
+    }
+
     /// Marks a Checkout Session paid and attached to `subscription`, as it is once the person pays.
     ///
     /// # Panics

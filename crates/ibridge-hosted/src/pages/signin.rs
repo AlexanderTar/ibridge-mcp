@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use axum::extract::{DefaultBodyLimit, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Form, Router};
@@ -19,7 +19,7 @@ use serde::Deserialize;
 use super::account::{Principal, SESSION_COOKIE, SESSION_SECS};
 use crate::identity::{BINDER_COOKIE, CallbackForm, IdentityError, ReturnTo, SignedIn};
 use crate::oauth::{Peer, Shared};
-use crate::web::{cookie_value, harden, message, set_cookie, set_cookie_same_site};
+use crate::web::{cookie_value, message, see_other, set_cookie, set_cookie_same_site};
 
 const MAX_FORM: usize = 8 * 1024;
 /// How long the binder cookie lives: as long as the pending sign-in.
@@ -203,16 +203,6 @@ fn failed(error: IdentityError) -> Response {
             )
         }
     }
-}
-
-/// A 303 to `location`, never cached.
-fn see_other(location: &str) -> Response {
-    let mut response = StatusCode::SEE_OTHER.into_response();
-    if let Ok(value) = HeaderValue::from_str(location) {
-        response.headers_mut().insert(header::LOCATION, value);
-    }
-    harden(&mut response);
-    response
 }
 
 /// Whether `id` looks like a pending id this server made: base64url, and not long.

@@ -5,17 +5,24 @@
 //! The routes exist only when the billing settings are present.
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::post;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Form, Router};
 use secrecy::ExposeSecret;
+use serde::Deserialize;
 
-use super::webhook;
-use crate::oauth::Shared;
+use super::stripe::BillingError;
+use super::{Access, Plan, access, webhook};
+use crate::oauth::pending::PENDING_COOKIE;
+use crate::oauth::{Peer, Shared};
+use crate::pages::account::{Session, checked_session, session_of};
+use crate::store::{User, UserId};
+use crate::web::{cookie_value, message, see_other};
 
 /// The largest event body read. Stripe's events are a few kilobytes.
 const MAX_EVENT: usize = 256 * 1024;
@@ -25,9 +32,305 @@ pub(crate) fn routes(shared: &Arc<Shared>) -> Router {
         return Router::new();
     }
     Router::new()
+        .route("/billing/checkout", post(checkout))
+        .route("/billing/return", get(back))
+        .route("/billing/portal", post(portal))
         .route("/billing/webhook", post(receive))
         .layer(DefaultBodyLimit::max(MAX_EVENT))
         .with_state(Arc::clone(shared))
+}
+
+const EXPIRED: &str = "Go to your account page and sign in again.";
+const STRIPE_TROUBLE: &str = "We could not reach our payment provider. Try again in a moment.";
+
+#[derive(Deserialize)]
+struct CheckoutForm {
+    #[serde(default)]
+    csrf: String,
+    plan: String,
+    pending: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PortalForm {
+    #[serde(default)]
+    csrf: String,
+}
+
+#[derive(Deserialize)]
+struct Back {
+    session_id: Option<String>,
+    pending: Option<String>,
+}
+
+fn too_many() -> Response {
+    message(
+        StatusCode::TOO_MANY_REQUESTS,
+        "Too many requests",
+        "Wait a minute, then try again.",
+    )
+}
+
+fn expired() -> Response {
+    message(StatusCode::FORBIDDEN, "This page expired", EXPIRED)
+}
+
+/// The signed-in user behind a request, or the page to answer with.
+async fn user_of(shared: &Shared, session: Option<Session>) -> Result<User, Box<Response>> {
+    let Some(id) = session.and_then(|session| session.principal.user()) else {
+        return Err(Box::new(expired()));
+    };
+    match shared.store.user(id).await {
+        Ok(Some(user)) => Ok(user),
+        Ok(None) => Err(Box::new(expired())),
+        Err(error) => {
+            tracing::error!(%error, "could not read a signed-in user");
+            Err(Box::new(message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Something went wrong",
+                "Something went wrong on our side. Try again in a moment.",
+            )))
+        }
+    }
+}
+
+/// The pending `/authorize` id the request names, when this browser stored it.
+///
+/// `Ok(None)` when none is named; the refusal page when one is named that this browser
+/// did not store (or that expired), so another person's request is never resumed or leaked.
+fn owned_pending(
+    shared: &Shared,
+    headers: &HeaderMap,
+    named: Option<&str>,
+) -> Result<Option<String>, Box<Response>> {
+    let Some(id) = named.filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+    let owned = cookie_value(headers, PENDING_COOKIE)
+        .and_then(|owner| shared.pending_authorize.get(id, owner, Instant::now()))
+        .is_some();
+    if owned {
+        Ok(Some(id.to_owned()))
+    } else {
+        Err(Box::new(message(
+            StatusCode::FORBIDDEN,
+            "This page expired",
+            "This page expired. Go back to the app and start the sign-in again.",
+        )))
+    }
+}
+
+fn encoded(id: &str) -> String {
+    url::form_urlencoded::byte_serialize(id.as_bytes()).collect()
+}
+
+/// Sends a signed-in user without a plan to Stripe Checkout.
+async fn checkout(
+    State(shared): State<Arc<Shared>>,
+    peer: Peer,
+    headers: HeaderMap,
+    Form(form): Form<CheckoutForm>,
+) -> Response {
+    let Some(billing) = shared.billing.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !shared.lookups.allow(&peer.0, Instant::now()) {
+        return too_many();
+    }
+    let session = checked_session(&shared, &headers, &form.csrf).map(|(_, session)| session);
+    let user = match user_of(&shared, session).await {
+        Ok(user) => user,
+        Err(page) => return *page,
+    };
+    if access(&user) == Access::Allowed {
+        return message(
+            StatusCode::CONFLICT,
+            "You already have a plan",
+            "Your plan is active. Open your account page to manage it.",
+        );
+    }
+    let Some(plan) = Plan::from_form(form.plan.trim()) else {
+        return message(
+            StatusCode::BAD_REQUEST,
+            "Choose a plan",
+            "Go back and choose monthly or yearly.",
+        );
+    };
+    let pending = match owned_pending(&shared, &headers, form.pending.as_deref()) {
+        Ok(pending) => pending,
+        Err(page) => return *page,
+    };
+    // The customer is made, and stored, before the session, so a person who pays has one
+    // we know even if the return page is never reached.
+    let customer = match billing.stripe.ensure_customer(&user).await {
+        Ok(customer) => customer,
+        Err(error) => return stripe_failed(user.id, error),
+    };
+    if user.stripe_customer.is_none()
+        && let Err(error) = shared.store.set_customer(user.id, &customer).await
+    {
+        tracing::error!(user = %user.id, %error, "could not store a Stripe customer");
+        return message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong",
+            "Something went wrong on our side. Try again in a moment.",
+        );
+    }
+    let user = User {
+        stripe_customer: Some(customer),
+        ..user
+    };
+    let (success, cancel) = match &pending {
+        Some(id) => (
+            shared.config.url(&format!(
+                "/billing/return?session_id={{CHECKOUT_SESSION_ID}}&pending={}",
+                encoded(id)
+            )),
+            shared
+                .config
+                .url(&format!("/authorize/resume?pending={}", encoded(id))),
+        ),
+        None => (
+            shared
+                .config
+                .url("/billing/return?session_id={CHECKOUT_SESSION_ID}"),
+            shared.config.url("/account"),
+        ),
+    };
+    match billing
+        .stripe
+        .checkout(&user, plan, &success, &cancel)
+        .await
+    {
+        Ok(url) => see_other(&url),
+        Err(error) => stripe_failed(user.id, error),
+    }
+}
+
+fn stripe_failed(user: UserId, error: BillingError) -> Response {
+    tracing::error!(%user, %error, "a Stripe call failed");
+    message(
+        StatusCode::BAD_GATEWAY,
+        "Payment is not available",
+        STRIPE_TROUBLE,
+    )
+}
+
+/// Where Stripe sends the person after paying: reads the Checkout Session from Stripe,
+/// stores the subscription it made, and goes on. It does not wait for the webhook.
+async fn back(
+    State(shared): State<Arc<Shared>>,
+    peer: Peer,
+    headers: HeaderMap,
+    Query(query): Query<Back>,
+) -> Response {
+    let Some(billing) = shared.billing.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !shared.lookups.allow(&peer.0, Instant::now()) {
+        return too_many();
+    }
+    let session = session_of(&shared, &headers).map(|(_, session)| session);
+    let user = match user_of(&shared, session).await {
+        Ok(user) => user,
+        Err(page) => return *page,
+    };
+    // Local checks first: nothing is asked of Stripe for a request that is not this
+    // browser's own.
+    let pending = match owned_pending(&shared, &headers, query.pending.as_deref()) {
+        Ok(pending) => pending,
+        Err(page) => return *page,
+    };
+    let Some(session_id) = query.session_id.as_deref().filter(|id| !id.is_empty()) else {
+        return not_valid();
+    };
+    let checkout = match billing.stripe.checkout_session(session_id).await {
+        Ok(checkout) => checkout,
+        Err(BillingError::BadId) => return not_valid(),
+        Err(error) => return stripe_failed(user.id, error),
+    };
+    let mine = user.stripe_customer.is_some()
+        && checkout.customer == user.stripe_customer
+        && checkout.client_reference_id.as_deref() == Some(user.id.get().to_string().as_str());
+    if !mine {
+        tracing::warn!(user = %user.id, "a checkout return named another customer's session");
+        return message(
+            StatusCode::FORBIDDEN,
+            "Cannot confirm this payment",
+            "This payment does not belong to your account.",
+        );
+    }
+    let Some(subscription) = checkout.subscription else {
+        return message(
+            StatusCode::BAD_REQUEST,
+            "Payment not finished",
+            "Your payment was not completed. Go back and try again.",
+        );
+    };
+    let fetched = match billing.stripe.subscription(&subscription).await {
+        Ok(fetched) => fetched,
+        Err(error) => return stripe_failed(user.id, error),
+    };
+    match webhook::adopt(&shared.store, &user, &fetched).await {
+        Ok(applied) => {
+            tracing::info!(user = %user.id, status = %fetched.status, ?applied, "checkout return");
+        }
+        Err(error) => {
+            tracing::error!(user = %user.id, %error, "could not store a subscription");
+            return message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Something went wrong",
+                "Something went wrong on our side. Try again in a moment.",
+            );
+        }
+    }
+    match pending {
+        Some(id) => see_other(&format!("/authorize/resume?pending={}", encoded(&id))),
+        None => see_other("/account"),
+    }
+}
+
+fn not_valid() -> Response {
+    message(
+        StatusCode::BAD_REQUEST,
+        "Cannot confirm this payment",
+        "This payment link is not valid. Open your account page to see your plan.",
+    )
+}
+
+/// Sends a user with a Stripe customer to the Customer Portal.
+async fn portal(
+    State(shared): State<Arc<Shared>>,
+    peer: Peer,
+    headers: HeaderMap,
+    Form(form): Form<PortalForm>,
+) -> Response {
+    let Some(billing) = shared.billing.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !shared.lookups.allow(&peer.0, Instant::now()) {
+        return too_many();
+    }
+    let session = checked_session(&shared, &headers, &form.csrf).map(|(_, session)| session);
+    let user = match user_of(&shared, session).await {
+        Ok(user) => user,
+        Err(page) => return *page,
+    };
+    let Some(customer) = user.stripe_customer.as_deref() else {
+        return message(
+            StatusCode::BAD_REQUEST,
+            "No billing yet",
+            "You have no subscription to manage yet.",
+        );
+    };
+    match billing
+        .stripe
+        .portal(customer, &shared.config.url("/account"))
+        .await
+    {
+        Ok(url) => see_other(&url),
+        Err(error) => stripe_failed(user.id, error),
+    }
 }
 
 /// Stripe's webhook. The answer says only whether to send the event again.
@@ -87,7 +390,8 @@ async fn receive(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: By
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::Arc;
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -98,9 +402,13 @@ mod tests {
     use crate::billing::{Billing, BillingConfig, TaxMode};
     use crate::identity::Identity;
     use crate::identity::fakes::{FakeApple, FakeFirebase, identity_config};
+    use crate::oauth::Shared;
+    use crate::oauth::authorize::Params;
+    use crate::oauth::pending::PENDING_COOKIE;
     use crate::oauth::test_support::{
-        Harness, PUBLIC, Reply, harness_billing, harness_with_shared,
+        CLIENT_ID, Harness, PUBLIC, Reply, harness_billing, harness_with_shared,
     };
+    use crate::pages::account::{Principal, SESSION_COOKIE};
     use crate::store::{Store, User};
 
     const WEBHOOK_SECRET: &str = "whsec_route_tests";
@@ -131,6 +439,7 @@ mod tests {
 
     pub(crate) struct Rig {
         pub(crate) harness: Harness,
+        pub(crate) shared: Arc<Shared>,
         pub(crate) stripe: FakeStripe,
         pub(crate) user: User,
         _apple: FakeApple,
@@ -159,9 +468,10 @@ mod tests {
             .await
             .expect("customer");
         let user = store.user(user.id).await.expect("read").expect("user");
-        let (harness, _shared) = harness_billing(identity, billing, store).await;
+        let (harness, shared) = harness_billing(identity, billing, store).await;
         Rig {
             harness,
+            shared,
             stripe,
             user,
             _apple: apple,
@@ -477,5 +787,555 @@ mod tests {
             .expect("request");
         let reply = harness.send(request, IP).await;
         assert_eq!(reply.status, StatusCode::NOT_FOUND);
+    }
+
+    /// A signed-in browser: its cookies and the form token its session was given.
+    struct Browser {
+        cookie: String,
+        csrf: String,
+    }
+
+    const OWNER: &str = "pending-owner-cookie-a";
+
+    fn stored_params() -> Params {
+        serde_json::from_value(serde_json::json!({ "client_id": CLIENT_ID, "state": "xyz" }))
+            .expect("params")
+    }
+
+    impl Rig {
+        fn browser(&self, user: &User, owner: Option<&str>) -> Browser {
+            let principal = Principal::User {
+                id: user.id,
+                account: None,
+            };
+            let (token, csrf) = self
+                .shared
+                .sessions
+                .start(principal, Instant::now())
+                .expect("a session");
+            let cookie = match owner {
+                Some(owner) => format!("{SESSION_COOKIE}={token}; {PENDING_COOKIE}={owner}"),
+                None => format!("{SESSION_COOKIE}={token}"),
+            };
+            Browser { cookie, csrf }
+        }
+
+        fn pending(&self, owner: &str) -> String {
+            self.shared
+                .pending_authorize
+                .put(stored_params(), owner, Instant::now())
+                .expect("stored")
+        }
+
+        async fn post(
+            &self,
+            path: &str,
+            browser: Option<&Browser>,
+            fields: &[(&str, &str)],
+        ) -> Reply {
+            let mut all: Vec<(&str, &str)> = Vec::new();
+            if let Some(browser) = browser {
+                all.push(("csrf", browser.csrf.as_str()));
+            }
+            all.extend_from_slice(fields);
+            self.harness
+                .post_path(
+                    path,
+                    IP,
+                    browser.map(|browser| browser.cookie.as_str()),
+                    &all,
+                )
+                .await
+        }
+
+        async fn get(&self, path: &str, browser: Option<&Browser>) -> Reply {
+            self.harness
+                .get_path(path, IP, browser.map(|browser| browser.cookie.as_str()))
+                .await
+        }
+
+        /// A second user with their own Stripe customer.
+        async fn other_user(&self) -> User {
+            let other = self
+                .harness
+                .store
+                .upsert_user("uid-2", "sub-2", None)
+                .await
+                .expect("user");
+            self.harness
+                .store
+                .set_customer(other.id, "cus_other")
+                .await
+                .expect("customer");
+            self.harness
+                .store
+                .user(other.id)
+                .await
+                .expect("read")
+                .expect("user")
+        }
+    }
+
+    fn location(reply: &Reply) -> String {
+        reply
+            .headers
+            .get("location")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_else(|| panic!("a Location header on {}: {}", reply.status, reply.text))
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn checkout_refused_when_access_already_allowed() {
+        let rig = rig().await;
+        for (status, complimentary) in [
+            (Some("active"), false),
+            (Some("past_due"), false),
+            (None, true),
+        ] {
+            if let Some(status) = status {
+                rig.harness
+                    .store
+                    .set_subscription(rig.user.id, "sub_1", status, Some(1))
+                    .await
+                    .expect("set");
+            }
+            rig.harness
+                .store
+                .set_complimentary(rig.user.id, complimentary)
+                .await
+                .expect("set");
+            let browser = rig.browser(&rig.user, None);
+            let reply = rig
+                .post("/billing/checkout", Some(&browser), &[("plan", "monthly")])
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::CONFLICT,
+                "{status:?}/{complimentary}: {}",
+                reply.text
+            );
+        }
+        assert!(
+            rig.stripe.requests().is_empty(),
+            "nothing was created at Stripe"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkout_creates_customer_then_session_and_redirects() {
+        let rig = rig().await;
+        let fresh = rig
+            .harness
+            .store
+            .upsert_user("uid-9", "sub-9", Some("eve@example.com"))
+            .await
+            .expect("user");
+        assert_eq!(fresh.stripe_customer, None);
+        let pending = rig.pending(OWNER);
+        let browser = rig.browser(&fresh, Some(OWNER));
+        let reply = rig
+            .post(
+                "/billing/checkout",
+                Some(&browser),
+                &[("plan", "yearly"), ("pending", pending.as_str())],
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text);
+        let session = rig.stripe.last_session().expect("a session");
+        assert_eq!(
+            location(&reply),
+            format!("https://checkout.stripe.test/c/pay/{session}")
+        );
+
+        let order: Vec<String> = rig
+            .stripe
+            .requests()
+            .iter()
+            .map(|request| format!("{} {}", request.method, request.path))
+            .collect();
+        assert_eq!(
+            order,
+            ["POST /v1/customers", "POST /v1/checkout/sessions"],
+            "customer first"
+        );
+        let stored = rig
+            .harness
+            .store
+            .user(fresh.id)
+            .await
+            .expect("read")
+            .expect("user");
+        let customer = stored
+            .stripe_customer
+            .clone()
+            .expect("the customer id was stored");
+        let sent = &rig.stripe.requests_to("POST", "/v1/checkout/sessions")[0];
+        assert_eq!(sent.field("customer"), Some(customer.as_str()));
+        assert_eq!(sent.field("line_items[0][price]"), Some("price_year"));
+        assert_eq!(
+            sent.field("success_url").map(str::to_owned),
+            Some(format!(
+                "{PUBLIC}/billing/return?session_id={{CHECKOUT_SESSION_ID}}&pending={pending}"
+            ))
+        );
+        assert_eq!(
+            sent.field("cancel_url").map(str::to_owned),
+            Some(format!("{PUBLIC}/authorize/resume?pending={pending}"))
+        );
+
+        // Without a pending request the person comes back to the account page.
+        let plain = rig.browser(&stored, None);
+        let reply = rig
+            .post("/billing/checkout", Some(&plain), &[("plan", "monthly")])
+            .await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text);
+        let second = &rig.stripe.requests_to("POST", "/v1/checkout/sessions")[1];
+        assert_eq!(
+            second.field("cancel_url"),
+            Some(format!("{PUBLIC}/account").as_str())
+        );
+        assert_eq!(
+            second.field("success_url").map(str::to_owned),
+            Some(format!(
+                "{PUBLIC}/billing/return?session_id={{CHECKOUT_SESSION_ID}}"
+            ))
+        );
+        assert_eq!(
+            rig.stripe.requests_to("POST", "/v1/customers").len(),
+            1,
+            "the customer is made once"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkout_requires_session_and_csrf() {
+        let rig = rig().await;
+        let browser = rig.browser(&rig.user, None);
+        let forged = Browser {
+            cookie: browser.cookie.clone(),
+            csrf: "forged".to_owned(),
+        };
+        let no_session = Browser {
+            cookie: "unrelated=1".to_owned(),
+            csrf: browser.csrf.clone(),
+        };
+        for (what, browser) in [
+            ("forged csrf", Some(&forged)),
+            ("no session", Some(&no_session)),
+            ("no cookie", None),
+        ] {
+            let reply = rig
+                .post("/billing/checkout", browser, &[("plan", "monthly")])
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::FORBIDDEN,
+                "{what}: {}",
+                reply.text
+            );
+        }
+        let portal = rig.post("/billing/portal", Some(&forged), &[]).await;
+        assert_eq!(portal.status, StatusCode::FORBIDDEN, "{}", portal.text);
+        // A GET never starts a checkout.
+        assert_eq!(
+            rig.get("/billing/checkout", Some(&browser)).await.status,
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        // A password session has no user to bill.
+        let (token, csrf) = rig
+            .shared
+            .sessions
+            .start(
+                Principal::Password("ada@icloud.com".try_into().expect("address")),
+                Instant::now(),
+            )
+            .expect("session");
+        let password = Browser {
+            cookie: format!("{SESSION_COOKIE}={token}"),
+            csrf,
+        };
+        let reply = rig
+            .post("/billing/checkout", Some(&password), &[("plan", "monthly")])
+            .await;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.text);
+        assert!(rig.stripe.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn checkout_refuses_an_unknown_plan_and_a_pending_id_it_does_not_own() {
+        let rig = rig().await;
+        let pending = rig.pending("someone-elses-owner-cookie");
+        let browser = rig.browser(&rig.user, Some(OWNER));
+        let unknown = rig
+            .post("/billing/checkout", Some(&browser), &[("plan", "lifetime")])
+            .await;
+        assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "{}", unknown.text);
+        let foreign = rig
+            .post(
+                "/billing/checkout",
+                Some(&browser),
+                &[("plan", "monthly"), ("pending", pending.as_str())],
+            )
+            .await;
+        assert_eq!(foreign.status, StatusCode::FORBIDDEN, "{}", foreign.text);
+        let missing = rig
+            .post(
+                "/billing/checkout",
+                Some(&browser),
+                &[("plan", "monthly"), ("pending", "nope")],
+            )
+            .await;
+        assert_eq!(missing.status, StatusCode::FORBIDDEN, "{}", missing.text);
+        assert!(
+            rig.stripe.requests().is_empty(),
+            "a refused checkout creates nothing at Stripe"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkout_failure_at_stripe_is_a_page_not_a_crash() {
+        let rig = rig().await;
+        rig.stripe.refuse_with(StatusCode::SERVICE_UNAVAILABLE);
+        let browser = rig.browser(&rig.user, None);
+        let reply = rig
+            .post("/billing/checkout", Some(&browser), &[("plan", "monthly")])
+            .await;
+        assert_eq!(reply.status, StatusCode::BAD_GATEWAY, "{}", reply.text);
+        assert!(!reply.text.contains("sk_"), "no key in the page");
+    }
+
+    /// Starts a checkout as `user` and returns the Checkout Session id.
+    async fn started(rig: &Rig, user: &User, owner: Option<&str>, pending: Option<&str>) -> String {
+        let browser = rig.browser(user, owner);
+        let mut fields = vec![("plan", "monthly")];
+        if let Some(pending) = pending {
+            fields.push(("pending", pending));
+        }
+        let reply = rig.post("/billing/checkout", Some(&browser), &fields).await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text);
+        rig.stripe.last_session().expect("a session")
+    }
+
+    #[tokio::test]
+    async fn return_reads_session_stores_status_and_resumes_pending_authorize() {
+        let rig = rig().await;
+        let pending = rig.pending(OWNER);
+        let session = started(&rig, &rig.user, Some(OWNER), Some(&pending)).await;
+        // The person pays; no webhook is delivered.
+        rig.stripe.complete_session(&session, SUBSCRIPTION);
+        rig.stripe
+            .put_subscription(SUBSCRIPTION, CUSTOMER, "active", 1_900_000_444);
+        let browser = rig.browser(&rig.user, Some(OWNER));
+        let reply = rig
+            .get(
+                &format!("/billing/return?session_id={session}&pending={pending}"),
+                Some(&browser),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text);
+        assert_eq!(
+            location(&reply),
+            format!("/authorize/resume?pending={pending}")
+        );
+        let user = rig.stored().await;
+        assert_eq!(user.status.as_deref(), Some("active"));
+        assert_eq!(user.stripe_subscription.as_deref(), Some(SUBSCRIPTION));
+        assert_eq!(user.period_end, Some(1_900_000_444));
+
+        // Without a pending request it goes to the account page.
+        let plain = rig
+            .get(
+                &format!("/billing/return?session_id={session}"),
+                Some(&browser),
+            )
+            .await;
+        assert_eq!(plain.status, StatusCode::SEE_OTHER, "{}", plain.text);
+        assert_eq!(location(&plain), "/account");
+    }
+
+    #[tokio::test]
+    async fn return_before_payment_stores_nothing() {
+        let rig = rig().await;
+        let session = started(&rig, &rig.user, None, None).await;
+        let browser = rig.browser(&rig.user, None);
+        let reply = rig
+            .get(
+                &format!("/billing/return?session_id={session}"),
+                Some(&browser),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.text);
+        assert_eq!(rig.stored().await.status, None);
+        assert!(
+            rig.stripe
+                .requests_to("GET", &format!("/v1/subscriptions/{SUBSCRIPTION}"))
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn return_session_of_other_customer_refused() {
+        let rig = rig().await;
+        let other = rig.other_user().await;
+        let theirs = started(&rig, &other, None, None).await;
+        rig.stripe.complete_session(&theirs, SUBSCRIPTION);
+        rig.stripe
+            .put_subscription(SUBSCRIPTION, "cus_other", "active", 1_900_000_444);
+        let browser = rig.browser(&rig.user, None);
+        let reply = rig
+            .get(
+                &format!("/billing/return?session_id={theirs}"),
+                Some(&browser),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.text);
+        assert_eq!(
+            rig.stored().await.status,
+            None,
+            "the signed-in user got nothing"
+        );
+        let owner = rig
+            .harness
+            .store
+            .user(other.id)
+            .await
+            .expect("read")
+            .expect("user");
+        assert_eq!(
+            owner.status, None,
+            "and the session's owner was not changed by someone else"
+        );
+        assert!(
+            rig.stripe
+                .requests_to("GET", &format!("/v1/subscriptions/{SUBSCRIPTION}"))
+                .is_empty(),
+            "the subscription is not even fetched"
+        );
+    }
+
+    #[tokio::test]
+    async fn return_session_for_another_user_id_refused_even_with_the_right_customer() {
+        let rig = rig().await;
+        rig.stripe
+            .put_session("cs_test_crafted", CUSTOMER, "999", SUBSCRIPTION);
+        rig.stripe
+            .put_subscription(SUBSCRIPTION, CUSTOMER, "active", 1_900_000_444);
+        let browser = rig.browser(&rig.user, None);
+        let reply = rig
+            .get("/billing/return?session_id=cs_test_crafted", Some(&browser))
+            .await;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.text);
+        assert_eq!(rig.stored().await.status, None);
+        // The same session for this user id is accepted.
+        rig.stripe.put_session(
+            "cs_test_mine",
+            CUSTOMER,
+            &rig.user.id.get().to_string(),
+            SUBSCRIPTION,
+        );
+        let reply = rig
+            .get("/billing/return?session_id=cs_test_mine", Some(&browser))
+            .await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text);
+        assert_eq!(rig.stored().await.status.as_deref(), Some("active"));
+    }
+
+    #[tokio::test]
+    async fn return_pending_id_of_other_session_refused() {
+        let rig = rig().await;
+        let theirs = rig.pending("another-browsers-owner-cookie");
+        let session = started(&rig, &rig.user, None, None).await;
+        rig.stripe.complete_session(&session, SUBSCRIPTION);
+        rig.stripe
+            .put_subscription(SUBSCRIPTION, CUSTOMER, "active", 1_900_000_444);
+        let calls = rig.stripe.requests().len();
+        for owner in [Some(OWNER), None] {
+            let browser = rig.browser(&rig.user, owner);
+            let reply = rig
+                .get(
+                    &format!("/billing/return?session_id={session}&pending={theirs}"),
+                    Some(&browser),
+                )
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::FORBIDDEN,
+                "{owner:?}: {}",
+                reply.text
+            );
+        }
+        assert_eq!(rig.stored().await.status, None, "nothing was stored");
+        assert_eq!(rig.stripe.requests().len(), calls, "Stripe was not asked");
+    }
+
+    #[tokio::test]
+    async fn return_needs_a_signed_in_user_and_a_real_session_id() {
+        let rig = rig().await;
+        let anonymous = rig.get("/billing/return?session_id=cs_test_x", None).await;
+        assert_eq!(
+            anonymous.status,
+            StatusCode::FORBIDDEN,
+            "{}",
+            anonymous.text
+        );
+        let browser = rig.browser(&rig.user, None);
+        for bad in ["", "x/../y", "cs test"] {
+            let encoded: String = url::form_urlencoded::byte_serialize(bad.as_bytes()).collect();
+            let reply = rig
+                .get(
+                    &format!("/billing/return?session_id={encoded}"),
+                    Some(&browser),
+                )
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::BAD_REQUEST,
+                "{bad:?}: {}",
+                reply.text
+            );
+        }
+        let missing = rig.get("/billing/return", Some(&browser)).await;
+        assert_eq!(missing.status, StatusCode::BAD_REQUEST, "{}", missing.text);
+        assert!(rig.stripe.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn portal_redirects_for_customer() {
+        let rig = rig().await;
+        let browser = rig.browser(&rig.user, None);
+        let reply = rig.post("/billing/portal", Some(&browser), &[]).await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text);
+        assert!(
+            location(&reply).starts_with("https://billing.stripe.test/p/session/bps_"),
+            "{}",
+            location(&reply)
+        );
+        let sent = &rig
+            .stripe
+            .requests_to("POST", "/v1/billing_portal/sessions")[0];
+        assert_eq!(sent.field("customer"), Some(CUSTOMER));
+        assert_eq!(
+            sent.field("return_url").map(str::to_owned),
+            Some(format!("{PUBLIC}/account"))
+        );
+    }
+
+    #[tokio::test]
+    async fn portal_without_customer_refused() {
+        let rig = rig().await;
+        let fresh = rig
+            .harness
+            .store
+            .upsert_user("uid-9", "sub-9", None)
+            .await
+            .expect("user");
+        let browser = rig.browser(&fresh, None);
+        let reply = rig.post("/billing/portal", Some(&browser), &[]).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.text);
+        assert!(
+            rig.stripe.requests().is_empty(),
+            "no customer is made just to open a portal"
+        );
     }
 }

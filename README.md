@@ -72,3 +72,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/local-development.md](docs/local-d
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+<!-- mcp-name: io.github.AlexanderTar/ibridge -->

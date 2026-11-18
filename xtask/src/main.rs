@@ -7,6 +7,7 @@ mod mcpb;
 mod record_calendar;
 mod record_contacts;
 mod record_fixtures;
+mod registry;
 mod scrub;
 
 use std::env;
@@ -27,11 +28,15 @@ fn main() -> ExitCode {
             Ok(bundles) => report_paths(&bundles),
             Err(error) => fail(&format!("mcpb: {error}")),
         },
+        Some("registry") => match registry::run(&headers_root(), args) {
+            Ok(message) => report_message(&message),
+            Err(error) => fail(&format!("registry: {error}")),
+        },
         Some("live-hosted-check") => run_live_hosted_check(args),
         Some("schema-snapshot") => ExitCode::from(2),
         Some(command) => fail(&format!("unknown command: {command}")),
         None => fail(
-            "usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb|live-hosted-check>",
+            "usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb|registry|live-hosted-check>",
         ),
     }
 }
@@ -221,6 +226,15 @@ fn report_paths(paths: &[PathBuf]) -> ExitCode {
     for path in paths {
         eprintln!("{}", path.display());
     }
+    ExitCode::SUCCESS
+}
+
+#[expect(
+    clippy::print_stderr,
+    reason = "xtask reports the outcome of a check on stderr"
+)]
+fn report_message(message: &str) -> ExitCode {
+    eprintln!("{message}");
     ExitCode::SUCCESS
 }
 

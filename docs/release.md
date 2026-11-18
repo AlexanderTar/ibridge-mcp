@@ -14,7 +14,7 @@ Nothing is published until you push a version tag. The release workflow (`.githu
 
 ## Cutting a release
 
-1. Set `version` under `[workspace.package]` in `Cargo.toml`, run `cargo check`, and commit the `Cargo.lock` change.
+1. Set `version` under `[workspace.package]` in `Cargo.toml`, run `cargo check`, and commit the `Cargo.lock` change. Set the same version in `server.json`: its `version`, the version in each `.mcpb` URL and the image tag. Reset every `fileSha256` to 64 zeros. `cargo xtask registry check` fails until they match.
 2. Run `dist plan` and the commands in `AGENTS.md`.
 3. Tag the commit and push the tag: `git tag v0.2.0 && git push origin v0.2.0`. The tag must match the crate version, or `plan` fails.
 
@@ -50,6 +50,20 @@ The first `docker-image` run creates `ghcr.io/alexandertar/ibridge` as a private
 4. Check from a machine that is not logged in to ghcr.io: `docker logout ghcr.io; docker pull ghcr.io/alexandertar/ibridge:<version>`.
 
 Later tags reuse the same package, so this is a one-time step. The visibility is a package setting, not part of `release.yml`, so the workflow cannot do it for you.
+
+## Listing in the official MCP Registry
+
+`server.json` at the repository root is the listing for the [official MCP Registry](https://registry.modelcontextprotocol.io): the name `io.github.AlexanderTar/ibridge`, the five `.mcpb` bundles on the GitHub release, the `ghcr.io/alexandertar/ibridge` image and the hosted connector at `https://mcp.ibridge.fyi/mcp`. `cargo xtask registry check` validates it against the registry's JSON schema (a copy is in `xtask/schemas/server.schema.json`; it runs in the test suite on every pull request) and checks that the `LABEL io.modelcontextprotocol.server.name` line in the `Dockerfile` and the `mcp-name:` line in `README.md` carry the same name, that the version matches the crate version, and that the bundle URLs and image tag match the release.
+
+The `fileSha256` of each bundle is `000…0` (64 zeros) until a release exists, because the schema needs 64 hex digits and the bundle does not exist yet. Fill them after the release, then publish:
+
+1. Wait for the `build-mcpb` job and for the `docker-image` job, and make the image public (above).
+2. Download the bundles: `gh release download v0.1.0 --repo AlexanderTar/icloud-mcp --pattern '*.mcpb' --dir /tmp/ibridge-mcpb`.
+3. Write the hashes into `server.json`: `cargo xtask registry fill --mcpb /tmp/ibridge-mcpb`.
+4. Check that none is left: `cargo xtask registry check --release`. Commit the change and merge it. Publish from the merged commit.
+5. Install `mcp-publisher` ([quickstart](https://modelcontextprotocol.io/registry/quickstart)), then `mcp-publisher validate`, `mcp-publisher login github` (as `AlexanderTar`) and `mcp-publisher publish`. The registry is in preview, so check the quickstart for changes first.
+
+The registry reads the `mcp-name:` README line only for npm, PyPI, NuGet and Cargo packages; this listing has none, so the line is a hidden HTML comment. If a crate is ever published, make it visible text: crates.io strips HTML comments.
 
 ## Claude Desktop extension
 

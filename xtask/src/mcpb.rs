@@ -77,6 +77,11 @@ const TARGETS: [Target; 5] = [
     },
 ];
 
+/// The target triples a release builds a bundle for.
+pub(crate) fn triples() -> impl Iterator<Item = &'static str> {
+    TARGETS.iter().map(|target| target.triple)
+}
+
 /// Everything that can go wrong while building a bundle.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum McpbError {

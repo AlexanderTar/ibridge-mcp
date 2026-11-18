@@ -44,6 +44,7 @@ ignore = [
 allow = [
     "Apache-2.0",
     "MIT",
+    "MIT-0", # MIT without the attribution clause; borrow-or-share, via the xtask-only jsonschema
     "ISC",
     "BSD-2-Clause",
     "BSD-3-Clause",

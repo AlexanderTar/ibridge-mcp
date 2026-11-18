@@ -34,13 +34,20 @@ const squash = (s) => s.replace(/\s+/g, "");
 
 // ---------- Unit 1: page copy, naming, links ----------
 const CONNECTOR = "https://mcp.ibridge.fyi/mcp";
+const GITHUB = "https://github.com/AlexanderTar/icloud-mcp";
+const ACCOUNT = "https://mcp.ibridge.fyi/account";
+// Links to other sites. Privacy and Terms are pages of this site (/privacy, /terms), not links to mcp.ibridge.fyi.
 const ALLOWED_EXTERNAL = new Set([
-  CONNECTOR,
-  "https://mcp.ibridge.fyi/privacy",
-  "https://mcp.ibridge.fyi/terms",
-  "https://mcp.ibridge.fyi/account",
-  "https://github.com/AlexanderTar/icloud-mcp",
+  CONNECTOR, ACCOUNT, GITHUB,
+  `${GITHUB}/blob/main/docs/security-model.md`,
+  "https://support.apple.com/102654",
 ]);
+const LOCAL_PAGES = ["/privacy", "/terms"];
+// A local href names a shipped file, with Vercel's cleanUrls (/privacy serves privacy.html).
+const resolvesLocally = (href) => {
+  const path = href.split("#")[0].replace(/^\//, "");
+  return path === "" || existsSync(join(PUBLIC, path)) || existsSync(join(PUBLIC, `${path}.html`));
+};
 const REQUIRED_COPY = [
   "How it works", "Pricing", "FAQ", "GitHub", "Connect",
   "Your iCloud, in your AI assistant.",
@@ -110,9 +117,13 @@ function checkPage() {
   for (const href of hrefs) {
     if (href.startsWith("#")) assert(ids.has(href.slice(1)), `anchor ${href} has no target`);
     else if (/^https?:/.test(href)) assert(ALLOWED_EXTERNAL.has(href), `unapproved external link ${href}`);
-    else assert(existsSync(join(PUBLIC, href.split("#")[0].replace(/^\//, ""))), `local link ${href} does not resolve`);
+    else if (!href.startsWith("mailto:")) assert(resolvesLocally(href), `local link ${href} does not resolve`);
   }
-  for (const want of ALLOWED_EXTERNAL) if (want !== CONNECTOR) assert(hrefs.includes(want), `link missing: ${want}`);
+  for (const want of [ACCOUNT, GITHUB, ...LOCAL_PAGES]) assert(hrefs.includes(want), `link missing: ${want}`);
+  // The footer and the FAQ both link to the site's own privacy and terms pages.
+  const footer = (html.match(/<footer\b[\s\S]*?<\/footer>/) || [""])[0];
+  const faq = (html.match(/<section\b[^>]*id="faq"[\s\S]*?<\/section>/) || [""])[0];
+  for (const [name, area] of [["footer", footer], ["FAQ", faq]]) for (const p of LOCAL_PAGES) assert(area.includes(`href="${p}"`), `${name} must link to ${p}`);
   // Round 2: links to another site open in a new tab with rel="noopener noreferrer"; in-page and same-site links do not.
   for (const [tag, href] of [...html.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>/g)].map((m) => [m[0], m[1]])) {
     const external = /^https?:/.test(href);
@@ -130,7 +141,7 @@ function checkPage() {
       // Absolute URLs of this site (canonical, og:image) are metadata, not requests; they must name a shipped file.
       if (clean.startsWith("https://ibridge.fyi/")) {
         const path = clean.slice("https://ibridge.fyi/".length);
-        assert(existsSync(join(PUBLIC, path || "index.html")), `${relative(SITE, file)}: ${clean} names no shipped file`);
+        assert(resolvesLocally(path || "index.html"), `${relative(SITE, file)}: ${clean} names no shipped file`);
       } else assert(ALLOWED_EXTERNAL.has(clean), `${relative(SITE, file)}: external URL ${clean}`);
     }
     assert(!/@import|url\(\s*["']?\/\//.test(src), `${relative(SITE, file)}: @import or protocol-relative url`);
@@ -150,6 +161,49 @@ function checkPage() {
 }
 
 checkPage();
+
+// ---------- Round 2: /privacy and /terms are pages of this site ----------
+// Text is the hosted iBridge instance's policy with billing and Sign in with Apple on (crates/ibridge-hosted/templates).
+const CONTACT = "taraymovich@gmail.com";
+const LEGAL = {
+  privacy: ["Privacy policy", "iBridge is unofficial and not affiliated with Apple", "What we store", "Why we cannot decrypt your password from storage",
+    "What risk remains", "Revoke the password at Apple", "How long we keep things", "Who else is involved", "Your choices and contact",
+    "If you sign in with Apple", "Your plan: your Stripe customer and subscription ids", "Google, through Firebase Authentication",
+    "Stripe is the seller of record", "end your subscription at Stripe", "We do not store the content of your mail, calendar or contacts", CONTACT],
+  terms: ["Terms of use", "iBridge is an unofficial service", "It is not affiliated with Apple or endorsed by Apple", "Your account and Apple's terms",
+    "What you are responsible for", "Subscription and payment", "US$1.99/month or US$19.99/year", "renews automatically", "Cancelling",
+    "end of the period you have paid for", "Stripe, which is the seller of record", "A failed payment", "Fair use", "No warranty",
+    "Suspension and deletion", "Changes and contact", CONTACT],
+};
+const LEGAL_BANNED = [/reminders?/i, /chatgpt/i, /sealed/i, /read-only/i, /read only/i, /unless you chose/i, /\{\{|\{%/, /operator of this service has not published/i];
+
+function checkLegal() {
+  for (const [name, required] of Object.entries(LEGAL)) {
+    const file = join(PUBLIC, `${name}.html`);
+    const html = read(file);
+    if (!html) { fail(`site/public/${name}.html is missing`); continue; }
+    const text = visibleText(html);
+    const flat = squash(text);
+    for (const copy of required) assert(flat.includes(squash(copy)), `${name}: copy missing: "${copy}"`);
+    for (const re of LEGAL_BANNED) assert(!re.test(text), `${name}: banned text present: ${re}`);
+    assert(!/\bibridge\b/.test(visibleText(html.replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, " "))), `${name}: lowercase 'ibridge' in visible text outside code`);
+    assert(new RegExp(`<title>[^<]*iBridge[^<]*</title>`).test(html), `${name}: title must name iBridge`);
+    assert(/<h1\b/.test(html) && html.includes("assets/components.css") && html.includes("assets/tokens.css"), `${name}: needs an h1 and the design system styles`);
+    assert(!/<style\b|\sstyle="/i.test(html), `${name}: no inline styles (the CSP allows only 'self')`);
+    assert(new RegExp(`href="mailto:${CONTACT}"`).test(html), `${name}: contact must be a mailto link`);
+    assert(/<footer\b[\s\S]*href="\/privacy"[\s\S]*href="\/terms"/.test(html), `${name}: footer must link to /privacy and /terms`);
+    const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+    for (const [tag, href] of [...html.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>/g)].map((m) => [m[0], m[1]])) {
+      const external = /^https?:/.test(href);
+      if (external) assert(ALLOWED_EXTERNAL.has(href), `${name}: unapproved external link ${href}`);
+      else if (href.startsWith("#")) assert(ids.has(href.slice(1)), `${name}: anchor ${href} has no target`);
+      else if (!href.startsWith("mailto:")) assert(resolvesLocally(href), `${name}: local link ${href} does not resolve`);
+      assert(external === /\btarget="_blank"/.test(tag) && external === /\brel="noopener noreferrer"/.test(tag), `${name}: ${href} must open in a new tab with rel="noopener noreferrer" only when it leaves the site`);
+    }
+  }
+}
+
+checkLegal();
 
 // ---------- Unit 2: icons and metadata ----------
 const SITE_URL = "https://ibridge.fyi";
@@ -228,6 +282,7 @@ function serve(headers) {
   const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
     let file = join(PUBLIC, path === "/" ? "index.html" : path);
+    if (!extname(file) && existsSync(`${file}.html`)) file += ".html"; // cleanUrls
     if (!file.startsWith(PUBLIC) || !existsSync(file) || statSync(file).isDirectory()) file = null;
     for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
     res.statusCode = file ? 200 : 404;
@@ -255,7 +310,7 @@ async function checkRendered(config) {
     { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }, // device emulation: headless Chrome's window can't go this narrow
   ];
   try {
-    for (const [pagePath, label] of [["/", "home"], ["/does-not-exist", "404"]]) {
+    for (const [pagePath, label] of [["/", "home"], ["/privacy", "privacy"], ["/terms", "terms"], ["/does-not-exist", "404"]]) {
       for (const scheme of ["light", "dark"]) {
         for (const viewport of viewports) {
           const where = `${label} ${scheme} ${viewport.width}px`;

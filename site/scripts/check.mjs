@@ -1,7 +1,8 @@
 // Checks for the iBridge marketing site. Run: node site/scripts/check.mjs
 // Static checks read site/public; each section reports its own failures.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { createServer } from "node:http";
+import { dirname, extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SITE = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -135,7 +136,7 @@ function checkPage() {
   }
 
   // Design tokens and components are the shipped ones, byte for byte.
-  for (const f of ["tokens.css", "components.css", "copy.js"]) {
+  for (const f of ["tokens.css", "components.css", "copy.js", "tick.svg"]) {
     assert(read(join(PUBLIC, "assets", f)) === read(join(SITE, "design", f)) && read(join(SITE, "design", f)) !== "",
       `public/assets/${f} drifted from site/design/${f} (run node site/scripts/sync-design.mjs)`);
   }
@@ -185,6 +186,121 @@ function checkIcons() {
 }
 
 checkIcons();
+
+// ---------- Unit 3: Vercel config, 404, rendered checks ----------
+function readVercelConfig() {
+  try { return JSON.parse(read(join(SITE, "vercel.json"))); } catch { return null; }
+}
+const headerMap = (headers) => Object.fromEntries(headers.map((h) => [h.key.toLowerCase(), h.value]));
+const globalHeaders = (config) => headerMap(config?.headers?.find((r) => r.source === "/(.*)")?.headers ?? []);
+
+function checkVercelConfig(config) {
+  if (!config) return fail("site/vercel.json is missing or not valid JSON");
+  assert(config.cleanUrls === true, "vercel.json: cleanUrls must be true");
+  assert(config.outputDirectory === "public", "vercel.json: outputDirectory must be public");
+  const all = globalHeaders(config);
+  const csp = all["content-security-policy"] ?? "";
+  assert(csp.includes("default-src 'self'"), "CSP must start from default-src 'self'");
+  assert(!/unsafe-inline|unsafe-eval|https?:|\*/.test(csp), "CSP must allow only 'self' (no unsafe-*, hosts or wildcards)");
+  for (const d of ["script-src 'self'", "style-src 'self'", "img-src 'self'", "object-src 'none'", "base-uri 'self'", "frame-ancestors 'none'", "form-action 'self'"]) {
+    assert(csp.includes(d), `CSP missing ${d}`);
+  }
+  const maxAge = Number(/max-age=(\d+)/.exec(all["strict-transport-security"] ?? "")?.[1] ?? 0);
+  assert(maxAge >= 31536000, "HSTS needs a max-age of at least one year");
+  assert(all["x-content-type-options"] === "nosniff", "X-Content-Type-Options must be nosniff");
+  assert(/^(strict-origin|strict-origin-when-cross-origin|no-referrer|same-origin)$/.test(all["referrer-policy"] ?? ""), "Referrer-Policy must be a strict value");
+  assert(Boolean(all["permissions-policy"]), "Permissions-Policy must be set");
+  const cached = config.headers?.find((r) => r.source !== "/(.*)" && r.headers.some((h) => h.key.toLowerCase() === "cache-control"));
+  assert(Boolean(cached), "vercel.json needs a Cache-Control rule for assets and images");
+}
+
+const notFoundPage = () => read(join(PUBLIC, "404.html")) || "Not found";
+const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
+// Serves site/public the way Vercel will: the vercel.json security headers on every response, 404.html for unknown paths.
+function serve(headers) {
+  const server = createServer((req, res) => {
+    const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
+    let file = join(PUBLIC, path === "/" ? "index.html" : path);
+    if (!file.startsWith(PUBLIC) || !existsSync(file) || statSync(file).isDirectory()) file = null;
+    for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
+    res.statusCode = file ? 200 : 404;
+    res.setHeader("content-type", TYPES[extname(file ?? "x.html")] ?? "application/octet-stream");
+    res.end(file ? readFileSync(file) : notFoundPage());
+  });
+  return new Promise((ok) => server.listen(0, "127.0.0.1", () => ok(server)));
+}
+
+async function checkRendered(config) {
+  let puppeteer;
+  let axeSource;
+  try {
+    puppeteer = (await import("puppeteer-core")).default;
+    axeSource = readFileSync(join(SITE, "node_modules", "axe-core", "axe.min.js"), "utf8");
+  } catch { return fail("puppeteer-core and axe-core are not installed (run: npm ci --prefix site)"); }
+  const chrome = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => p && existsSync(p));
+  if (!chrome) return fail("no Chrome found (set CHROME_PATH)");
+  const headers = Object.fromEntries((config?.headers?.find((r) => r.source === "/(.*)")?.headers ?? []).map((h) => [h.key, h.value]));
+  const server = await serve(headers);
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: ["--no-sandbox"] });
+  const viewports = [
+    { width: 1440, height: 900, deviceScaleFactor: 1 },
+    { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }, // device emulation: headless Chrome's window can't go this narrow
+  ];
+  try {
+    for (const [pagePath, label] of [["/", "home"], ["/does-not-exist", "404"]]) {
+      for (const scheme of ["light", "dark"]) {
+        for (const viewport of viewports) {
+          const where = `${label} ${scheme} ${viewport.width}px`;
+          const page = await browser.newPage();
+          const problems = [];
+          page.on("request", (r) => { if (!r.url().startsWith(origin) && !r.url().startsWith("data:")) problems.push(`external request ${r.url()}`); });
+          page.on("response", (r) => { if (r.status() >= 400 && r.url() !== origin + pagePath) problems.push(`${r.status()} for ${r.url()}`); });
+          page.on("console", (m) => { if (m.type() === "error" && m.location().url !== origin + pagePath) problems.push(`console error: ${m.text()}`); });
+          page.on("pageerror", (e) => problems.push(`page error: ${e.message}`));
+          await page.setViewport(viewport);
+          await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: scheme }]);
+          const response = await page.goto(origin + pagePath, { waitUntil: "networkidle0" });
+          assert(response.status() === (label === "404" ? 404 : 200), `${where}: status ${response.status()}`);
+          const widths = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, inner: window.innerWidth }));
+          assert(widths.doc <= widths.inner, `${where}: horizontal scroll (scrollWidth ${widths.doc} > ${widths.inner})`);
+          await page.evaluate(axeSource);
+          const result = await page.evaluate(() => axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] } }));
+          for (const v of result.violations) fail(`${where}: axe ${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 100)}`);
+          for (const p of problems) fail(`${where}: ${p}`);
+          if (label === "home" && viewport.width === 1440 && scheme === "light") await checkCopyButtons(page, browser, origin);
+          await page.close();
+        }
+      }
+    }
+  } finally { await browser.close(); server.close(); }
+}
+
+async function checkCopyButtons(page, browser, origin) {
+  await browser.defaultBrowserContext().overridePermissions(origin, ["clipboard-read", "clipboard-write", "clipboard-sanitized-write"]);
+  const count = await page.$$eval(".copy-box button", (bs) => bs.length);
+  assert(count === 3, `expected 3 copy buttons, found ${count}`);
+  const want = await page.$$eval(".copy-box code", (els) => els.map((e) => e.textContent.trim()));
+  for (let i = 0; i < count; i++) {
+    await (await page.$$(".copy-box button"))[i].click();
+    await page.waitForFunction((n) => "copied" in document.querySelectorAll(".copy-box button")[n].dataset, { timeout: 1500 }, i).catch(() => {});
+    const state = await page.evaluate(async (n) => {
+      const b = document.querySelectorAll(".copy-box button")[n];
+      const done = b.querySelector(".copy-done");
+      return { copied: "copied" in b.dataset, shown: Boolean(done) && getComputedStyle(done).display !== "none", clipboard: await navigator.clipboard.readText(), status: b.parentElement.querySelector("[role=status]").textContent };
+    }, i);
+    assert(state.copied && state.shown && state.status === "Copied to clipboard", `copy button ${i + 1}: no "Copied" confirmation`);
+    assert(state.clipboard === want[i], `copy button ${i + 1}: clipboard holds "${state.clipboard}"`);
+  }
+  await new Promise((r) => setTimeout(r, 2200));
+  assert(await page.$$eval(".copy-box button", (bs) => bs.every((b) => !("copied" in b.dataset))), "copy confirmation must clear after a moment");
+}
+
+const config = readVercelConfig();
+checkVercelConfig(config);
+const notFound = read(join(PUBLIC, "404.html"));
+assert(/<h1\b/.test(notFound) && /href="\/"/.test(notFound), "404.html must exist with a heading and a link home");
+await checkRendered(config);
 
 if (failures.length) {
   console.error(`check: ${failures.length} failure(s)`);

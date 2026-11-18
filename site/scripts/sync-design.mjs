@@ -11,7 +11,7 @@ const copy = (from, to) => {
   copyFileSync(join(SITE, from), join(SITE, to));
 };
 
-for (const f of ["tokens.css", "components.css", "copy.js"]) copy(`design/${f}`, `public/assets/${f}`);
+for (const f of ["tokens.css", "components.css", "copy.js", "tick.svg"]) copy(`design/${f}`, `public/assets/${f}`);
 for (const variant of ["mark", "tile"]) {
   for (const theme of ["light", "dark"]) copy(`design/icons/b-cloud-arch-${variant}-${theme}.svg`, `public/img/${variant}-${theme}.svg`);
 }

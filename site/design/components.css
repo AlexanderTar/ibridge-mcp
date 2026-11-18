@@ -135,6 +135,7 @@ h1, h2, h3, p { margin: 0; }
 .copy-box-label { display: block; font-size: var(--text-caption); font-weight: var(--weight-semibold); color: var(--color-text-tertiary); margin-bottom: var(--space-2); }
 
 /* ---------- Pricing card ---------- */
+/* The list tick is tick.svg next to this file, not a data: URI, so a strict CSP (img-src 'self') can load it. */
 .pricing-grid { display: grid; gap: var(--space-5); grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); align-items: stretch; }
 .price-card { display: flex; flex-direction: column; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-6); }
 .price-card--featured { border-color: var(--color-brand); box-shadow: var(--shadow-lg); }
@@ -144,7 +145,7 @@ h1, h2, h3, p { margin: 0; }
 .price-card .price-alt { margin-top: var(--space-2); color: var(--color-text-secondary); }
 .price-card ul { list-style: none; margin: var(--space-5) 0 var(--space-6); padding: 0; display: grid; gap: var(--space-3); font-size: var(--text-small); }
 .price-card li { display: grid; grid-template-columns: 20px 1fr; gap: var(--space-3); }
-.price-card li::before { content: ""; width: 20px; height: 20px; margin-top: 1px; background: var(--color-link); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3.2 3.2L15 6.8' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 20px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3.2 3.2L15 6.8' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 20px no-repeat; }
+.price-card li::before { content: ""; width: 20px; height: 20px; margin-top: 1px; background: var(--color-link); -webkit-mask: url("tick.svg") center / 20px no-repeat; mask: url("tick.svg") center / 20px no-repeat; }
 .price-card .btn { margin-top: auto; width: 100%; }
 .price-card .fine { margin-top: var(--space-3); text-align: center; }
 

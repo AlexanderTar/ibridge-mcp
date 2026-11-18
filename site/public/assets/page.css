@@ -9,3 +9,5 @@
 .pricing-grid { max-width: 880px; margin: 0 auto; }
 .faq-wrap { max-width: 760px; margin: 0 auto; }
 @media (max-width: 860px) { .how { grid-template-columns: minmax(0, 1fr); } }
+.not-found { min-height: 100vh; display: grid; align-items: center; }
+.not-found .logo { margin-bottom: var(--space-7); }

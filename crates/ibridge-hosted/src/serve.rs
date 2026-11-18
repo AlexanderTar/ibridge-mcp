@@ -54,10 +54,13 @@ pub async fn serve<B: Backend>(
         None => store,
     };
     let backups = crate::backup::spawn_daily(store.clone(), config.data_dir.join(BACKUP_DIR));
-    let oauth = match config.identity {
-        Some(identity) => config.oauth.identity(identity),
-        None => config.oauth,
-    };
+    let mut oauth = config.oauth;
+    if let Some(identity) = config.identity {
+        oauth = oauth.identity(identity);
+    }
+    if let Some(billing) = config.billing {
+        oauth = oauth.billing(billing);
+    }
     let app = crate::app::app(oauth, store, backend, checker, info, &config.guards).await?;
     let served = axum::serve(
         listener,
@@ -200,6 +203,67 @@ mod tests {
                     "{location}"
                 );
             }
+            let _ = stop.send(());
+            server
+                .await
+                .expect("the server task")
+                .expect("it stops cleanly");
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_turns_on_the_stripe_webhook_when_the_billing_settings_are_present() {
+        use crate::identity::jwt::test_key::es256_pem;
+        let pem = es256_pem();
+        let settings = |name: &str| match name {
+            "IBRIDGE_APPLE_SERVICES_ID" => Some("fyi.ibridge.signin".to_owned()),
+            "IBRIDGE_APPLE_TEAM_ID" => Some("TEAM123456".to_owned()),
+            "IBRIDGE_APPLE_KEY_ID" => Some("KEY1234567".to_owned()),
+            "IBRIDGE_APPLE_PRIVATE_KEY" => Some(pem.clone()),
+            "IBRIDGE_FIREBASE_PROJECT_ID" => Some("ibridge-fyi".to_owned()),
+            "IBRIDGE_FIREBASE_API_KEY" => Some("api-key".to_owned()),
+            "IBRIDGE_CONTACT" => Some("privacy@ibridge.example".to_owned()),
+            "IBRIDGE_STRIPE_SECRET_KEY" => Some("sk_test_x".to_owned()),
+            "IBRIDGE_STRIPE_WEBHOOK_SECRET" => Some("whsec_x".to_owned()),
+            "IBRIDGE_STRIPE_PRICE_MONTHLY" => Some("price_month".to_owned()),
+            "IBRIDGE_STRIPE_PRICE_YEARLY" => Some("price_year".to_owned()),
+            _ => None,
+        };
+        let dir = tempfile::tempdir().expect("temp dir");
+        let options = || HostedOptions {
+            addr: "127.0.0.1:0".parse().expect("address"),
+            public_url: "https://ibridge.example".to_owned(),
+            data_dir: dir.path().join("data"),
+            multi_tenant: true,
+            behind_proxy: false,
+        };
+        // An unsigned post is refused (400) where the route exists, and is not found (404) where not.
+        for (billing_on, expected) in [(true, 400), (false, 404)] {
+            let config = if billing_on {
+                HostedConfig::resolve(options(), settings)
+            } else {
+                HostedConfig::resolve(options(), |_| None)
+            }
+            .expect("config");
+            let listener = TcpListener::bind(config.addr).await.expect("bind");
+            let base = format!("http://{}", listener.local_addr().expect("address"));
+            let (stop, stopped) = oneshot::channel::<()>();
+            let server = tokio::spawn(serve(
+                config,
+                listener,
+                FakeBackend,
+                validated_by(|_: &Credentials| crate::test_app::AcceptAll),
+                info(),
+                async move {
+                    let _ = stopped.await;
+                },
+            ));
+            let reply = send("POST", &format!("{base}/billing/webhook"), &[], "{}").await;
+            assert_eq!(
+                reply.status, expected,
+                "billing on: {billing_on}: {}",
+                reply.body
+            );
             let _ = stop.send(());
             server
                 .await

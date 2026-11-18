@@ -31,7 +31,7 @@ use axum::http::request::Parts;
 use ibridge_core::AppleId;
 use url::Url;
 
-use crate::billing::BillingConfig;
+use crate::billing::{Billing, BillingConfig};
 use crate::identity::{Identity, IdentityConfig};
 use crate::limits::{Limiter, SignInLimits};
 use crate::store::{Store, StoreError};
@@ -273,6 +273,8 @@ pub(crate) struct Shared {
     pub(crate) identity: Option<Identity>,
     /// `/authorize` requests waiting for a sign-in or a payment.
     pub(crate) pending_authorize: pending::PendingAuthorize,
+    /// Stripe, when its settings are present.
+    pub(crate) billing: Option<Billing>,
 }
 
 impl Shared {
@@ -319,6 +321,12 @@ pub async fn router(
         .map(|identity| Identity::new(identity, &config.issuer()))
         .transpose()
         .map_err(|_| StoreError::Rejected)?;
+    let billing = config
+        .billing
+        .as_ref()
+        .map(Billing::new)
+        .transpose()
+        .map_err(|_| StoreError::Rejected)?;
     let (router, _) = router_with(
         config,
         store,
@@ -326,10 +334,17 @@ pub async fn router(
         Arc::new(checker),
         evict,
         mcp,
-        identity,
+        Features { identity, billing },
     )
     .await?;
     Ok(router)
+}
+
+/// The optional halves of the server: each is on only when its settings are present.
+#[derive(Debug, Default)]
+pub(crate) struct Features {
+    pub(crate) identity: Option<Identity>,
+    pub(crate) billing: Option<Billing>,
 }
 
 /// [`router`] with the client lookup replaced, so tests can name clients without a network.
@@ -341,8 +356,9 @@ pub(crate) async fn router_with(
     checker: Arc<dyn SignInCheck>,
     evict: Evict,
     mcp: Router,
-    identity: Option<Identity>,
+    features: Features,
 ) -> Result<(Router, Arc<Shared>), StoreError> {
+    let Features { identity, billing } = features;
     let metadata_url = config.url(metadata::PRM_MCP_PATH);
     let registry = dcr::ClientRegistry::open(store).await?;
     let shared = Arc::new(Shared {
@@ -360,6 +376,7 @@ pub(crate) async fn router_with(
         evict,
         identity,
         pending_authorize: pending::PendingAuthorize::new(pending::MAX_PENDING),
+        billing,
     });
     let router = Router::new()
         .merge(crate::middleware::protect(mcp, store.clone(), metadata_url))
@@ -369,6 +386,7 @@ pub(crate) async fn router_with(
         .merge(token::routes(&shared))
         .merge(crate::pages::account::routes(&shared))
         .merge(crate::pages::signin::routes(&shared))
+        .merge(crate::billing::routes::routes(&shared))
         .merge(crate::pages::landing::routes(&shared))
         .layer(tracing_layer());
     Ok((router, shared))

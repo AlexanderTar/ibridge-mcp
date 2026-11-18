@@ -84,6 +84,9 @@ const SELECT_USER: &str = "SELECT u.id, u.firebase_uid, u.apple_sub, u.email,
         u.status, u.period_end, u.complimentary
     FROM users u LEFT JOIN accounts a ON a.id = u.account_id";
 
+/// How long a handled Stripe event id is remembered, in seconds.
+const EVENT_MEMORY_SECS: i64 = 7 * 24 * 60 * 60;
+
 fn user_from(row: &SqliteRow) -> Result<User, StoreError> {
     let account: Option<String> = row.try_get("account").map_err(internal)?;
     Ok(User {
@@ -318,6 +321,47 @@ impl Store {
         .await
         .map_err(internal)?;
         Ok(())
+    }
+
+    /// Whether this Stripe event id was already handled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Internal`] when the database cannot be read.
+    pub async fn event_seen(&self, id: &str) -> Result<bool, StoreError> {
+        let seen: Option<i64> = sqlx::query_scalar("SELECT 1 FROM stripe_events WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(internal)?;
+        Ok(seen.is_some())
+    }
+
+    /// Records that a Stripe event was handled, and forgets events older than a week:
+    /// Stripe stops retrying after three days.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Internal`] when the database cannot be updated.
+    pub async fn record_event(&self, id: &str) -> Result<(), StoreError> {
+        let now = unix(SystemTime::now())?;
+        let mut tx = begin(self.pool()).await?;
+        let result = async {
+            sqlx::query("DELETE FROM stripe_events WHERE seen_at < ?")
+                .bind(now - EVENT_MEMORY_SECS)
+                .execute(&mut *tx)
+                .await
+                .map_err(internal)?;
+            sqlx::query("INSERT OR IGNORE INTO stripe_events (id, seen_at) VALUES (?, ?)")
+                .bind(id)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(internal)?;
+            Ok(())
+        }
+        .await;
+        settle(tx, result).await
     }
 
     /// Deletes the user, its linked account, and that account's grants and seals, in one

@@ -147,6 +147,11 @@ impl FakeStripe {
         *lock(&self.state.refuse) = Some(status);
     }
 
+    /// Ends an outage started by [`FakeStripe::refuse_with`].
+    pub fn recover(&self) {
+        *lock(&self.state.refuse) = None;
+    }
+
     /// Stores a subscription the client can fetch: the sandbox's, with these fields set.
     pub fn put_subscription(&self, id: &str, customer: &str, status: &str, period_end: i64) {
         let mut object = fixture(SUBSCRIPTION);

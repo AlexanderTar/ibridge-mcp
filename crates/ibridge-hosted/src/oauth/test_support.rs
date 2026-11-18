@@ -18,7 +18,8 @@ use url::Url;
 use super::check::{Combined, SignInCheck, validated_by};
 use super::cimd::{BoxFuture, CimdError, ClientSource};
 use super::client::ClientInfo;
-use super::{Access, Evict, OAuthConfig, Shared, router_with};
+use super::{Access, Evict, Features, OAuthConfig, Shared, router_with};
+use crate::billing::Billing;
 use crate::identity::Identity;
 use crate::store::{Store, StoreError, ValidatedCredentials};
 
@@ -172,7 +173,7 @@ pub(crate) async fn harness_configured(
     evict: Evict,
     mcp: Router,
 ) -> Harness {
-    harness_built(config, store, evict, mcp, None).await.0
+    harness_built(config, store, evict, mcp, None, None).await.0
 }
 
 /// [`harness_configured`] with Sign in with Apple on, over `identity`.
@@ -182,7 +183,19 @@ pub(crate) async fn harness_identity(identity: Identity, store: Store) -> (Harne
     let config = OAuthConfig::new(PUBLIC, Access::MultiTenant).expect("public url");
     let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
     let evict: Evict = Arc::new(|_| {});
-    harness_built(config, store, evict, mcp, Some(identity)).await
+    harness_built(config, store, evict, mcp, Some(identity), None).await
+}
+
+/// [`harness_identity`] with Stripe on as well, over `billing`.
+pub(crate) async fn harness_billing(
+    identity: Identity,
+    billing: Billing,
+    store: Store,
+) -> (Harness, Arc<Shared>) {
+    let config = OAuthConfig::new(PUBLIC, Access::MultiTenant).expect("public url");
+    let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
+    let evict: Evict = Arc::new(|_| {});
+    harness_built(config, store, evict, mcp, Some(identity), Some(billing)).await
 }
 
 /// A plain harness (no Sign in with Apple) and the shared state its pages use.
@@ -190,7 +203,7 @@ pub(crate) async fn harness_with_shared() -> (Harness, Arc<Shared>) {
     let config = OAuthConfig::new(PUBLIC, Access::MultiTenant).expect("public url");
     let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
     let store = Store::memory().await.expect("store");
-    harness_built(config, store, Arc::new(|_| {}), mcp, None).await
+    harness_built(config, store, Arc::new(|_| {}), mcp, None, None).await
 }
 
 async fn harness_built(
@@ -199,6 +212,7 @@ async fn harness_built(
     evict: Evict,
     mcp: Router,
     identity: Option<Identity>,
+    billing: Option<Billing>,
 ) -> (Harness, Arc<Shared>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let inner = validated_by(|credentials: &Credentials| {
@@ -226,7 +240,7 @@ async fn harness_built(
         Arc::new(checker),
         evict,
         mcp,
-        identity,
+        Features { identity, billing },
     )
     .await
     .expect("router");

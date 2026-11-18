@@ -4,10 +4,13 @@
 
 #[cfg(any(test, feature = "testing"))]
 pub mod fakes;
+pub(crate) mod routes;
 pub mod stripe;
+pub(crate) mod webhook;
 
 use secrecy::SecretString;
 
+use self::stripe::{BillingError, Stripe};
 use crate::oauth::ConfigError;
 use crate::store::User;
 
@@ -118,6 +121,32 @@ impl BillingConfig {
     }
 }
 
+/// The live Stripe client and the webhook secret, kept for the life of the server.
+#[derive(Debug)]
+pub(crate) struct Billing {
+    pub(crate) stripe: Stripe,
+    pub(crate) webhook_secret: SecretString,
+}
+
+impl Billing {
+    /// The real Stripe.
+    pub(crate) fn new(config: &BillingConfig) -> Result<Self, BillingError> {
+        Ok(Self {
+            stripe: Stripe::new(config)?,
+            webhook_secret: config.webhook_secret.clone(),
+        })
+    }
+
+    /// Stripe replaced by a fake on loopback, for tests.
+    #[cfg(test)]
+    pub(crate) fn with_base(config: &BillingConfig, base: url::Url) -> Result<Self, BillingError> {
+        Ok(Self {
+            stripe: Stripe::with_base(config, base)?,
+            webhook_secret: config.webhook_secret.clone(),
+        })
+    }
+}
+
 /// Whether a user may use the tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -128,10 +157,15 @@ pub enum Access {
     Denied,
 }
 
+/// Whether a Stripe subscription status keeps a user's access: paid up, or in the card retry window.
+pub(crate) fn grants_access(status: &str) -> bool {
+    matches!(status, "active" | "past_due")
+}
+
 /// The access rule: Stripe status `active` or `past_due`, or a complimentary user.
 #[must_use]
 pub fn access(user: &User) -> Access {
-    if user.complimentary || matches!(user.status.as_deref(), Some("active" | "past_due")) {
+    if user.complimentary || user.status.as_deref().is_some_and(grants_access) {
         Access::Allowed
     } else {
         Access::Denied

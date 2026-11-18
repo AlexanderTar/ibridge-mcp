@@ -7,6 +7,8 @@
 //! (tokens, then components) followed by `assets/server.css`, the few pieces the pages
 //! need beyond it.
 
+use std::sync::LazyLock;
+
 use axum::Router;
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
@@ -17,6 +19,13 @@ const STYLESHEET: &str = concat!(
     include_str!("../../../site/design/components.css"),
     include_str!("../assets/server.css"),
 );
+/// Apple's logo, which is licensed artwork and is not in the repository. When the file is
+/// added, `build.rs` turns on `cfg(apple_logo)`: the server then serves it, and the button
+/// shows it as a mask in the button's own colour.
+#[cfg(apple_logo)]
+const APPLE_LOGO: &str = include_str!("../assets/apple-logo.svg");
+#[cfg(apple_logo)]
+const APPLE_LOGO_CSS: &str = "\n.btn-apple::before { content: \"\"; flex: none; width: 44px; height: 44px; margin-left: -8px; background: currentColor; -webkit-mask: url(/static/apple-logo.svg) center / contain no-repeat; mask: url(/static/apple-logo.svg) center / contain no-repeat; }\n";
 const FAVICON: &str = include_str!("../../../site/design/icons/b-cloud-arch-favicon.svg");
 const MARK_LIGHT: &str = include_str!("../../../site/design/icons/b-cloud-arch-mark-light.svg");
 const MARK_DARK: &str = include_str!("../../../site/design/icons/b-cloud-arch-mark-dark.svg");
@@ -26,11 +35,26 @@ const TOUCH_ICON: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
 /// A day. The files change only with a new release, and a stale copy is harmless.
 const CACHE: &str = "public, max-age=86400";
 
+/// The stylesheet: the design system, the server's own rules and, when present, the logo rule.
+fn stylesheet() -> &'static str {
+    static CSS: LazyLock<String> = LazyLock::new(|| {
+        #[cfg_attr(
+            not(apple_logo),
+            expect(unused_mut, reason = "only the logo rule is appended")
+        )]
+        let mut css = STYLESHEET.to_owned();
+        #[cfg(apple_logo)]
+        css.push_str(APPLE_LOGO_CSS);
+        css
+    });
+    &CSS
+}
+
 pub(crate) fn routes() -> Router {
-    Router::new()
+    let router = Router::new()
         .route(
             "/static/ibridge.css",
-            get(|| async { asset("text/css; charset=utf-8", STYLESHEET.as_bytes()) }),
+            get(|| async { asset("text/css; charset=utf-8", stylesheet().as_bytes()) }),
         )
         .route(
             "/static/favicon.svg",
@@ -47,7 +71,13 @@ pub(crate) fn routes() -> Router {
         .route(
             "/static/apple-touch-icon.png",
             get(|| async { asset("image/png", TOUCH_ICON) }),
-        )
+        );
+    #[cfg(apple_logo)]
+    let router = router.route(
+        "/static/apple-logo.svg",
+        get(|| async { asset("image/svg+xml", APPLE_LOGO.as_bytes()) }),
+    );
+    router
 }
 
 fn asset(content_type: &'static str, body: &'static [u8]) -> Response {

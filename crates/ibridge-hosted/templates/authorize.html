@@ -6,7 +6,7 @@
 {% if let Some(message) = error %}<p class="alert" role="alert">{{ message }}</p>{% endif %}
 {% if let Some(pending) = sign_in %}
 <p>Sign in with Apple to continue. We never see your Apple password.</p>
-<a class="btn btn--primary btn--lg" href="/signin/apple?next=authorize&amp;pending={{ pending }}">Sign in with Apple</a>
+<a class="btn-apple" href="/signin/apple?next=authorize&amp;pending={{ pending }}">Sign in with Apple</a>
 {% else %}
 {% if let Some(plan) = plan %}
 <p>{{ client_name }} needs a plan to reach your iCloud: {{ price }}. Taxes are handled by Stripe at checkout, and one plan covers one iCloud account.</p>

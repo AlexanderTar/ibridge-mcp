@@ -51,6 +51,7 @@ async fn assets_are_served_with_type_and_cache_headers() {
         "--color-brand:",
         "prefers-color-scheme: dark",
         ".btn--primary",
+        ".btn-apple",
         ".field",
     ] {
         assert!(css.contains(needle), "the stylesheet has {needle}");
@@ -114,4 +115,33 @@ async fn every_page_links_the_assets_and_nothing_external() {
         }
         assert!(!csp.contains("unsafe-inline"), "{path} CSP: {csp}");
     }
+}
+
+/// Apple's logo artwork is licensed, so it is not in the repository: the button is text-only
+/// until `assets/apple-logo.svg` is added, and only then does the server serve and use it.
+#[cfg(not(apple_logo))]
+#[tokio::test]
+async fn the_apple_logo_is_absent_until_its_file_is_added() {
+    let h = harness(Access::MultiTenant).await;
+    let css = h.get_path(CSS, IP, None).await.text;
+    assert!(
+        !css.contains("/static/apple-logo.svg"),
+        "no rule points at a missing logo"
+    );
+    let logo = h.get_path("/static/apple-logo.svg", IP, None).await;
+    assert_eq!(logo.status, StatusCode::NOT_FOUND, "{}", logo.text);
+}
+
+#[cfg(apple_logo)]
+#[tokio::test]
+async fn the_apple_logo_is_served_and_used_when_its_file_is_present() {
+    let h = harness(Access::MultiTenant).await;
+    let css = h.get_path(CSS, IP, None).await.text;
+    assert!(
+        css.contains("/static/apple-logo.svg"),
+        "the button shows the logo"
+    );
+    let logo = h.get_path("/static/apple-logo.svg", IP, None).await;
+    assert_eq!(logo.status, StatusCode::OK, "{}", logo.text);
+    assert_eq!(logo.headers[header::CONTENT_TYPE], "image/svg+xml");
 }

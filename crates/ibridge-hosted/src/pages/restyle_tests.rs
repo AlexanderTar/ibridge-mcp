@@ -213,12 +213,19 @@ async fn the_apple_sign_in_and_plan_pages_use_the_components() {
     assert!(
         apple
             .text
-            .contains(r#"<a class="btn btn--primary btn--lg" href="/signin/apple?next=authorize"#),
-        "Sign in with Apple is a primary button: {}",
+            .contains(r#"<a class="btn-apple" href="/signin/apple?next=authorize"#),
+        "Sign in with Apple is Apple's button style, not a design-system button: {}",
         apple.text
     );
     let login = rig.get("/account", None).await;
     assert_styled("account login with Apple", &login);
+    assert!(
+        login
+            .text
+            .contains(r#"<a class="btn-apple" href="/signin/apple">Sign in with Apple</a>"#),
+        "the account page has the same button, titled Sign in with Apple: {}",
+        login.text
+    );
 
     let rig = Rig::billing().await;
     let browser = rig.sign_in("plan-code").await;

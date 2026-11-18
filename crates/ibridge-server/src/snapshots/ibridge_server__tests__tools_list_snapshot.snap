@@ -138,7 +138,7 @@ expression: tools
   {
     "name": "mail_get_attachment",
     "title": "Get attachment",
-    "description": "Fetches one attachment as text or as a small inline file.",
+    "description": "Fetches one attachment as text or as a small inline file. The file name and text are as the sender wrote them.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -218,7 +218,7 @@ expression: tools
   {
     "name": "mail_get_message",
     "title": "Get message",
-    "description": "Fetches one message, including its text and attachment list.",
+    "description": "Fetches one message, including its text and attachment list. The subject and body are as the sender wrote them.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -435,7 +435,7 @@ expression: tools
   {
     "name": "mail_search",
     "title": "Search mail",
-    "description": "Searches messages, newest first.",
+    "description": "Searches messages, newest first. Subjects are as the sender wrote them.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {

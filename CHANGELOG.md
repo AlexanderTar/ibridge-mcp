@@ -26,7 +26,7 @@ First release. iBridge is distributed as source: build it with Rust, or use the 
 - Credentials are sent only to Apple's iCloud hosts; a redirect to any other host drops them and fails.
 - Your Apple ID password is never used, only an app-specific password.
 - Secrets are never logged and are wiped after use. The hosted server stores each password sealed with a key derived from the token that unlocks it, so nothing in its settings or storage can decrypt it.
-- Mail, event and contact text reaches the client marked as untrusted content.
+- Mail, event, reminder and contact text reaches the client as plain JSON fields. Hidden Unicode (tag characters, bidirectional controls, zero-width characters) is stripped from it, and HTML mail loses text hidden with `display:none`, `visibility:hidden`, `font-size:0`, `opacity:0` or the `hidden` attribute, plus `<script>`, `<style>`, `<head>` and comments, before it becomes text. Each read tool's description says where its text comes from.
 
 [Unreleased]: https://github.com/AlexanderTar/icloud-mcp/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/AlexanderTar/icloud-mcp/releases/tag/v1.0.0

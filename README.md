@@ -22,7 +22,7 @@ iBridge is distributed as source. There are no prebuilt binaries: you build it w
 - **Contacts:** search and read contacts, create, update and delete them.
 - **Account:** `account_status` reports which services are reachable.
 
-Tools that change anything are marked as such. Mail, event and contact text reaches the client marked as untrusted content.
+Tools that change anything are marked as such. Mail, event and contact text reaches the client as plain JSON fields, with hidden characters and hidden HTML removed, and each read tool says where its text comes from.
 
 ## Start read-only
 

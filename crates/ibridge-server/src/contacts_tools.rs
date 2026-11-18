@@ -105,7 +105,7 @@ where
     /// limit is above 100, and an MCP error when the search cannot be run.
     #[tool(
         title = "Search contacts",
-        description = "Searches contacts by name, email address or phone number. Matching is done by this server, not by iCloud.",
+        description = "Searches contacts by name, email address or phone number. Matching is done by this server, not by iCloud. Names, labels and notes are as stored on each card.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ContactListOut>(),
     )]
@@ -153,7 +153,7 @@ where
     /// MCP error when the contact cannot be read.
     #[tool(
         title = "Get contact",
-        description = "Fetches one contact in full: labels, note, company and the groups it is in.",
+        description = "Fetches one contact in full: labels, note, company and the groups it is in. Names, labels and notes are as stored on the card.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ContactOut>(),
     )]

@@ -463,6 +463,37 @@ async fn tools_list_includes_calendar_and_reminders_tools() {
 }
 
 #[tokio::test]
+async fn calendar_read_tools_say_where_the_text_comes_from() {
+    let client = connect(
+        IbridgeServer::read_write(account(), Arc::new(NoMail))
+            .with_calendar(Arc::new(Fake::seeded())),
+    )
+    .await;
+    let tools = client.list_all_tools().await.expect("list tools");
+    for (name, sentence) in [
+        (
+            "calendar_list_events",
+            "Titles, descriptions and attendees are as whoever made the event wrote them.",
+        ),
+        (
+            "calendar_get_event",
+            "Titles, descriptions and attendees are as whoever made the event wrote them.",
+        ),
+        (
+            "reminders_list",
+            "Titles and notes are as their author wrote them.",
+        ),
+    ] {
+        let tool = tools.iter().find(|tool| tool.name == name).expect(name);
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains(sentence),
+            "{name} names the source of the text, got {description:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn event_text_is_plain_json_with_hidden_characters_stripped() {
     let client = connect(
         IbridgeServer::read_write(account(), Arc::new(NoMail))

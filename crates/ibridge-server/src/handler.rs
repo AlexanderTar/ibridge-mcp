@@ -371,7 +371,7 @@ where
     /// or a filter is not usable, and an MCP error when the search cannot be run.
     #[tool(
         title = "Search mail",
-        description = "Searches messages, newest first.",
+        description = "Searches messages, newest first. Subjects are as the sender wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<SearchOut>(),
     )]
@@ -410,7 +410,7 @@ where
     /// and an MCP error when the message cannot be read.
     #[tool(
         title = "Get message",
-        description = "Fetches one message, including its text and attachment list.",
+        description = "Fetches one message, including its text and attachment list. The subject and body are as the sender wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<MessageOut>(),
     )]
@@ -434,7 +434,7 @@ where
     /// and an MCP error when the part cannot be read.
     #[tool(
         title = "Get attachment",
-        description = "Fetches one attachment as text or as a small inline file.",
+        description = "Fetches one attachment as text or as a small inline file. The file name and text are as the sender wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<AttachmentOut>(),
     )]

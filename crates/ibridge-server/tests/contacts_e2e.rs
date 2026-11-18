@@ -361,6 +361,30 @@ async fn tools_list_includes_contacts_tools() {
 }
 
 #[tokio::test]
+async fn contacts_read_tools_say_where_the_text_comes_from() {
+    let fake = Arc::new(Fake::seeded());
+    let client = serve(&fake).await;
+    let tools = client.list_all_tools().await.expect("list tools");
+    for (name, sentence) in [
+        (
+            "contacts_search",
+            "Names, labels and notes are as stored on each card.",
+        ),
+        (
+            "contacts_get",
+            "Names, labels and notes are as stored on the card.",
+        ),
+    ] {
+        let tool = tools.iter().find(|tool| tool.name == name).expect(name);
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains(sentence),
+            "{name} names the source of the text, got {description:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn contact_text_is_plain_json_with_hidden_characters_stripped() {
     let fake = Arc::new(Fake::seeded());
     let client = serve(&fake).await;

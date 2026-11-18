@@ -180,7 +180,7 @@ where
     /// size is not usable, and an MCP error when the events cannot be read.
     #[tool(
         title = "List events",
-        description = "Lists events in a time range over one or more calendars. Repeating events are expanded into their occurrences.",
+        description = "Lists events in a time range over one or more calendars. Repeating events are expanded into their occurrences. Titles, descriptions and attendees are as whoever made the event wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<EventListOut>(),
     )]
@@ -226,7 +226,7 @@ where
     /// MCP error when the event cannot be read.
     #[tool(
         title = "Get event",
-        description = "Fetches one event in full, including attendees and alarms.",
+        description = "Fetches one event in full, including attendees and alarms. Titles, descriptions and attendees are as whoever made the event wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<EventOut>(),
     )]
@@ -401,7 +401,7 @@ where
     /// not usable, and an MCP error when the reminders cannot be read.
     #[tool(
         title = "List reminders",
-        description = "Lists reminders in one list or all lists. Open reminders only, unless include_completed is set.",
+        description = "Lists reminders in one list or all lists. Open reminders only, unless include_completed is set. Titles and notes are as their author wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<RemindersOut>(),
     )]

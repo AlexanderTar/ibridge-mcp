@@ -202,6 +202,34 @@ async fn e2e_search_then_get() {
 }
 
 #[tokio::test]
+async fn mail_read_tools_say_where_the_text_comes_from() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let tools = client.list_all_tools().await.expect("list tools");
+    for (name, sentence) in [
+        ("mail_search", "Subjects are as the sender wrote them."),
+        (
+            "mail_get_message",
+            "The subject and body are as the sender wrote them.",
+        ),
+        (
+            "mail_get_attachment",
+            "The file name and text are as the sender wrote them.",
+        ),
+    ] {
+        let tool = tools.iter().find(|tool| tool.name == name).expect(name);
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains(sentence),
+            "{name} names the source of the text, got {description:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn e2e_send_requires_destructive_annotation() {
     let mail = Arc::new(Scripted::default());
     let client = connect(IbridgeServer::read_write(account(), Arc::clone(&mail))).await;

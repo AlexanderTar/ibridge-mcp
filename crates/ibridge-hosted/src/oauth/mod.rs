@@ -378,8 +378,18 @@ pub(crate) async fn router_with(
         pending_authorize: pending::PendingAuthorize::new(pending::MAX_PENDING),
         billing,
     });
+    let gating = if shared.billing.is_some() {
+        crate::middleware::Gating::PlanRequired
+    } else {
+        crate::middleware::Gating::Off
+    };
     let router = Router::new()
-        .merge(crate::middleware::protect(mcp, store.clone(), metadata_url))
+        .merge(crate::middleware::protect(
+            mcp,
+            store.clone(),
+            metadata_url,
+            gating,
+        ))
         .merge(metadata::routes(&shared))
         .merge(dcr::routes(&shared))
         .merge(authorize::routes(&shared))

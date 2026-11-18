@@ -4,6 +4,8 @@
 
 #[cfg(any(test, feature = "testing"))]
 pub mod fakes;
+#[cfg(test)]
+mod gate_tests;
 pub(crate) mod routes;
 pub mod stripe;
 pub(crate) mod webhook;

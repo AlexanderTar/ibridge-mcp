@@ -428,7 +428,7 @@ mod tests {
     use tower::ServiceExt as _;
 
     use super::{AccountCache, Backend, Providers};
-    use crate::middleware::protect;
+    use crate::middleware::{Gating, protect};
     use crate::oauth::{Access, OAuthConfig};
     use crate::server::mcp_router;
     use crate::store::{Scope, Store};
@@ -662,6 +662,7 @@ mod tests {
             mcp_router(Arc::clone(&cache), info, &config),
             store.clone(),
             METADATA.to_owned(),
+            Gating::Off,
         );
         Rig {
             store,

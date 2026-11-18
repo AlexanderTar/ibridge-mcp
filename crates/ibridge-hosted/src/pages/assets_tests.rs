@@ -176,6 +176,7 @@ async fn the_apple_logo_is_used_exactly_when_its_files_are_present() {
 #[test]
 fn the_logo_files_are_apples_originals_committed_in_the_repo() {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for (file, sha256) in LOGO_FILES.iter().zip([
@@ -183,13 +184,15 @@ fn the_logo_files_are_apples_originals_committed_in_the_repo() {
         "7ee1bc1706bc228f37a937de914e2ebe1605aebba3c35f11c3963087573fc11f",
     ]) {
         let bytes = std::fs::read(logo_path(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
-        let hex: String = Sha256::digest(&bytes)
+        let hex = Sha256::digest(&bytes)
             .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+            .fold(String::new(), |mut hex, byte| {
+                write!(hex, "{byte:02x}").expect("writing to a String");
+                hex
+            });
         assert_eq!(hex, sha256, "{file} is Apple's original, unmodified");
     }
-    assert!(cfg!(apple_logo), "build.rs turns the logo on");
+    const { assert!(cfg!(apple_logo), "build.rs turns the logo on") };
 
     let gitignore = std::fs::read_to_string(root.join(".gitignore")).expect(".gitignore");
     assert!(

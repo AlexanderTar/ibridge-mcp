@@ -8,7 +8,8 @@
 //! delete the Firebase user. Neither is stored.
 //!
 //! Order matters for a failure half way. The subscription is cancelled first, so nobody is
-//! billed for an account that is going. The rows go next, and a failure there stops before
+//! billed for an account that is going. If that fails while the subscription still gives
+//! access, the deletion stops there. The rows go next, and a failure there stops before
 //! anything is revoked, so the person can try again. Apple and Firebase come last: they
 //! hold no data of ours, and a failure there is reported, not retried.
 
@@ -18,6 +19,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
 use super::signin;
+use crate::billing::grants_access;
 use crate::identity::{ReturnTo, SignedIn};
 use crate::oauth::Shared;
 use crate::store::{User, UserId};
@@ -60,6 +62,15 @@ pub(super) async fn complete(shared: &Shared, asked: UserId, signed: SignedIn) -
     };
     let mut failed: Vec<&'static str> = Vec::new();
     if cancel_subscription(shared, &user).await.is_err() {
+        // A subscription that still gives access keeps billing, so nothing is deleted
+        // until it is cancelled. Any other status is not billing, so the rest goes on.
+        if user.status.as_deref().is_some_and(grants_access) {
+            return message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Something went wrong",
+                TROUBLE,
+            );
+        }
         failed.push("Stripe");
     }
     match shared.store.delete_user(user.id).await {
@@ -89,13 +100,19 @@ pub(super) async fn complete(shared: &Shared, asked: UserId, signed: SignedIn) -
     response
 }
 
-/// Ends the user's subscription at once. Nothing to do when they never paid.
+/// Ends the user's subscription at once. Nothing to do when they never paid or it already ended.
 async fn cancel_subscription(shared: &Shared, user: &User) -> Result<(), ()> {
     let (Some(billing), Some(subscription)) =
         (shared.billing.as_ref(), user.stripe_subscription.as_deref())
     else {
         return Ok(());
     };
+    if matches!(
+        user.status.as_deref(),
+        Some("canceled" | "incomplete_expired")
+    ) {
+        return Ok(());
+    }
     billing.stripe.cancel_now(subscription).await.map_err(|error| {
         tracing::warn!(user = %user.id, %error, "could not cancel a subscription while deleting an account");
     })

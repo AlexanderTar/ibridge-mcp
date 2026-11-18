@@ -304,6 +304,11 @@ async fn handle(
             None => stripe_error(StatusCode::NOT_FOUND, "invalid_request_error"),
         },
         ("DELETE", ["v1", "subscriptions", id]) => match lock(&state.subscriptions).get_mut(*id) {
+            // Real Stripe (sandbox, 2026-11-18) answers a DELETE on an already-canceled
+            // subscription with 404 and code `resource_missing`, though a GET still finds it.
+            Some(object) if object["status"] == "canceled" => {
+                stripe_error(StatusCode::NOT_FOUND, "invalid_request_error")
+            }
             Some(object) => {
                 object["status"] = json!("canceled");
                 axum::Json(object.clone()).into_response()

@@ -239,14 +239,22 @@ impl Stripe {
 
     /// Cancels the subscription now, without waiting for the period to end.
     ///
+    /// A subscription that is already canceled counts as done: Stripe answers that DELETE
+    /// with 404 `resource_missing`, and the path is a checked id, so a 404 can mean nothing else.
+    ///
     /// # Errors
     ///
     /// Returns [`BillingError::BadId`] for an id that is not shaped like one, and the other
     /// [`BillingError`]s when Stripe cannot be reached or refuses.
     pub async fn cancel_now(&self, subscription_id: &str) -> Result<(), BillingError> {
         let path = format!("/v1/subscriptions/{}", checked_id(subscription_id)?);
-        let _: IgnoredReply = self.call(Method::DELETE, &path, &[], None).await?;
-        Ok(())
+        match self
+            .call::<IgnoredReply>(Method::DELETE, &path, &[], None)
+            .await
+        {
+            Ok(_) | Err(BillingError::Refused(404)) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     /// One call: pinned version, key, form body, reply parsed as `T`.
@@ -318,7 +326,7 @@ struct Hosted {
 }
 
 /// A reply whose content nobody reads, but which must still be a JSON object.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct IgnoredReply {}
 
 #[derive(Deserialize)]
@@ -653,6 +661,32 @@ mod tests {
         );
         let after = stripe.subscription("sub_1").await.expect("subscription");
         assert_eq!(after.status, "canceled");
+    }
+
+    #[tokio::test]
+    async fn a_second_cancel_is_refused_like_real_stripe() {
+        // Real Stripe (sandbox, 2026-11-18): DELETE on an already-canceled subscription
+        // answers 404 with error code `resource_missing`.
+        let (stripe, fake) = client(TaxMode::Managed).await;
+        fake.put_subscription("sub_1", "cus_1", "active", 1_900_000_000);
+        let delete = || {
+            stripe.call::<super::IgnoredReply>(
+                super::Method::DELETE,
+                "/v1/subscriptions/sub_1",
+                &[],
+                None,
+            )
+        };
+        delete().await.expect("the first cancel");
+        assert_eq!(
+            delete().await.expect_err("the second cancel"),
+            BillingError::Refused(404)
+        );
+        // The client reads that as done, not as a failure.
+        stripe
+            .cancel_now("sub_1")
+            .await
+            .expect("already canceled is done");
     }
 
     #[tokio::test]

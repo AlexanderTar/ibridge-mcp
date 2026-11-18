@@ -205,7 +205,8 @@ async fn delete_still_removes_rows_when_a_provider_call_fails() {
     let _guard = tracing::subscriber::set_default(json_subscriber(logs.clone(), Level::TRACE));
     let rig = Rig::billing().await;
     let (browser, user) = member(&rig).await;
-    rig.subscribe(&user, "active").await;
+    // A status that no longer gives access: a failed cancel is reported, not a stop.
+    rig.subscribe(&user, "unpaid").await;
     let stripe = rig.stripe.as_ref().expect("stripe");
     stripe.refuse_with(StatusCode::INTERNAL_SERVER_ERROR);
     rig.apple.fail_revoke(StatusCode::BAD_REQUEST);
@@ -301,4 +302,90 @@ async fn delete_without_subscription_skips_stripe() {
         done.text
     );
     let _ = IP;
+}
+
+/// Starts a deletion and finishes it with the fresh Apple sign-in.
+async fn delete_now(rig: &Rig, browser: &Browser) -> Reply {
+    let begun = rig
+        .post("/account/delete", browser, &[("confirm", "delete")])
+        .await;
+    let started = super::test_rig::Started::of(&begun);
+    rig.callback(&started, "fresh-code").await
+}
+
+#[tokio::test]
+async fn failed_cancel_of_a_paying_subscription_deletes_nothing() {
+    for status in ["active", "past_due"] {
+        let rig = Rig::billing().await;
+        let (browser, user) = member(&rig).await;
+        rig.subscribe(&user, status).await;
+        let before = rows(&rig).await;
+        rig.stripe
+            .as_ref()
+            .expect("stripe")
+            .refuse_with(StatusCode::INTERNAL_SERVER_ERROR);
+
+        let done = delete_now(&rig, &browser).await;
+        assert_eq!(
+            done.status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{status}: {}",
+            done.text
+        );
+        assert!(
+            done.text.contains("Nothing was deleted"),
+            "{status}: {}",
+            done.text
+        );
+        assert_eq!(rows(&rig).await, before, "{status}: rows stay");
+        assert_eq!(rig.apple.revoke_requests().len(), 0, "{status}");
+        assert_eq!(rig.firebase.deletes().len(), 0, "{status}");
+        assert!(!session_cleared(&done), "{status}: still signed in");
+
+        // Stripe comes back and the person tries again.
+        rig.stripe.as_ref().expect("stripe").recover();
+        let again = delete_now(&rig, &browser).await;
+        assert_eq!(again.status, StatusCode::OK, "{status}: {}", again.text);
+        assert_eq!(rows(&rig).await, [0, 0, 0, 0], "{status}");
+    }
+}
+
+#[tokio::test]
+async fn terminal_subscription_is_not_cancelled_again() {
+    for status in ["canceled", "incomplete_expired"] {
+        let rig = Rig::billing().await;
+        let (browser, user) = member(&rig).await;
+        rig.subscribe(&user, status).await;
+        let done = delete_now(&rig, &browser).await;
+        assert_eq!(done.status, StatusCode::OK, "{status}: {}", done.text);
+        assert!(
+            !done.text.contains("Stripe"),
+            "{status}: nothing to finish at Stripe: {}",
+            done.text
+        );
+        assert_eq!(stripe_deletes(&rig).len(), 0, "{status}: no cancel call");
+        assert_eq!(rows(&rig).await, [0, 0, 0, 0], "{status}");
+    }
+}
+
+#[tokio::test]
+async fn subscription_already_cancelled_at_stripe_counts_as_done() {
+    let rig = Rig::billing().await;
+    let (browser, user) = member(&rig).await;
+    // Our row still says active (the webhook has not landed); Stripe has ended it.
+    rig.subscribe(&user, "active").await;
+    rig.stripe.as_ref().expect("stripe").put_subscription(
+        "sub_page",
+        "cus_page",
+        "canceled",
+        1_900_000_000,
+    );
+    let done = delete_now(&rig, &browser).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.text);
+    assert!(
+        !done.text.contains("Stripe"),
+        "an already-ended subscription is not a failure: {}",
+        done.text
+    );
+    assert_eq!(rows(&rig).await, [0, 0, 0, 0]);
 }

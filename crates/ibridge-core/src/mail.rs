@@ -222,7 +222,7 @@ pub struct Message {
     pub subject: String,
     /// Date header, as text.
     pub date: String,
-    /// Body as text. Untrusted content.
+    /// Body as text.
     pub body: String,
     /// Attachments, without their bytes.
     pub attachments: Vec<AttachmentInfo>,

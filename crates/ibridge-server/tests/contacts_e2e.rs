@@ -663,3 +663,14 @@ async fn the_text_content_carries_the_data_not_only_the_summary() {
         "the summary stays in its own block first: {blocks:?}"
     );
 }
+
+#[tokio::test]
+async fn published_schemas_do_not_label_fields_untrusted() {
+    let client = serve(&Arc::new(Fake::seeded())).await;
+    let tools = client.list_all_tools().await.expect("list tools");
+    let listing = serde_json::to_string(&tools).expect("serialise tools");
+    assert!(
+        !listing.to_lowercase().contains("untrusted"),
+        "tools/list carries no untrusted label"
+    );
+}

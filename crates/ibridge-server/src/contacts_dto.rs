@@ -67,9 +67,9 @@ pub struct SetGroupMembershipParams {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub(crate) struct LabeledOut {
-    /// Untrusted content.
+    /// As stored on the card.
     pub(crate) value: String,
-    /// Untrusted content.
+    /// As stored on the card.
     pub(crate) label: Option<String>,
 }
 
@@ -77,7 +77,7 @@ pub(crate) struct LabeledOut {
 pub(crate) struct GroupOut {
     /// Pass as `group` to `contacts_set_group_membership`.
     pub(crate) id: String,
-    /// Untrusted content.
+    /// As stored on the card.
     pub(crate) name: String,
 }
 
@@ -85,13 +85,13 @@ pub(crate) struct GroupOut {
 pub(crate) struct ContactOut {
     pub(crate) id: String,
     pub(crate) etag: String,
-    /// Untrusted content.
+    /// As stored on the card.
     pub(crate) name: String,
     pub(crate) emails: Vec<LabeledOut>,
     pub(crate) phones: Vec<LabeledOut>,
-    /// Untrusted content.
+    /// As stored on the card.
     pub(crate) organization: Option<String>,
-    /// Untrusted content.
+    /// As stored on the card.
     pub(crate) note: Option<String>,
     /// The card is a group, not a person.
     pub(crate) is_group: bool,

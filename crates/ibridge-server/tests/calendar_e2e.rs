@@ -825,3 +825,18 @@ async fn calendar_and_reminder_text_content_carries_the_data() {
         assert!(text_of(result).contains(&json), "the JSON is in the text");
     }
 }
+
+#[tokio::test]
+async fn published_schemas_do_not_label_fields_untrusted() {
+    let client = connect(
+        IbridgeServer::read_write(account(), Arc::new(NoMail))
+            .with_calendar(Arc::new(Fake::seeded())),
+    )
+    .await;
+    let tools = client.list_all_tools().await.expect("list tools");
+    let listing = serde_json::to_string(&tools).expect("serialise tools");
+    assert!(
+        !listing.to_lowercase().contains("untrusted"),
+        "tools/list carries no untrusted label"
+    );
+}

@@ -62,8 +62,8 @@ impl MailApi for Scripted {
         Ok(MailBody {
             message: Message {
                 id: id.clone(),
-                from: "bob@example.com".to_owned(),
-                to: vec!["ada@icloud.com".to_owned()],
+                from: "Bob\u{202E}\u{E0049} <bob@example.com>".to_owned(),
+                to: vec!["Ada\u{200B} <ada@icloud.com>".to_owned()],
                 subject: "Pic\u{FEFF}nic\u{202E}".to_owned(),
                 date: "2026-11-01".to_owned(),
                 body: "Bring\u{200B} napkins.\u{E0049}\u{E0067}\u{2066}".to_owned(),
@@ -194,6 +194,16 @@ async fn e2e_search_then_get() {
         message["subject"].as_str(),
         Some("Picnic"),
         "the subject arrives as plain text with hidden characters stripped"
+    );
+    assert_eq!(
+        message["from"].as_str(),
+        Some("Bob <bob@example.com>"),
+        "the sender's display name has hidden characters stripped"
+    );
+    assert_eq!(
+        message["to"][0].as_str(),
+        Some("Ada <ada@icloud.com>"),
+        "recipient display names have hidden characters stripped"
     );
     assert!(
         !message.to_string().contains("untrusted"),

@@ -21,16 +21,16 @@ pub struct ContactQuery {
 pub struct GroupRef {
     /// Path of the group card, for `set_group_membership`.
     pub path: ResourcePath,
-    /// Group name. Untrusted content.
+    /// Group name.
     pub name: String,
 }
 
 /// An email address or phone number with the label the card gives it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LabeledValue {
-    /// The address or number. Untrusted content.
+    /// The address or number.
     pub value: String,
-    /// `Home`, `Work`, `Cell` or a custom label. Untrusted content.
+    /// `Home`, `Work`, `Cell` or a custom label.
     pub label: Option<String>,
 }
 
@@ -50,15 +50,15 @@ pub struct Contact {
     pub path: ResourcePath,
     /// `ETag` for a conditional write.
     pub etag: ETag,
-    /// Full name. Untrusted content.
+    /// Full name.
     pub full_name: String,
     /// Email addresses.
     pub emails: Vec<LabeledValue>,
     /// Phone numbers.
     pub phones: Vec<LabeledValue>,
-    /// Company. Untrusted content.
+    /// Company.
     pub organization: Option<String>,
-    /// Free-text note. Untrusted content.
+    /// Free-text note.
     pub note: Option<String>,
     /// The card is a group, not a person.
     pub is_group: bool,

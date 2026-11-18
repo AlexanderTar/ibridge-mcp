@@ -791,7 +791,7 @@ fn mailbox_out(mailbox: &Mailbox) -> MailboxOut {
 fn hit_out(hit: &MessageSummary) -> SearchHitOut {
     SearchHitOut {
         id: encode(&hit.id),
-        from: hit.from.clone(),
+        from: strip_hidden(&hit.from),
         subject: strip_hidden(&hit.subject),
         date: hit.date.clone(),
         unread: hit.unread,
@@ -802,8 +802,8 @@ fn hit_out(hit: &MessageSummary) -> SearchHitOut {
 fn message_out(message: &Message, next_offset: Option<usize>) -> MessageOut {
     MessageOut {
         id: encode(&message.id),
-        from: message.from.clone(),
-        to: message.to.clone(),
+        from: strip_hidden(&message.from),
+        to: message.to.iter().map(|to| strip_hidden(to)).collect(),
         subject: strip_hidden(&message.subject),
         date: message.date.clone(),
         body: strip_hidden(&message.body),

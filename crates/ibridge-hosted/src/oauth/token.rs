@@ -684,6 +684,15 @@ mod tests {
             reply["result"]["protocolVersion"], "2025-11-25",
             "the session speaks the protocol the client asked for: {reply}"
         );
+        // Claude's connector list takes the server's icon from `initialize`, at the public URL.
+        assert_eq!(
+            reply["result"]["serverInfo"]["icons"],
+            serde_json::json!([
+                {"src": format!("{base}/favicon.svg"), "mimeType": "image/svg+xml", "sizes": ["any"]},
+                {"src": format!("{base}/favicon-32.png"), "mimeType": "image/png", "sizes": ["32x32"]},
+            ]),
+            "serverInfo carries the root favicons: {reply}"
+        );
         let headers = owned(session_headers(&session));
         let ready = rpc(
             &headers,

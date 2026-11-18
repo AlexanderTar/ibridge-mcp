@@ -12,14 +12,13 @@ expression: "manifest(\"0.1.0\", platform)"
       "linux"
     ]
   },
-  "description": "Read and search iCloud Mail, Calendar, Reminders and Contacts from Claude.",
-  "display_name": "ibridge",
-  "homepage": "https://github.com/AlexanderTar/icloud-mcp",
+  "description": "Read, search and manage iCloud Mail, Calendar and Contacts from Claude.",
+  "display_name": "iBridge",
+  "homepage": "https://ibridge.fyi",
   "keywords": [
     "icloud",
     "mail",
     "calendar",
-    "reminders",
     "contacts"
   ],
   "license": "Apache-2.0",

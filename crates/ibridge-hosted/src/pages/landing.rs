@@ -152,7 +152,7 @@ mod tests {
     async fn pages_render_and_link_from_authorize() {
         let h = harness(Access::MultiTenant).await;
         for (path, heading) in [
-            ("/", "ibridge"),
+            ("/", "iBridge"),
             ("/privacy", "Privacy"),
             ("/terms", "Terms"),
         ] {

@@ -24,6 +24,7 @@ ibridge-contacts.workspace = true
 ibridge-core.workspace = true
 ibridge-dav.workspace = true
 ibridge-mail.workspace = true
+jsonschema.workspace = true
 mail-parser.workspace = true
 regex.workspace = true
 serde_json.workspace = true

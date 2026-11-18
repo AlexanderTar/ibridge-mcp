@@ -148,6 +148,7 @@ where
     ///
     /// Returns an MCP error when the calendars cannot be read.
     #[tool(
+        title = "List calendars",
         description = "Lists calendars. Each one says whether it holds events, tasks (reminders) or both.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<CalendarListOut>(),
@@ -178,6 +179,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when an id, the range or the page
     /// size is not usable, and an MCP error when the events cannot be read.
     #[tool(
+        title = "List events",
         description = "Lists events in a time range over one or more calendars. Repeating events are expanded into their occurrences.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<EventListOut>(),
@@ -223,6 +225,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id is not usable, and an
     /// MCP error when the event cannot be read.
     #[tool(
+        title = "Get event",
         description = "Fetches one event in full, including attendees and alarms.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<EventOut>(),
@@ -244,6 +247,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the calendar id or a time is
     /// not usable, and an MCP error when the event cannot be written.
     #[tool(
+        title = "Create event",
         description = "Creates an event. Times are ISO-8601 and the time zone is an IANA name. An end is always stored.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOut>(),
@@ -279,6 +283,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when an id, `ETag` or time is not
     /// usable, and a tool error when the event changed since it was read.
     #[tool(
+        title = "Update event",
         description = "Changes an event. Needs the etag from the last read; a changed event is refused. Applies to the whole series unless an occurrence is named.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOut>(),
@@ -340,6 +345,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id or `ETag` is not
     /// usable, and a tool error when the event changed since it was read.
     #[tool(
+        title = "Delete event",
         description = "Deletes an event. Needs the etag from the last read; a changed event is refused.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<DeleteOut>(),
@@ -362,6 +368,7 @@ where
     ///
     /// Returns an MCP error when the lists cannot be read.
     #[tool(
+        title = "List reminder lists",
         description = "Lists reminder lists. Only old-style lists can be reached; the result says so.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ReminderListsOut>(),
@@ -393,6 +400,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the list id or page size is
     /// not usable, and an MCP error when the reminders cannot be read.
     #[tool(
+        title = "List reminders",
         description = "Lists reminders in one list or all lists. Open reminders only, unless include_completed is set.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<RemindersOut>(),
@@ -430,6 +438,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the list id, due date or
     /// priority is not usable, and an MCP error when it cannot be written.
     #[tool(
+        title = "Create reminder",
         description = "Creates a reminder in a reminder list.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOut>(),
@@ -465,6 +474,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when an id, `ETag`, due date or
     /// priority is not usable, and a tool error when the reminder changed.
     #[tool(
+        title = "Update reminder",
         description = "Changes a reminder, including marking it completed. Needs the etag from the last read; a changed reminder is refused.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOut>(),
@@ -510,6 +520,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id or `ETag` is not
     /// usable, and a tool error when the reminder changed since it was read.
     #[tool(
+        title = "Delete reminder",
         description = "Deletes a reminder. Needs the etag from the last read; a changed reminder is refused.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<DeleteOut>(),

@@ -1,6 +1,6 @@
 # Security model of the hosted server
 
-This page describes what the hosted ibridge server (`ibridge serve --hosted`) protects, how, and where the protection ends. The local modes (`serve --stdio`, the loopback daemon) keep the password in your OS keychain and are not covered here. To report a vulnerability, see [SECURITY.md](../SECURITY.md).
+This page describes what the hosted iBridge server (`ibridge serve --hosted`) protects, how, and where the protection ends. The local modes (`serve --stdio`, the loopback daemon) keep the password in your OS keychain and are not covered here. To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
 ## What is stored
 

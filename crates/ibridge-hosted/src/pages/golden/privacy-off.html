@@ -1,9 +1,9 @@
-<main class="wide">
+<main class="panel panel--prose">
 
-<h1>Privacy policy</h1>
-<p>This policy covers the ibridge service at https://ibridge.example. ibridge is unofficial and not affiliated with Apple. In short: we keep what we need to run your connection, we keep your app-specific password only in a form we cannot decrypt, and we explain below the moments when we can still see it.</p>
+<h1 class="h1">Privacy policy</h1>
+<p>This policy covers the iBridge service at https://ibridge.example. iBridge is unofficial and not affiliated with Apple. In short: we keep what we need to run your connection, we keep your app-specific password only in a form we cannot decrypt, and we explain below the moments when we can still see it.</p>
 
-<h2>What we store</h2>
+<h2 class="h3">What we store</h2>
 <ul>
 <li>Your iCloud address, and when your account was created.</li>
 <li>For each connected app or API key: its kind, the name you gave a key, whether it is read-only, whether it was revoked, and when it was made.</li>
@@ -12,12 +12,12 @@
 <li>Logs: one line per request with the method, the page address with any token removed, and the result. No passwords, tokens, request bodies, mail, events or contacts are written to them.</li>
 <li>In memory only: the network address and iCloud address of recent sign-in attempts, to rate-limit guessing. They are forgotten within 15 minutes. Our hosting platform may keep its own request logs, including network addresses, under its own retention.</li>
 </ul>
-<p>We do not store the content of your mail, calendar, reminders or contacts. We do not sell or share your data, and we run no advertising or analytics.</p>
+<p>We do not store the content of your mail, calendar or contacts. We do not sell or share your data, and we run no advertising or analytics.</p>
 
-<h2>Why we cannot decrypt your password from storage</h2>
+<h2 class="h3">Why we cannot decrypt your password from storage</h2>
 <p>Your app-specific password is encrypted with a key made from the token your connected app holds (or the API key you hold). We keep the encrypted copy and a hash of the token, and nothing else. The key is not on the server, and there is no master key. A copy of our database together with every server setting cannot decrypt a stored password, and neither can we or anyone who reads our storage. Each connected app or key has its own encrypted copy.</p>
 
-<h2>What risk remains</h2>
+<h2 class="h3">What risk remains</h2>
 <p>The server has to use your password to log in to iCloud for you, so it holds the password in memory at two moments, while you sign in and while a request runs:</p>
 <ul>
 <li>At sign-in: it receives the password you type, checks it with iCloud and encrypts it.</li>
@@ -25,10 +25,10 @@
 </ul>
 <p>Whoever controls the running server could capture the password at those moments. For example, an operator or an attacker who changes the code the server runs could. The code is open source and each deployment names its exact version, which makes a change visible but does not prevent one. The <a href="https://github.com/AlexanderTar/icloud-mcp/blob/main/docs/security-model.md" rel="noopener noreferrer" target="_blank">security model</a> describes the encryption, its limits and the threats it does and does not cover. We keep logged-in mail connections open for up to five minutes after a request to save logging in again; the password is not kept with them. Mail, event and contact text passes through the server while a request runs.</p>
 
-<h2>Revoke the password at Apple</h2>
-<p>When you stop using ibridge, or if anything looks wrong, revoke the app-specific password at Apple. Sign in to your Apple Account, open Sign-In and Security, then App-Specific Passwords, and revoke the one you gave us (<a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">Apple's guide</a>). That is the one step that makes the password useless everywhere, whatever anyone holds. Deleting your account here removes our copies but does not revoke it for you, so you should revoke the app-specific password at Apple as well.</p>
+<h2 class="h3">Revoke the password at Apple</h2>
+<p>When you stop using iBridge, or if anything looks wrong, revoke the app-specific password at Apple. Sign in to your Apple Account, open Sign-In and Security, then App-Specific Passwords, and revoke the one you gave us (<a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">Apple's guide</a>). That is the one step that makes the password useless everywhere, whatever anyone holds. Deleting your account here removes our copies but does not revoke it for you, so you should revoke the app-specific password at Apple as well.</p>
 
-<h2>How long we keep things</h2>
+<h2 class="h3">How long we keep things</h2>
 <ul>
 <li>A sign-in code lasts 60 seconds, and an access token one hour.</li>
 <li>A connected app that goes 90 days without using its connection can no longer open its copy of your password and has to sign in again.</li>
@@ -37,10 +37,10 @@
 <li>We back up the database daily and keep the last 7 days. A backup holds only encrypted copies. Something you delete can remain in a backup for up to 7 days.</li>
 </ul>
 
-<h2>Who else is involved</h2>
+<h2 class="h3">Who else is involved</h2>
 <p>Apple's iCloud receives your password when we log in on your behalf, under Apple's own terms. Our hosting platform runs the server and stores the database. We use no other service.</p>
 
-<h2>Your choices and contact</h2>
+<h2 class="h3">Your choices and contact</h2>
 <p>You can see, revoke and delete everything on the <a href="/account">account page</a>. For anything else, including a request we cannot meet there:
  the operator of this service has not published a contact address yet.</p>
 

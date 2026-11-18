@@ -128,7 +128,7 @@ async fn privacy_lists_outside_services_when_identity_or_billing_on() {
         "your email",
         "payment details",
         "None of them receives your app-specific password",
-        "content of your mail, calendar, reminders or contacts",
+        "content of your mail, calendar or contacts",
     ] {
         assert!(page.text.contains(expected), "{expected} in: {}", page.text);
     }

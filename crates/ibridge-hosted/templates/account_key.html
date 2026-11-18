@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Your new API key{% endblock %}
 {% block body %}
-<h1>Your new API key</h1>
+<h1 class="h2">Your new API key</h1>
 <p>Copy the key for <strong>{{ name }}</strong> now. We show it once and keep only a hash of it, so we cannot show it again. If you lose it, revoke it and make another.</p>
 <p><code class="key" id="new-key">{{ key }}</code></p>
 <p class="hint">Send it as <code>Authorization: Bearer</code> followed by the key. Anyone who has it can use your iCloud through this service, so keep it secret.</p>
-<p><a href="/account">Back to your account</a></p>
+<a class="btn btn--secondary" href="/account">Back to your account</a>
 {% endblock %}

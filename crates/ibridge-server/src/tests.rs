@@ -175,6 +175,24 @@ fn tools_list_snapshot() {
 }
 
 #[test]
+fn every_mail_tool_has_a_title() {
+    let tools = IbridgeServer::read_write(account(), Arc::new(Idle))
+        .with_downloads(std::path::PathBuf::from("downloads"))
+        .tools();
+    assert!(
+        tools.iter().any(|tool| tool.name == "mail_save_attachment"),
+        "the download tool is part of this check"
+    );
+    for tool in &tools {
+        assert!(
+            tool.title.as_ref().is_some_and(|text| !text.is_empty()),
+            "{} has no title",
+            tool.name
+        );
+    }
+}
+
+#[test]
 fn every_write_tool_is_destructive() {
     let tools = IbridgeServer::read_write(account(), Arc::new(Idle)).tools();
     for name in WRITES {

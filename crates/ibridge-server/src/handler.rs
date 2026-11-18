@@ -350,6 +350,7 @@ where
     ///
     /// Returns an MCP error when the mailbox list cannot be read.
     #[tool(
+        title = "List mailboxes",
         description = "Lists mailboxes with their roles and counts.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<MailboxListOut>(),
@@ -369,6 +370,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the page size is above 100
     /// or a filter is not usable, and an MCP error when the search cannot be run.
     #[tool(
+        title = "Search mail",
         description = "Searches messages, newest first.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<SearchOut>(),
@@ -407,6 +409,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id or offset is not usable,
     /// and an MCP error when the message cannot be read.
     #[tool(
+        title = "Get message",
         description = "Fetches one message, including its text and attachment list.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<MessageOut>(),
@@ -430,6 +433,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id or offset is not usable,
     /// and an MCP error when the part cannot be read.
     #[tool(
+        title = "Get attachment",
         description = "Fetches one attachment as text or as a small inline file.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<AttachmentOut>(),
@@ -467,6 +471,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id is not usable, and an MCP
     /// error when the part cannot be read or the file cannot be written.
     #[tool(
+        title = "Save attachment to disk",
         description = "Saves one attachment into the download folder and returns the file path. Local installs only.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<SavedAttachmentOut>(),
@@ -516,6 +521,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the draft is not usable,
     /// and an MCP error when the draft cannot be saved.
     #[tool(
+        title = "Create draft",
         description = "Saves a draft in Drafts.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<IdOut>(),
@@ -541,6 +547,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the message is not usable,
     /// and an MCP error when SMTP refuses the message.
     #[tool(
+        title = "Send message",
         description = "Sends a message and saves a copy in Sent Messages.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<SendOut>(),
@@ -571,6 +578,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the destination is not usable,
     /// and an MCP error when the move cannot be done.
     #[tool(
+        title = "Move message",
         description = "Moves a message to a mailbox or a role.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<MoveOut>(),
@@ -594,6 +602,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id is not usable,
     /// and an MCP error when the flags cannot be stored.
     #[tool(
+        title = "Set message flags",
         description = "Sets or clears seen and flagged. Repeating the same change does nothing more.",
         annotations(
             read_only_hint = false,
@@ -624,6 +633,7 @@ where
     ///
     /// Returns an MCP error when the status cannot be built.
     #[tool(
+        title = "Get account status",
         description = "Reports the signed-in address, each service, and the server version.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = false),
         output_schema = rmcp::handler::server::tool::schema_for_output::<AccountStatusOut>(),

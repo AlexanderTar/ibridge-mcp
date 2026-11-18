@@ -5,6 +5,7 @@ expression: tools
 [
   {
     "name": "account_status",
+    "title": "Get account status",
     "description": "Reports the signed-in address, each service, and the server version.",
     "inputSchema": {
       "properties": {},
@@ -72,6 +73,7 @@ expression: tools
   },
   {
     "name": "mail_create_draft",
+    "title": "Create draft",
     "description": "Saves a draft in Drafts.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -135,6 +137,7 @@ expression: tools
   },
   {
     "name": "mail_get_attachment",
+    "title": "Get attachment",
     "description": "Fetches one attachment as text or as a small inline file.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -214,6 +217,7 @@ expression: tools
   },
   {
     "name": "mail_get_message",
+    "title": "Get message",
     "description": "Fetches one message, including its text and attachment list.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -321,6 +325,7 @@ expression: tools
   },
   {
     "name": "mail_list_mailboxes",
+    "title": "List mailboxes",
     "description": "Lists mailboxes with their roles and counts.",
     "inputSchema": {
       "properties": {},
@@ -378,6 +383,7 @@ expression: tools
   },
   {
     "name": "mail_move",
+    "title": "Move message",
     "description": "Moves a message to a mailbox or a role.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -428,6 +434,7 @@ expression: tools
   },
   {
     "name": "mail_search",
+    "title": "Search mail",
     "description": "Searches messages, newest first.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -599,6 +606,7 @@ expression: tools
   },
   {
     "name": "mail_send",
+    "title": "Send message",
     "description": "Sends a message and saves a copy in Sent Messages.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -672,6 +680,7 @@ expression: tools
   },
   {
     "name": "mail_set_flags",
+    "title": "Set message flags",
     "description": "Sets or clears seen and flagged. Repeating the same change does nothing more.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

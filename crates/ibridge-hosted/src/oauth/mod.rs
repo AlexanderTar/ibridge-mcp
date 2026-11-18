@@ -69,7 +69,7 @@ pub struct OAuthConfig {
 #[non_exhaustive]
 pub enum ConfigError {
     /// Not a URL, not https, or it carries a path, query or fragment.
-    #[error("the public URL must be an https origin such as https://ibridge.fyi")]
+    #[error("the public URL must be an https origin such as https://mcp.ibridge.fyi")]
     PublicUrl,
     /// Some of the Sign in with Apple and Firebase settings are set, but not all.
     #[error(
@@ -405,6 +405,7 @@ pub(crate) async fn router_with(
         .merge(crate::pages::signin::routes(&shared))
         .merge(crate::billing::routes::routes(&shared))
         .merge(crate::pages::landing::routes(&shared))
+        .merge(crate::assets::routes())
         .layer(tracing_layer());
     Ok((router, shared))
 }

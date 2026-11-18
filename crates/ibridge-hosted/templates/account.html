@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Your ibridge account{% endblock %}
+{% block title %}Your iBridge account{% endblock %}
 {% block body %}
-<h1>Your account</h1>
+<h1 class="h2">Your account</h1>
 {% if profile.is_none() %}
 <p>Signed in as <strong>{{ apple_id }}</strong>.</p>
 {% endif %}
-{% if let Some(message) = error %}<p class="error" role="alert">{{ message }}</p>{% endif %}
+{% if let Some(message) = error %}<p class="alert" role="alert">{{ message }}</p>{% endif %}
 {% if let Some(profile) = profile %}
 <dl class="facts">
 <dt>Apple email</dt><dd>{{ profile.email }}</dd>
@@ -17,8 +17,8 @@
 <p>{{ price }}, with taxes handled by Stripe at checkout. One plan covers one iCloud account.</p>
 <form method="post" action="/billing/checkout">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-<button type="submit" name="plan" value="monthly">Subscribe monthly</button>
-<button type="submit" name="plan" value="yearly">Subscribe yearly</button>
+<button class="btn btn--primary" type="submit" name="plan" value="monthly">Subscribe monthly</button>
+<button class="btn btn--primary" type="submit" name="plan" value="yearly">Subscribe yearly</button>
 </form>
 {% endif %}
 {% if let Some(why) = plan.refused %}
@@ -27,12 +27,12 @@
 {% if plan.manage %}
 <form method="post" action="/billing/portal">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-<button class="secondary" type="submit">Manage billing</button>
+<button class="btn btn--secondary" type="submit">Manage billing</button>
 </form>
 {% endif %}
 {% endif %}
 {% endif %}
-<h2>Connected apps and API keys</h2>
+<h2 class="h3 section-title">Connected apps and API keys</h2>
 {% if grants.is_empty() %}
 <p>Nothing is connected.</p>
 {% else %}
@@ -45,7 +45,7 @@
 <form method="post" action="/account/revoke">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="hidden" name="grant" value="{{ grant.id }}">
-<button class="secondary" type="submit">Revoke</button>
+<button class="btn btn--secondary" type="submit">Revoke</button>
 </form>
 {% endif %}
 </li>
@@ -53,41 +53,38 @@
 </ul>
 {% endif %}
 <p class="hint">Revoking cuts an app off at once. To reconnect it, sign in again from the app.</p>
-<h2>New API key</h2>
+<h2 class="h3 section-title">New API key</h2>
 <p>For apps that cannot sign in with OAuth. We show the key once.</p>
 <form method="post" action="/account/keys" autocomplete="off">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-<label for="name">Name</label>
-<input id="name" name="name" type="text" required maxlength="64">
+<div class="field"><label for="name">Name</label><input id="name" name="name" type="text" required maxlength="64"></div>
 {% if ask_address %}
-<label for="apple_id">Your primary iCloud address</label>
-<input id="apple_id" name="apple_id" type="email" inputmode="email" autocomplete="username" required maxlength="254">
+<div class="field"><label for="apple_id">Your primary iCloud address</label><input id="apple_id" name="apple_id" type="email" inputmode="email" autocomplete="username" required maxlength="254"></div>
 <p class="hint">{% if billing %}Your plan covers one iCloud address. {% endif %}The first one you connect is the one this account keeps.</p>
 {% endif %}
-<label for="password">App-specific password</label>
-<input id="password" name="password" type="password" autocomplete="off" required maxlength="64">
-<p class="hint">The key keeps your app-specific password sealed under itself. Type it again so we can check it with iCloud and seal it.</p>
+<div class="field"><label for="password">App-specific password</label><input id="password" name="password" type="password" autocomplete="off" required maxlength="64"></div>
+<p class="hint">Your app-specific password is stored encrypted, and only this key can unlock it. Enter it again so we can check it with iCloud.</p>
 <label class="check" for="read_only"><input id="read_only" name="read_only" type="checkbox"><span>Read-only access. The key can read but cannot send, move, change or delete anything.</span></label>
-<button type="submit">Create key</button>
+<button class="btn btn--primary btn--lg" type="submit">Create key</button>
 </form>
-<h2>Delete everything</h2>
+<h2 class="h3 section-title">Delete everything</h2>
 {% if profile.is_some() %}
 <p>Deletes your account, your connected apps, your API keys and every encrypted copy of your app-specific password. {% if billing %}It ends your subscription at once and removes{% else %}It removes{% endif %} this service from your Apple account. You will sign in with Apple once more to confirm.</p>
 <form method="post" action="/account/delete">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <label class="check" for="confirm"><input id="confirm" name="confirm" type="checkbox" value="delete"><span>Yes, delete my account and everything stored for it.</span></label>
-<button class="secondary" type="submit">Delete my account</button>
+<button class="btn btn--danger" type="submit">Delete my account</button>
 </form>
 {% else %}
 <p>Deletes your connected apps, your API keys and every encrypted copy of your app-specific password. Afterwards, revoke that password at Apple too.</p>
 <form method="post" action="/account/delete">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <label class="check" for="confirm"><input id="confirm" name="confirm" type="checkbox" value="delete"><span>Yes, delete everything stored for {{ apple_id }}.</span></label>
-<button class="secondary" type="submit">Delete everything</button>
+<button class="btn btn--danger" type="submit">Delete everything</button>
 </form>
 {% endif %}
 <form method="post" action="/account/logout">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-<button class="secondary" type="submit">Sign out</button>
+<button class="btn btn--secondary" type="submit">Sign out</button>
 </form>
 {% endblock %}

@@ -1,0 +1,10 @@
+{
+  "name": "iBridge",
+  "short_name": "iBridge",
+  "description": "Connect iCloud to your AI assistant.",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#FFFFFF",
+  "theme_color": "#0B7A80",
+  "icons": [{ "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }]
+}

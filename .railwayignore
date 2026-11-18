@@ -1,0 +1,4 @@
+# `railway up` skips what .gitignore names. Re-include Apple's logo files, which are gitignored
+# on purpose and must be in the hosted build (crates/ibridge-hosted/build.rs).
+!/crates/ibridge-hosted/assets/apple-logo-white.svg
+!/crates/ibridge-hosted/assets/apple-logo-black.svg

@@ -7,10 +7,14 @@ pub(crate) mod account;
 mod account_apple_tests;
 #[cfg(test)]
 mod account_delete_tests;
+#[cfg(test)]
+mod assets_tests;
 mod delete;
 pub(crate) mod landing;
 #[cfg(test)]
 mod legal_tests;
+#[cfg(test)]
+mod restyle_tests;
 pub(crate) mod signin;
 #[cfg(test)]
 pub(crate) mod test_rig;

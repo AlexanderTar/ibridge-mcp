@@ -104,6 +104,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the query is empty or the
     /// limit is above 100, and an MCP error when the search cannot be run.
     #[tool(
+        title = "Search contacts",
         description = "Searches contacts by name, email address or phone number. Matching is done by this server, not by iCloud.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ContactListOut>(),
@@ -151,6 +152,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id is not usable, and an
     /// MCP error when the contact cannot be read.
     #[tool(
+        title = "Get contact",
         description = "Fetches one contact in full: labels, note, company and the groups it is in.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ContactOut>(),
@@ -172,6 +174,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the name is empty, and an MCP
     /// error when the contact cannot be written.
     #[tool(
+        title = "Create contact",
         description = "Creates a contact from a name, email addresses and phone numbers.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOut>(),
@@ -204,6 +207,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id or etag is not usable,
     /// and an MCP error when the contact cannot be written.
     #[tool(
+        title = "Update contact",
         description = "Changes a contact. Needs the etag from the last read; a changed contact is refused. Fields you omit, and everything else on the card, are kept.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOut>(),
@@ -239,6 +243,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when the id or etag is not usable,
     /// and an MCP error when the contact cannot be deleted.
     #[tool(
+        title = "Delete contact",
         description = "Deletes a contact. Needs the etag from the last read. iCloud ignores the etag on delete, so the card is read again and compared first; a small race window remains between that read and the delete.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<DeleteOut>(),
@@ -262,6 +267,7 @@ where
     /// Returns [`ErrorData::invalid_params`] when an id or the action is not
     /// usable, and an MCP error when the group cannot be rewritten.
     #[tool(
+        title = "Change contact group membership",
         description = "Adds a contact to an existing group or removes it, by rewriting the group card. Groups cannot be created or deleted.",
         annotations(read_only_hint = false, destructive_hint = true, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<MembershipOut>(),

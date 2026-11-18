@@ -7,12 +7,16 @@
 <h1>ibridge</h1>
 <p>ibridge lets an AI assistant such as Claude read and manage your iCloud Mail, Calendar, Reminders and Contacts, using the standard Model Context Protocol (MCP). You choose what it may do, and you can cut it off at any time.</p>
 <p>ibridge is an unofficial service. It is not affiliated with Apple, and it is not endorsed by Apple. iCloud is a trademark of Apple Inc.</p>
+{% if let Some(price) = price %}
+<h2>Price</h2>
+<p>{{ price }}. Taxes are handled by Stripe at checkout. One plan covers one iCloud account, and you can cancel at any time on your account page.</p>
+{% endif %}
 <h2>Connect Claude</h2>
 <p>The connector address is:</p>
 <p><code class="key">{{ connector }}</code></p>
 <ol>
 <li>In Claude, open Settings, then Connectors, and add a custom connector. Paste the address above.</li>
-<li>Claude opens a sign-in page here. Enter your primary iCloud address and an <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">app-specific password</a>. Never use your main Apple ID password.</li>
+<li>Claude opens a sign-in page here. {% if identity %}Sign in with Apple{% if price.is_some() %}, choose a plan{% endif %}, then enter{% else %}Enter{% endif %} your primary iCloud address and an <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">app-specific password</a>. Never use your main Apple ID password.</li>
 <li>Pick read-only access if you only want the assistant to look. Approve, and you are connected.</li>
 </ol>
 <p>In Claude Code, run <code>claude mcp add --transport http ibridge {{ connector }}</code>. Other assistants that support MCP sign-in work the same way. For one that cannot sign in, make a personal API key on your account page.</p>

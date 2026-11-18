@@ -198,14 +198,13 @@ pub(crate) async fn harness_billing(
     harness_built(config, store, evict, mcp, Some(identity), Some(billing)).await
 }
 
-/// A harness with Sign in with Apple on, and Stripe when `billing` is given, for `access`.
+/// A harness serving with `config`, with Sign in with Apple on, and Stripe when `billing` is given.
 pub(crate) async fn harness_featured(
-    access: Access,
+    config: OAuthConfig,
     store: Store,
     identity: Identity,
     billing: Option<Billing>,
 ) -> (Harness, Arc<Shared>) {
-    let config = OAuthConfig::new(PUBLIC, access).expect("public url");
     let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
     let evicted = Arc::new(Mutex::new(Vec::new()));
     let log = Arc::clone(&evicted);

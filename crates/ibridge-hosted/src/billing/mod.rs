@@ -131,6 +131,8 @@ impl BillingConfig {
 pub(crate) struct Billing {
     pub(crate) stripe: Stripe,
     pub(crate) webhook_secret: SecretString,
+    /// Who collects and files tax, which the terms say.
+    pub(crate) tax: TaxMode,
 }
 
 impl Billing {
@@ -139,6 +141,7 @@ impl Billing {
         Ok(Self {
             stripe: Stripe::new(config)?,
             webhook_secret: config.webhook_secret.clone(),
+            tax: config.tax,
         })
     }
 
@@ -148,6 +151,7 @@ impl Billing {
         Ok(Self {
             stripe: Stripe::with_base(config, base)?,
             webhook_secret: config.webhook_secret.clone(),
+            tax: config.tax,
         })
     }
 }

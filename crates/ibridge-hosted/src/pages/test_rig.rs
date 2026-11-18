@@ -17,7 +17,7 @@ use crate::identity::Identity;
 use crate::identity::fakes::{FakeApple, FakeFirebase, identity_config};
 use crate::oauth::pending::PENDING_COOKIE;
 use crate::oauth::test_support::{ASP_ALL, Harness, PUBLIC, Reply, harness_featured};
-use crate::oauth::{Access, Shared};
+use crate::oauth::{Access, OAuthConfig, Shared};
 use crate::store::{Scope, Store, User};
 
 pub(crate) const IP: &str = "198.51.100.7";
@@ -52,14 +52,23 @@ fn billing_config() -> BillingConfig {
 #[derive(Default)]
 pub(crate) struct Setup {
     billing: bool,
+    automatic_tax: bool,
     cap: Option<usize>,
     only: Option<Vec<AppleId>>,
+    contact: Option<String>,
 }
 
 impl Setup {
     /// Turns Stripe on.
     pub(crate) fn billing(mut self) -> Self {
         self.billing = true;
+        self
+    }
+
+    /// Turns Stripe on with `IBRIDGE_STRIPE_TAX=automatic`: the operator is the seller.
+    pub(crate) fn billing_automatic_tax(mut self) -> Self {
+        self.billing = true;
+        self.automatic_tax = true;
         self
     }
 
@@ -80,11 +89,21 @@ impl Setup {
         self
     }
 
+    /// Publishes a contact address, which billing requires.
+    pub(crate) fn contact(mut self, contact: &str) -> Self {
+        self.contact = Some(contact.to_owned());
+        self
+    }
+
     pub(crate) async fn build(self) -> Rig {
         let (apple, firebase, identity) = identity().await;
         let (stripe, billing) = if self.billing {
             let stripe = FakeStripe::start().await;
-            let billing = Billing::with_base(&billing_config(), stripe.base()).expect("billing");
+            let mut config = billing_config();
+            if self.automatic_tax {
+                config.tax = TaxMode::Automatic;
+            }
+            let billing = Billing::with_base(&config, stripe.base()).expect("billing");
             (Some(stripe), Some(billing))
         } else {
             (None, None)
@@ -94,7 +113,11 @@ impl Setup {
             store = store.with_signup_cap(cap);
         }
         let access = self.only.map_or(Access::MultiTenant, Access::AllowList);
-        let (harness, shared) = harness_featured(access, store, identity, billing).await;
+        let mut config = OAuthConfig::new(PUBLIC, access).expect("public url");
+        if let Some(contact) = self.contact {
+            config = config.contact(contact);
+        }
+        let (harness, shared) = harness_featured(config, store, identity, billing).await;
         Rig {
             harness,
             shared,

@@ -9,6 +9,8 @@ mod account_apple_tests;
 mod account_delete_tests;
 mod delete;
 pub(crate) mod landing;
+#[cfg(test)]
+mod legal_tests;
 pub(crate) mod signin;
 #[cfg(test)]
 pub(crate) mod test_rig;

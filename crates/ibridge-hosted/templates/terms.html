@@ -20,6 +20,18 @@
 <h2>What you are responsible for</h2>
 <p>Apps you connect can read your data and, unless you chose read-only access, send, move, change and delete it. You are responsible for what the apps you connect, and the AI tools behind them, do with your account.</p>
 
+{% if billing %}
+<h2>Subscription and payment</h2>
+<p>The service costs {{ price }}. One subscription covers one iCloud account. You choose monthly or yearly when you subscribe.</p>
+<ul>
+<li><strong>Billing period and renewal.</strong> Each plan runs for one billing period, a month or a year, and renews automatically at the end of it for the same price, until you cancel.</li>
+<li><strong>Cancelling.</strong> You can cancel at any time with Manage billing on the <a href="/account">account page</a>. A cancellation takes effect at the end of the period you have paid for, and you keep access until then.</li>
+<li><strong>Payment and tax.</strong> {% if stripe_sells %}Payments are handled by Stripe, which is the seller of record: it charges your card, collects and pays the tax, and handles refunds under its own policy, shown at checkout. To ask for a refund, use the receipt Stripe emails you{% if let Some(contact) = contact %}, or write to {{ contact }}{% endif %}.{% else %}Payments are processed by Stripe. We are the seller, and tax is added where it is due. To ask for a refund, write to {% if let Some(contact) = contact %}{{ contact }}{% else %}the operator of this service{% endif %}.{% endif %}</li>
+<li><strong>A failed payment.</strong> If a card payment fails, access continues while Stripe retries it, for up to about two weeks. After that the subscription ends.</li>
+<li><strong>If you cancel.</strong> The tools stop working when your paid period ends. Your connections and API keys are kept, so paying again restores access at once. Deleting your account removes them, and ends your subscription immediately without a refund of the current period.</li>
+</ul>
+{% endif %}
+
 <h2>Fair use</h2>
 <p>Do not try to guess passwords, reach anyone else's account, or overload the service. Rate limits apply and may change.</p>
 

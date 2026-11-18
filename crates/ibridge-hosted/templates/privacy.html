@@ -10,6 +10,8 @@
 <h2>What we store</h2>
 <ul>
 <li>Your iCloud address, and when your account was created.</li>
+{% if identity %}<li>If you sign in with Apple: the email Apple gives us, which may be a private relay address, and the identifiers Apple and Firebase give you. We never see your Apple password.</li>{% endif %}
+{% if billing %}<li>Your plan: your Stripe customer and subscription ids, the subscription's status, and when the paid period ends. Stripe holds your payment details. We never see your card.</li>{% endif %}
 <li>For each connected app or API key: its kind, the name you gave a key, whether it is read-only, whether it was revoked, and when it was made.</li>
 <li>Encrypted copies of your app-specific password, and a one-way hash of each token, which is how we find the right copy. We never store a token itself.</li>
 <li>For apps that register themselves with us: the app's name and its return addresses.</li>
@@ -37,12 +39,21 @@
 <li>A sign-in code lasts 60 seconds, and an access token one hour.</li>
 <li>A connected app that goes 90 days without using its connection can no longer open its copy of your password and has to sign in again.</li>
 <li>An API key lasts until you revoke it. A revoked connection keeps a record, with its encrypted copies wiped, until you delete your account.</li>
-<li>Deleting your account on the <a href="/account">account page</a> removes your account, your connections and every encrypted copy at once.</li>
+<li>Deleting your account on the <a href="/account">account page</a> removes your account, your connections and every encrypted copy at once.{% if identity %} You sign in with Apple again to confirm. We then revoke the sign-in at Apple, delete your user at Firebase{% if billing %} and end your subscription at Stripe{% endif %}.{% endif %}</li>
 <li>We back up the database daily and keep the last 7 days. A backup holds only encrypted copies. Something you delete can remain in a backup for up to 7 days.</li>
 </ul>
 
 <h2>Who else is involved</h2>
-<p>Apple's iCloud receives your password when we log in on your behalf, under Apple's own terms. Our hosting platform runs the server and stores the database. We use no other service.</p>
+<p>Apple's iCloud receives your password when we log in on your behalf, under Apple's own terms. Our hosting platform runs the server and stores the database.{% if !identity %} We use no other service.{% endif %}</p>
+{% if identity %}
+<p>We also use these services, which are switched on for this service:</p>
+<ul>
+<li><strong>Apple</strong> (appleid.apple.com) runs Sign in with Apple. We send it the sign-in code Apple gave your browser. It tells us who you are and your email. We can ask it to revoke the sign-in when you delete your account.</li>
+<li><strong>Google, through Firebase Authentication</strong> (identitytoolkit.googleapis.com, and www.googleapis.com for its public keys) keeps your sign-in record. It receives the token Apple issued, which carries your Apple identifier and email, and keeps your user record until you delete your account.</li>
+{% if billing %}<li><strong>Stripe</strong> (api.stripe.com) takes payment and keeps your subscription. It receives your email, and the payment details you type on its own page, which we never see.{% if stripe_sells %} Stripe is the seller of record.{% endif %}</li>{% endif %}
+</ul>
+<p>None of them receives your app-specific password, or the content of your mail, calendar, reminders or contacts.</p>
+{% endif %}
 
 <h2>Your choices and contact</h2>
 <p>You can see, revoke and delete everything on the <a href="/account">account page</a>. For anything else, including a request we cannot meet there:

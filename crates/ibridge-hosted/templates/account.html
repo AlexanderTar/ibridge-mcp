@@ -21,6 +21,9 @@
 <button type="submit" name="plan" value="yearly">Subscribe yearly</button>
 </form>
 {% endif %}
+{% if let Some(why) = plan.refused %}
+<p>{{ why }}</p>
+{% endif %}
 {% if plan.manage %}
 <form method="post" action="/billing/portal">
 <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -59,7 +62,7 @@
 {% if ask_address %}
 <label for="apple_id">Your primary iCloud address</label>
 <input id="apple_id" name="apple_id" type="email" inputmode="email" autocomplete="username" required maxlength="254">
-<p class="hint">Your plan covers one iCloud address. The first one you connect is the one this account keeps.</p>
+<p class="hint">{% if billing %}Your plan covers one iCloud address. {% endif %}The first one you connect is the one this account keeps.</p>
 {% endif %}
 <label for="password">App-specific password</label>
 <input id="password" name="password" type="password" autocomplete="off" required maxlength="64">
@@ -69,7 +72,7 @@
 </form>
 <h2>Delete everything</h2>
 {% if profile.is_some() %}
-<p>Deletes your account, your connected apps, your API keys and every encrypted copy of your app-specific password. It ends your subscription at once and removes this service from your Apple account. You will sign in with Apple once more to confirm.</p>
+<p>Deletes your account, your connected apps, your API keys and every encrypted copy of your app-specific password. {% if billing %}It ends your subscription at once and removes{% else %}It removes{% endif %} this service from your Apple account. You will sign in with Apple once more to confirm.</p>
 <form method="post" action="/account/delete">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <label class="check" for="confirm"><input id="confirm" name="confirm" type="checkbox" value="delete"><span>Yes, delete my account and everything stored for it.</span></label>

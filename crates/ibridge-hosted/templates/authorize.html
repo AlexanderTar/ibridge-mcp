@@ -2,7 +2,7 @@
 {% block title %}Connect iCloud to {{ client_name }}{% endblock %}
 {% block body %}
 <h1>Connect iCloud to {{ client_name }}</h1>
-<p><strong>{{ client_name }}</strong> is asking to use your iCloud Mail, Calendar, Reminders and Contacts. After you sign in, your browser goes back to <strong>{{ redirect_host }}</strong>.</p>
+<p><strong>{{ client_name }}</strong> is asking to use your iCloud Mail, Calendar, Reminders and Contacts. {% if signed_in %}Once it is connected, your browser goes back to{% else %}After you sign in, your browser goes back to{% endif %} <strong>{{ redirect_host }}</strong>.</p>
 {% if let Some(message) = error %}<p class="error" role="alert">{{ message }}</p>{% endif %}
 {% if let Some(pending) = sign_in %}
 <p>Sign in with Apple to continue. We never see your Apple password.</p>
@@ -36,7 +36,7 @@
 {% endif %}
 <label for="password">App-specific password</label>
 <input id="password" name="password" type="password" autocomplete="off" required maxlength="64">
-<p class="hint">Never use your main Apple ID password here. <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">Create an app-specific password</a> in your Apple Account, then paste it above. Use your iCloud address (@icloud.com, @me.com or @mac.com), which may differ from your Apple ID email.</p>
+<p class="hint">Never use your main Apple ID password here. <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">Create an app-specific password</a> in your Apple Account, then paste it above. {% if linked.is_none() %}Use your iCloud address (@icloud.com, @me.com or @mac.com), which may differ from your Apple ID email.{% endif %}</p>
 <label class="check" for="read_only"><input id="read_only" name="read_only" type="checkbox"{% if read_only %} checked{% endif %}><span>Read-only access. {{ client_name }} can read but cannot send, move, change or delete anything.</span></label>
 <button type="submit">Connect</button>
 </form>

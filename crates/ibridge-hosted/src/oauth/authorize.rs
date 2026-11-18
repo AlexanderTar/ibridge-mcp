@@ -21,7 +21,7 @@ use super::client::ClientInfo;
 use super::codes::PendingCode;
 use super::pending::PENDING_COOKIE;
 use super::{Peer, Shared, address_key};
-use crate::billing::{Access, PRICE_TEXT, access};
+use crate::billing::{Access, FULL, PRICE_TEXT, access, room_for};
 use crate::pages::account::{address_to_use, link_refusal, session_of};
 use crate::store::{Scope, StoreError, User};
 use crate::web::{
@@ -114,6 +114,8 @@ struct AuthorizePage<'a> {
     plan: Option<PlanStep<'a>>,
     /// Step 3: the iCloud address already linked to this user, who connects it again.
     linked: Option<&'a str>,
+    /// The person already signed in with Apple.
+    signed_in: bool,
     price: &'static str,
 }
 
@@ -213,6 +215,7 @@ async fn form_for(
                     TROUBLE,
                 );
             };
+            let signed_in = user.is_some();
             let linked = user.and_then(|user| user.account);
             let fill = Fill {
                 csrf: &token,
@@ -220,6 +223,7 @@ async fn form_for(
                 read_only: !valid.wants_write,
                 error: None,
                 linked: linked.as_ref(),
+                signed_in,
             };
             let mut response = form_page(&valid, &fill, StatusCode::OK);
             set_csrf_cookie(&mut response, &token, CSRF_LIFETIME_SECS);
@@ -240,6 +244,7 @@ async fn form_for(
                 read_only: false,
                 error: None,
                 linked: None,
+                signed_in: plan.is_some(),
             };
             let mut response = render(&valid, &fill, sign_in, plan, StatusCode::OK);
             if let Some(owner) = new_owner {
@@ -265,24 +270,21 @@ async fn step_of(shared: &Shared, headers: &HeaderMap) -> Result<Step, Box<Respo
         return Ok(Step::Connect(Some(user)));
     }
     // Nobody pays for a service they cannot join: this is checked before checkout is offered.
-    let may_join = match &user.account {
-        Some(account) => shared.config.may_sign_in(account),
-        None => {
-            !shared.config.is_closed()
-                && shared.store.has_signup_room().await.map_err(|error| {
-                    tracing::error!(%error, "could not count accounts");
-                    Box::new(message(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Something went wrong",
-                        TROUBLE,
-                    ))
-                })?
-        }
-    };
-    if may_join {
-        Ok(Step::Plan { csrf: session.csrf })
-    } else {
-        Err(Box::new(full()))
+    let room = room_for(shared, &user).await.map_err(|error| {
+        tracing::error!(%error, "could not count accounts");
+        Box::new(message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong",
+            TROUBLE,
+        ))
+    })?;
+    match room.refusal() {
+        None => Ok(Step::Plan { csrf: session.csrf }),
+        Some((title, text)) => Err(Box::new(message(
+            StatusCode::SERVICE_UNAVAILABLE,
+            title,
+            text,
+        ))),
     }
 }
 
@@ -301,14 +303,6 @@ async fn signed_in_user(
             TROUBLE,
         ))
     })
-}
-
-fn full() -> Response {
-    message(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "Sign-ups are full",
-        "This service is not taking new accounts right now. Try again later.",
-    )
 }
 
 /// Stores the request so it survives Sign in with Apple and Stripe, owned by this browser.
@@ -398,6 +392,7 @@ async fn submit(
             read_only,
             error: Some(error),
             linked,
+            signed_in: user.is_some(),
         };
         form_page(&valid, &fill, status)
     };
@@ -470,7 +465,7 @@ fn seal_refused(error: &StoreError, again: impl Fn(StatusCode, &str) -> Response
         StoreError::LinkedToOther { .. } | StoreError::AddressTaken => {
             again(StatusCode::BAD_REQUEST, &link_refusal(error))
         }
-        StoreError::SignupsFull => full(),
+        StoreError::SignupsFull => message(StatusCode::SERVICE_UNAVAILABLE, FULL.0, FULL.1),
         _ => {
             tracing::error!(%error, "could not seal the sign-in");
             message(
@@ -658,6 +653,8 @@ struct Fill<'a> {
     error: Option<&'a str>,
     /// The address linked to the signed-in user, who connects that one.
     linked: Option<&'a AppleId>,
+    /// The person already signed in with Apple, so the page does not say to sign in.
+    signed_in: bool,
 }
 
 /// The password step.
@@ -689,6 +686,7 @@ fn render(
         sign_in,
         plan,
         linked: fill.linked.map(AppleId::as_str),
+        signed_in: fill.signed_in,
         price: PRICE_TEXT,
     };
     html(status, page.render())

@@ -181,6 +181,60 @@ pub fn access(user: &User) -> Access {
     }
 }
 
+/// Whether the service would take this user, checked before a plan is offered or sold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Room {
+    /// The user may connect.
+    Open,
+    /// An allowlist is set and this user cannot be on it.
+    Closed,
+    /// No allowlist, but the sign-up cap is reached and this user has no address yet.
+    Full,
+}
+
+/// The title and text of the page for a service that has reached its sign-up cap.
+pub(crate) const FULL: (&str, &str) = (
+    "Sign-ups are full",
+    "This service is not taking new accounts right now. Try again later.",
+);
+
+impl Room {
+    /// The page title and text that say why a plan is not offered. `None` when it is.
+    pub(crate) fn refusal(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Open => None,
+            Self::Closed => Some((
+                "Not open to new accounts",
+                "This service is private: only listed iCloud addresses can connect. Ask whoever runs it to add yours.",
+            )),
+            Self::Full => Some(FULL),
+        }
+    }
+}
+
+/// Nobody pays for a service they cannot join: this is the one place that rule is decided.
+///
+/// A user with a linked address may join if that address may sign in. A user with none
+/// may join if the service has no allowlist and has room. ponytail: with an allowlist and
+/// billing both on, a user with no linked address is refused before they can name an
+/// address; the allowlist is for self-hosting, where billing is normally off.
+///
+/// # Errors
+///
+/// Returns the store's error when the accounts cannot be counted.
+pub(crate) async fn room_for(
+    shared: &crate::oauth::Shared,
+    user: &User,
+) -> Result<Room, crate::store::StoreError> {
+    Ok(match &user.account {
+        Some(account) if shared.config.may_sign_in(account) => Room::Open,
+        Some(_) => Room::Closed,
+        None if shared.config.is_closed() => Room::Closed,
+        None if shared.store.has_signup_room().await? => Room::Open,
+        None => Room::Full,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

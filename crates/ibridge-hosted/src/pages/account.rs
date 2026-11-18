@@ -25,7 +25,7 @@ use ibridge_core::AppleId;
 use secrecy::SecretString;
 use serde::Deserialize;
 
-use crate::billing::{Access, PRICE_TEXT, access};
+use crate::billing::{Access, PRICE_TEXT, Room, access, room_for};
 use crate::oauth::{Peer, Shared, address_key};
 use crate::store::{GrantId, GrantKind, GrantSummary, Scope, StoreError, User, UserId};
 use crate::web::{
@@ -157,6 +157,8 @@ struct PlanView {
     status: &'static str,
     /// Offer the two plans: there is no access yet.
     subscribe: bool,
+    /// Why no plan is offered when the service would not take this user.
+    refused: Option<&'static str>,
     /// Offer the Customer Portal: there is a paid plan to manage.
     manage: bool,
 }
@@ -172,6 +174,8 @@ struct AccountPage<'a> {
     profile: Option<Profile>,
     /// The key form asks for an address: this user has not linked one.
     ask_address: bool,
+    /// Stripe is on, so a plan and a subscription exist.
+    billing: bool,
     price: &'static str,
 }
 
@@ -612,7 +616,17 @@ async fn dashboard(
         },
         None => Vec::new(),
     };
-    let profile = user.as_ref().map(|user| profile(shared, user));
+    let room = match &user {
+        Some(user) if shared.billing.is_some() => match room_for(shared, user).await {
+            Ok(room) => room,
+            Err(error) => {
+                tracing::error!(%error, "could not count accounts");
+                return trouble();
+            }
+        },
+        _ => Room::Open,
+    };
+    let profile = user.as_ref().map(|user| profile(shared, user, room));
     html(
         status,
         AccountPage {
@@ -623,6 +637,7 @@ async fn dashboard(
             grants: grants.iter().map(row).collect(),
             error,
             ask_address: profile.is_some() && address.is_none(),
+            billing: shared.billing.is_some(),
             profile,
             price: PRICE_TEXT,
         }
@@ -667,7 +682,7 @@ fn trouble() -> Response {
     )
 }
 
-fn profile(shared: &Shared, user: &User) -> Profile {
+fn profile(shared: &Shared, user: &User, room: Room) -> Profile {
     Profile {
         email: user
             .email
@@ -677,11 +692,11 @@ fn profile(shared: &Shared, user: &User) -> Profile {
             .account
             .as_ref()
             .map(|address| address.as_str().to_owned()),
-        plan: shared.billing.is_some().then(|| plan_view(user)),
+        plan: shared.billing.is_some().then(|| plan_view(user, room)),
     }
 }
 
-fn plan_view(user: &User) -> PlanView {
+fn plan_view(user: &User, room: Room) -> PlanView {
     let allowed = access(user) == Access::Allowed;
     let status = if user.complimentary {
         "Complimentary"
@@ -695,7 +710,8 @@ fn plan_view(user: &User) -> PlanView {
     };
     PlanView {
         status,
-        subscribe: !allowed,
+        subscribe: !allowed && room == Room::Open,
+        refused: room.refusal().map(|(_, text)| text).filter(|_| !allowed),
         manage: allowed && user.stripe_customer.is_some(),
     }
 }

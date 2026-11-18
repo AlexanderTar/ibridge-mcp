@@ -149,6 +149,22 @@ async fn checkout(
             "Your plan is active. Open your account page to manage it.",
         );
     }
+    // Nobody pays for a service they cannot join, whichever page the button was on.
+    match super::room_for(&shared, &user).await {
+        Ok(room) => {
+            if let Some((title, text)) = room.refusal() {
+                return message(StatusCode::SERVICE_UNAVAILABLE, title, text);
+            }
+        }
+        Err(error) => {
+            tracing::error!(user = %user.id, %error, "could not count accounts");
+            return message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Something went wrong",
+                "Something went wrong on our side. Try again in a moment.",
+            );
+        }
+    }
     let Some(plan) = Plan::from_form(form.plan.trim()) else {
         return message(
             StatusCode::BAD_REQUEST,

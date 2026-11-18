@@ -424,3 +424,64 @@ async fn authorize_identity_off_unchanged() {
         page.text
     );
 }
+
+#[tokio::test]
+async fn authorize_closed_service_says_it_is_private_not_full() {
+    let closed = Setup::default().billing().only(&[BEA]).build().await;
+    let user = closed.user("uid-1", Some("ada@example.com")).await;
+    let page = closed.authorize(&closed.browser(&user)).await;
+    assert_eq!(
+        page.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        page.text
+    );
+    assert!(
+        page.text.contains("Not open to new accounts") && !page.text.contains("full"),
+        "a closed service is not a full one: {}",
+        page.text
+    );
+    // A linked user whose address is off the list is shut out the same way.
+    let linked = closed
+        .linked_user("uid-2", "cy@example.com", "cy@icloud.com")
+        .await;
+    let page = closed.authorize(&closed.browser(&linked)).await;
+    assert_eq!(
+        page.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        page.text
+    );
+    assert!(!page.text.contains("full"), "{}", page.text);
+}
+
+#[tokio::test]
+async fn authorize_steps_after_sign_in_do_not_say_to_sign_in() {
+    let rig = Rig::billing().await;
+    let user = rig.user("uid-1", Some("ada@example.com")).await;
+    // Signed in, no plan: the plan step.
+    let page = rig.authorize(&rig.browser(&user)).await;
+    assert!(page.text.contains("Subscribe monthly"), "{}", page.text);
+    assert!(
+        !page.text.contains("After you sign in"),
+        "already signed in: {}",
+        page.text
+    );
+    // Signed in with a plan and a linked address: the address is fixed, so no hint about
+    // which address to use.
+    let linked = rig.linked_user("uid-2", "bea@example.com", BEA).await;
+    rig.subscribe(&linked, "active").await;
+    let page = rig.authorize(&rig.browser(&linked)).await;
+    assert!(page.text.contains(BEA), "{}", page.text);
+    assert!(
+        !page.text.contains("After you sign in")
+            && !page
+                .text
+                .contains("which may differ from your Apple ID email"),
+        "{}",
+        page.text
+    );
+    // Not signed in yet: the first step still says it.
+    let out = rig.get(&path(), None).await;
+    assert!(out.text.contains("After you sign in"), "{}", out.text);
+}

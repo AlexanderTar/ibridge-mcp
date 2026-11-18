@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 
 use axum::http::StatusCode;
 
-use super::test_rig::{IP, Rig};
+use super::test_rig::{IP, Rig, Setup};
 use crate::oauth::Access;
 use crate::oauth::test_support::{ADA, ASP_ALL, harness};
 
@@ -331,4 +331,95 @@ async fn mint_key_address_of_other_user_refused_without_detail() {
         0,
         "no key was made"
     );
+}
+
+#[tokio::test]
+async fn account_page_and_checkout_refuse_a_service_that_cannot_be_joined() {
+    // Full: one account exists and the cap is one. A user with no address cannot join.
+    let full = Setup::default().billing().cap(1).build().await;
+    let taken = full.linked_user("uid-0", "bea@example.com", BEA).await;
+    let user = full.user("uid-1", Some("ada@example.com")).await;
+    let browser = full.browser(&user);
+    let page = full.get("/account", Some(&browser)).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    assert!(
+        !page.text.contains(r#"action="/billing/checkout""#) && !page.text.contains("US$"),
+        "nobody is offered a plan for a service they cannot join: {}",
+        page.text
+    );
+    assert!(
+        page.text.contains("not taking new accounts"),
+        "the page says why: {}",
+        page.text
+    );
+    let posted = full
+        .post("/billing/checkout", &browser, &[("plan", "monthly")])
+        .await;
+    assert_eq!(
+        posted.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        posted.text
+    );
+    assert!(
+        full.stripe_requests().is_empty(),
+        "nothing was asked of Stripe: {:?}",
+        full.stripe_requests()
+    );
+
+    // Closed: only the listed address may connect, so a user with no address cannot join, and
+    // the wording is about a closed service, not a full one.
+    let closed = Setup::default().billing().only(&[BEA]).build().await;
+    let user = closed.user("uid-1", Some("ada@example.com")).await;
+    let browser = closed.browser(&user);
+    let page = closed.get("/account", Some(&browser)).await;
+    assert!(
+        !page.text.contains(r#"action="/billing/checkout""#),
+        "{}",
+        page.text
+    );
+    assert!(
+        page.text.contains("private") && !page.text.contains("full"),
+        "{}",
+        page.text
+    );
+    let posted = closed
+        .post("/billing/checkout", &browser, &[("plan", "yearly")])
+        .await;
+    assert_eq!(
+        posted.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        posted.text
+    );
+    assert!(closed.stripe_requests().is_empty());
+
+    // A user whose own address is already linked can still subscribe on a full service.
+    let page = full.get("/account", Some(&full.browser(&taken))).await;
+    assert!(
+        page.text.contains(r#"action="/billing/checkout""#),
+        "a linked user is not shut out by a full service: {}",
+        page.text
+    );
+}
+
+#[tokio::test]
+async fn account_page_says_nothing_of_a_plan_when_billing_is_off() {
+    let rig = Rig::identity_only().await;
+    let user = rig.user("uid-1", Some("ada@example.com")).await;
+    let page = rig.get("/account", Some(&rig.browser(&user))).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    for word in [" plan", "subscription", "Subscription"] {
+        assert!(
+            !page.text.contains(word),
+            "no plan exists with billing off, yet the page says {word:?}: {}",
+            page.text
+        );
+    }
+    // With billing on, both sentences are there.
+    let rig = Rig::billing().await;
+    let user = rig.user("uid-1", Some("ada@example.com")).await;
+    let page = rig.get("/account", Some(&rig.browser(&user))).await;
+    assert!(page.text.contains("Your plan covers one iCloud address"));
+    assert!(page.text.contains("ends your subscription at once"));
 }

@@ -45,6 +45,8 @@ The server refuses to start with neither an allowlist nor `--multi-tenant`.
 - **Allowlist (self-host).** Set `IBRIDGE_ALLOWED_APPLE_IDS` and leave `--multi-tenant` off. Only those addresses can sign in, so the database holds as many accounts as you list. An allowlist restricts sign-in even when `--multi-tenant` is also set.
 - **Multi-tenant (public service).** Pass `--multi-tenant` with no allowlist. Anyone with an iCloud address and an app-specific password can sign in, up to `IBRIDGE_SIGNUP_CAP` accounts. That makes you the operator of a service that holds strangers' sealed passwords, with a privacy policy and terms to match. [deploy-railway.md](deploy-railway.md) is the runbook for the public instance.
 
+Paid plans (Stripe) are for the multi-tenant service. With an allowlist and Stripe both on, a signed-in person who has not connected an address yet is told the service is private and is not offered a plan, because nobody should pay before the server knows they may join.
+
 Each person creates an app-specific password at account.apple.com under Sign-In and Security, and types it on the server's sign-in page. The server stores it sealed under a key made from the token the client holds.
 
 ## Check that it is running

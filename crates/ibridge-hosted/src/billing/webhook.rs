@@ -180,6 +180,12 @@ pub(crate) async fn apply(
 /// A subscription of another customer is never adopted. A late report of an old
 /// subscription must not push out the one the user has now: it is stored only when the
 /// user has none, it is the one stored, or it grants access.
+///
+/// The fetch may be older than what is stored: `/billing/return` and a webhook both fetch
+/// and store, and a slow one can land second. A subscription only ever moves from
+/// `incomplete` to `active`, never back, so an `incomplete` report of the stored
+/// subscription that gives access is stale and is dropped. The decision reads the row now,
+/// not the `user` the caller read before it waited on Stripe.
 pub(crate) async fn adopt(
     store: &Store,
     user: &User,
@@ -190,10 +196,19 @@ pub(crate) async fn adopt(
             "the subscription belongs to another customer",
         ));
     }
-    let replaces = user
-        .stripe_subscription
-        .as_deref()
-        .is_none_or(|current| current == fetched.id);
+    let Some(stored) = store.user(user.id).await? else {
+        return Ok(Applied::Ignored("the user is gone"));
+    };
+    let same = stored.stripe_subscription.as_deref() == Some(fetched.id.as_str());
+    if same
+        && stored.status.as_deref().is_some_and(grants_access)
+        && matches!(fetched.status.as_str(), "incomplete" | "incomplete_expired")
+    {
+        return Ok(Applied::Ignored(
+            "the report is older than the stored paying status",
+        ));
+    }
+    let replaces = stored.stripe_subscription.is_none() || same;
     if !replaces && !grants_access(&fetched.status) {
         return Ok(Applied::Ignored("the subscription is an older one"));
     }

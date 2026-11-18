@@ -769,6 +769,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_stale_incomplete_fetch_does_not_replace_a_stored_paying_status() {
+        // /billing/return already stored `active`; a slow webhook fetched the subscription
+        // when it was still `incomplete`.
+        let rig = rig().await;
+        rig.harness
+            .store
+            .set_subscription(rig.user.id, SUBSCRIPTION, "active", Some(1_900_000_500))
+            .await
+            .expect("set");
+        rig.stripe
+            .put_subscription(SUBSCRIPTION, CUSTOMER, "incomplete", 1_800_000_000);
+        let reply = rig.deliver(UPDATED).await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+        let user = rig.stored().await;
+        assert_eq!(user.status.as_deref(), Some("active"));
+        assert_eq!(
+            user.period_end,
+            Some(1_900_000_500),
+            "the period is kept too"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_user_read_before_the_fetch_does_not_hide_a_newer_stored_status() {
+        // The webhook read the user (no plan yet), then waited on Stripe; the return route
+        // stored `active` in between. The decision is made on what is stored now.
+        let rig = rig().await;
+        let stale = rig.stored().await;
+        rig.harness
+            .store
+            .set_subscription(rig.user.id, SUBSCRIPTION, "active", Some(1_900_000_500))
+            .await
+            .expect("set");
+        let fetched = crate::billing::stripe::Subscription {
+            id: SUBSCRIPTION.to_owned(),
+            customer: CUSTOMER.to_owned(),
+            status: "incomplete".to_owned(),
+            period_end: Some(1_800_000_000),
+        };
+        crate::billing::webhook::adopt(&rig.harness.store, &stale, &fetched)
+            .await
+            .expect("adopt");
+        assert_eq!(rig.stored().await.status.as_deref(), Some("active"));
+    }
+
+    #[tokio::test]
+    async fn real_status_changes_still_replace_the_stored_one() {
+        let rig = rig().await;
+        let store = &rig.harness.store;
+        store
+            .set_subscription(rig.user.id, SUBSCRIPTION, "incomplete", None)
+            .await
+            .expect("set");
+        rig.stripe
+            .put_subscription(SUBSCRIPTION, CUSTOMER, "active", 1_900_000_000);
+        assert_eq!(rig.deliver(UPDATED).await.status, StatusCode::OK);
+        assert_eq!(rig.stored().await.status.as_deref(), Some("active"));
+        // Payment fails later: active becomes past_due, which is a real change.
+        rig.stripe
+            .put_subscription(SUBSCRIPTION, CUSTOMER, "past_due", 1_900_000_000);
+        assert_eq!(
+            rig.deliver(&with_id(UPDATED, "evt_later")).await.status,
+            StatusCode::OK
+        );
+        assert_eq!(rig.stored().await.status.as_deref(), Some("past_due"));
+    }
+
+    #[tokio::test]
     async fn an_event_that_names_no_subscription_or_a_foreign_one_changes_nothing() {
         let rig = rig().await;
         rig.stripe

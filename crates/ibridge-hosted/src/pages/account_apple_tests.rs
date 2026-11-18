@@ -423,3 +423,22 @@ async fn account_page_says_nothing_of_a_plan_when_billing_is_off() {
     assert!(page.text.contains("Your plan covers one iCloud address"));
     assert!(page.text.contains("ends your subscription at once"));
 }
+
+#[tokio::test]
+async fn account_page_shows_when_the_paid_period_ends() {
+    let rig = Rig::billing().await;
+    let user = rig.linked_user("uid-1", "ada@example.com", ADA).await;
+    let browser = rig.browser(&user);
+    // 1_900_000_000 is 2030-03-17 in UTC.
+    rig.subscribe(&user, "active").await;
+    let page = rig.get("/account", Some(&browser)).await;
+    assert!(
+        page.text.contains("Active, current period ends 2030-03-17"),
+        "an active plan shows the end of its period: {}",
+        page.text
+    );
+    // With no plan there is no period to show.
+    let other = rig.user("uid-2", Some("bea@example.com")).await;
+    let page = rig.get("/account", Some(&rig.browser(&other))).await;
+    assert!(!page.text.contains("period ends"), "{}", page.text);
+}

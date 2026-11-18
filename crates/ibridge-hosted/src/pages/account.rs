@@ -154,7 +154,7 @@ struct Profile {
 }
 
 struct PlanView {
-    status: &'static str,
+    status: String,
     /// Offer the two plans: there is no access yet.
     subscribe: bool,
     /// Why no plan is offered when the service would not take this user.
@@ -707,6 +707,12 @@ fn plan_view(user: &User, room: Room) -> PlanView {
             Some(_) => "Not active",
             None => "No plan",
         }
+    };
+    let status = match (user.status.as_deref(), user.period_end) {
+        (Some("active"), Some(end)) if !user.complimentary => {
+            format!("{status}, current period ends {}", day(end))
+        }
+        _ => status.to_owned(),
     };
     PlanView {
         status,

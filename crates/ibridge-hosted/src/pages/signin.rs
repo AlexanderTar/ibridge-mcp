@@ -148,10 +148,7 @@ async fn signed_in(shared: &Shared, signed: SignedIn) -> Response {
             );
         }
     };
-    let principal = Principal::User {
-        id: user.id,
-        account: user.account.clone(),
-    };
+    let principal = Principal::User(user.id);
     let Some((token, _)) = shared.sessions.start(principal, Instant::now()) else {
         tracing::error!("random source failed while starting a session");
         return message(

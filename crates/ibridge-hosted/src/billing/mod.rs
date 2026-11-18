@@ -27,6 +27,9 @@ pub const STRIPE_PRICE_YEARLY: &str = "IBRIDGE_STRIPE_PRICE_YEARLY";
 /// How tax is handled: `managed` (the default) or `automatic`.
 pub const STRIPE_TAX: &str = "IBRIDGE_STRIPE_TAX";
 
+/// The price, as every page states it.
+pub(crate) const PRICE_TEXT: &str = "US$1.99 per month or US$19.99 per year";
+
 /// Who collects and files tax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

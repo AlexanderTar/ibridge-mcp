@@ -804,14 +804,10 @@ mod tests {
 
     impl Rig {
         fn browser(&self, user: &User, owner: Option<&str>) -> Browser {
-            let principal = Principal::User {
-                id: user.id,
-                account: None,
-            };
             let (token, csrf) = self
                 .shared
                 .sessions
-                .start(principal, Instant::now())
+                .start(Principal::User(user.id), Instant::now())
                 .expect("a session");
             let cookie = match owner {
                 Some(owner) => format!("{SESSION_COOKIE}={token}; {PENDING_COOKIE}={owner}"),

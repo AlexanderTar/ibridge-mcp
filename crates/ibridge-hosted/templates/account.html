@@ -2,8 +2,36 @@
 {% block title %}Your ibridge account{% endblock %}
 {% block body %}
 <h1>Your account</h1>
+{% if let Some(profile) = profile %}
+<p>Signed in with Apple as <strong>{{ profile.email }}</strong>.</p>
+{% else %}
 <p>Signed in as <strong>{{ apple_id }}</strong>.</p>
+{% endif %}
 {% if let Some(message) = error %}<p class="error" role="alert">{{ message }}</p>{% endif %}
+{% if let Some(profile) = profile %}
+<h2>Your account</h2>
+<dl class="facts">
+<dt>Apple email</dt><dd>{{ profile.email }}</dd>
+<dt>iCloud address</dt><dd>{% if let Some(linked) = profile.linked %}{{ linked }}{% else %}No iCloud address connected yet{% endif %}</dd>
+{% if let Some(plan) = profile.plan %}<dt>Plan</dt><dd>{{ plan.status }}</dd>{% endif %}
+</dl>
+{% if let Some(plan) = profile.plan %}
+{% if plan.subscribe %}
+<p>{{ price }}, with taxes handled by Stripe at checkout. One plan covers one iCloud account.</p>
+<form method="post" action="/billing/checkout">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button type="submit" name="plan" value="monthly">Subscribe monthly</button>
+<button type="submit" name="plan" value="yearly">Subscribe yearly</button>
+</form>
+{% endif %}
+{% if plan.manage %}
+<form method="post" action="/billing/portal">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button class="secondary" type="submit">Manage billing</button>
+</form>
+{% endif %}
+{% endif %}
+{% endif %}
 <h2>Connected apps and API keys</h2>
 {% if grants.is_empty() %}
 <p>Nothing is connected.</p>
@@ -31,6 +59,11 @@
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <label for="name">Name</label>
 <input id="name" name="name" type="text" required maxlength="64">
+{% if ask_address %}
+<label for="apple_id">Your primary iCloud address</label>
+<input id="apple_id" name="apple_id" type="email" inputmode="email" autocomplete="username" required maxlength="254">
+<p class="hint">Your plan covers one iCloud address. The first one you connect is the one this account keeps.</p>
+{% endif %}
 <label for="password">App-specific password</label>
 <input id="password" name="password" type="password" autocomplete="off" required maxlength="64">
 <p class="hint">The key keeps your app-specific password sealed under itself. Type it again so we can check it with iCloud and seal it.</p>

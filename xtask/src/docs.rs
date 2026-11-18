@@ -19,6 +19,8 @@ use regex::Regex;
 fn documents(root: &Path) -> io::Result<Vec<PathBuf>> {
     let mut files = vec![
         root.join("README.md"),
+        root.join("CHANGELOG.md"),
+        root.join("CODE_OF_CONDUCT.md"),
         root.join("CONTRIBUTING.md"),
         root.join("SECURITY.md"),
     ];

@@ -14,7 +14,7 @@
 </dl>
 {% if let Some(plan) = profile.plan %}
 {% if plan.subscribe %}
-<p>{{ price }}, with taxes handled by Stripe at checkout. One plan covers one iCloud account.</p>
+<p>{{ price }}. One plan covers one iCloud account.</p>
 <form method="post" action="/billing/checkout">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <button class="btn btn--primary" type="submit" name="plan" value="monthly">Subscribe monthly</button>

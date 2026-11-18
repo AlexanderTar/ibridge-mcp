@@ -47,10 +47,11 @@ Write down the project `id` it prints: it is the `<project id>` in every command
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway add --service ibridge
-RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway volume --project <project id> --environment production --service ibridge add --mount-path /data
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway status --project <project id> --environment production --json | jq -c '{env: [.environments.edges[].node | {id, name}], services: [.services.edges[].node | {id, name}]}'
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway volume --project <project id> --environment <environment id> --service <service id> add --mount-path /data --json
 ```
 
-Run these once. `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway status --project <project id> --environment production` must show the project you just made and the personal workspace before you continue.
+`railway volume` takes the environment and service **ids** (the first command prints them): with the names `production` and `ibridge`, `railway` 5.62.1 panics (`called Option::unwrap() on a None value`). `railway volume list` can show an empty list right after `add`; the service's `RAILWAY_VOLUME_MOUNT_PATH` variable shows the volume is attached. Run these once. `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway status --project <project id> --environment production` must show the project you just made and the personal workspace before you continue.
 
 ## 4. Set the variables
 
@@ -70,10 +71,21 @@ The allowlist holds two addresses: yours, and the test Apple ID the datacenter c
 
 ## 5. Deploy and check
 
-Set the start command and health check in the service's settings (Railway dashboard, Settings, Deploy), because the CLI cannot set them:
+Set the start command and health check in the service's settings (Railway dashboard, Settings, Deploy), or through Railway's public API with the same token (the CLI cannot set them):
 
 - Start command: `ibridge serve --hosted --multi-tenant --http 0.0.0.0:8080 --public-url https://ibridge.fyi --data-dir /data`
 - Healthcheck path: `/readyz`
+
+Through the API (`<service id>` and `<environment id>` from step 3; `printf` is a shell builtin, so the token never appears in a process list):
+
+```sh
+jq -n --arg s '<service id>' --arg e '<environment id>' '{query: "mutation($s:String!,$e:String!,$i:ServiceInstanceUpdateInput!){serviceInstanceUpdate(serviceId:$s,environmentId:$e,input:$i)}", variables: {s: $s, e: $e, i: {startCommand: "ibridge serve --hosted --multi-tenant --http 0.0.0.0:8080 --public-url https://ibridge.fyi --data-dir /data", healthcheckPath: "/readyz"}}}' \
+  | curl -fsS https://backboard.railway.com/graphql/v2 -H @<(printf 'Authorization: Bearer %s\n' "$(cat ~/.config/railway-personal/token)") -H 'Content-Type: application/json' -d @-
+```
+
+It prints `{"data":{"serviceInstanceUpdate":true}}`.
+
+The Dockerfile must not declare `VOLUME`: Railway fails the build with `docker VOLUME ... is not supported, use Railway Volumes`.
 
 Then upload the commit:
 

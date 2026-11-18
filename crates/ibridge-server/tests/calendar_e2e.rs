@@ -420,6 +420,11 @@ async fn tools_list_includes_calendar_and_reminders_tools() {
             tool.name
         );
         assert!(
+            tool.title.as_ref().is_some_and(|text| !text.is_empty()),
+            "{} has no title",
+            tool.name
+        );
+        assert!(
             tool.output_schema.is_some(),
             "{} has no output schema",
             tool.name

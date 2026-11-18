@@ -2,6 +2,7 @@
 
 //! Workspace maintenance tasks.
 
+mod docs;
 mod live_hosted;
 mod mcpb;
 mod record_calendar;
@@ -28,6 +29,11 @@ fn main() -> ExitCode {
             Ok(bundles) => report_paths(&bundles),
             Err(error) => fail(&format!("mcpb: {error}")),
         },
+        Some("check-docs") => match docs::check(&headers_root()) {
+            Ok(problems) if problems.is_empty() => report_message("docs ok"),
+            Ok(problems) => fail(&problems.join("\n")),
+            Err(error) => fail(&format!("check-docs: {error}")),
+        },
         Some("registry") => match registry::run(&headers_root(), args) {
             Ok(message) => report_message(&message),
             Err(error) => fail(&format!("registry: {error}")),
@@ -36,7 +42,7 @@ fn main() -> ExitCode {
         Some("schema-snapshot") => ExitCode::from(2),
         Some(command) => fail(&format!("unknown command: {command}")),
         None => fail(
-            "usage: cargo xtask <check-headers|record-fixtures|schema-snapshot|mcpb|registry|live-hosted-check>",
+            "usage: cargo xtask <check-headers|check-docs|record-fixtures|schema-snapshot|mcpb|registry|live-hosted-check>",
         ),
     }
 }

@@ -1,10 +1,10 @@
-# ibridge
+# iBridge
 
-An [MCP](https://modelcontextprotocol.io) server that gives Claude access to your iCloud Mail, Calendar, Reminders and Contacts. It runs on your machine and talks to iCloud over IMAP, SMTP, CalDAV and CardDAV with an app-specific password. Your Apple ID password is never used.
+An [MCP](https://modelcontextprotocol.io) server that gives Claude and other MCP clients access to your iCloud Mail, Calendar and Contacts. Run it on your machine, or use the hosted connector. It talks to iCloud over IMAP, SMTP, CalDAV and CardDAV with an app-specific password. Your Apple ID password is never used.
 
 ## Start read-only
 
-Mail tools can send, move and delete messages. While you are finding out what Claude does with them, run the server read-only: every tool that changes mail is hidden and rejected.
+Some tools send mail, move messages, and change or delete events and contacts. While you are finding out what Claude does with them, run the server read-only: every tool that changes anything is hidden and rejected.
 
 ```sh
 ibridge serve --stdio --read-only
@@ -57,9 +57,13 @@ To keep one server running in the background on macOS or Linux, `ibridge daemon 
 
 Download `ibridge-<target>.mcpb` for your platform from the releases page and open it. Claude Desktop asks for your Apple ID and the app-specific password, keeps the password out of the config file and passes it to the server as an environment variable.
 
-## Hosted service
+## Hosted connector
 
-The hosted service at [ibridge.fyi](https://ibridge.fyi) is for Claude.ai and other remote MCP clients. Sign in with Apple, then connect your iCloud address with an app-specific password. It costs US$1.99 per month or US$19.99 per year. Running it locally or [self-hosting](docs/self-host.md) is free and never gated.
+[ibridge.fyi](https://ibridge.fyi) runs iBridge for you, for Claude.ai and other remote MCP clients. Add a custom connector with the URL `https://mcp.ibridge.fyi/mcp`, sign in with Apple, then connect your iCloud address with an app-specific password. It costs US$1.99 per month or US$19.99 per year. Running iBridge on your own machine or [self-hosting](docs/self-host.md) is free and never gated.
+
+## Reminders
+
+The reminders tools read and change old-style reminder lists only. Apple's newer Reminders format is not visible over CalDAV, so iBridge cannot see those lists, and the list tool says so. Calendar events are not affected.
 
 ## Security
 

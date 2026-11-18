@@ -22,19 +22,21 @@ Nothing is published until you push a version tag. The release workflow (`.githu
 
 Add these as repository secrets (Settings, Secrets and variables, Actions) before the first tag. `GITHUB_TOKEN` is provided by GitHub.
 
-| Secret | Used by | What it is |
-|---|---|---|
-| `CODESIGN_CERTIFICATE` | build-local-artifacts | Your Developer ID Application certificate and private key, exported as a `.p12` and base64-encoded. |
-| `CODESIGN_CERTIFICATE_PASSWORD` | build-local-artifacts | The password you set when exporting the `.p12`. |
-| `CODESIGN_IDENTITY` | build-local-artifacts | The certificate's name, for example `Developer ID Application: Your Name (TEAMID)`. |
-| `NOTARY_API_KEY` | notarize-macos | The full text of an App Store Connect API key (`AuthKey_XXXX.p8`). |
-| `NOTARY_KEY_ID` | notarize-macos | That key's ID. |
-| `NOTARY_ISSUER_ID` | notarize-macos | The issuer ID shown on the App Store Connect Keys page. |
-| `HOMEBREW_TAP_TOKEN` | publish-homebrew-formula | A fine-grained personal access token with Contents read and write on `AlexanderTar/homebrew-tap`. |
+**None of them is set today**, so a tag pushed now fails: the first release (0.1.0) needs all seven.
 
-If a signing secret is missing, dist warns and ships an unsigned binary. `notarize-macos` then fails, so an unsigned or unnotarized macOS build is never hosted.
+| Secret | Set today | Used by | What it is |
+|---|---|---|---|
+| `CODESIGN_CERTIFICATE` | missing | build-local-artifacts | Your Developer ID Application certificate and private key, exported as a `.p12` and base64-encoded. |
+| `CODESIGN_CERTIFICATE_PASSWORD` | missing | build-local-artifacts | The password you set when exporting the `.p12`. |
+| `CODESIGN_IDENTITY` | missing | build-local-artifacts | The certificate's name, for example `Developer ID Application: Your Name (TEAMID)`. |
+| `NOTARY_API_KEY` | missing | notarize-macos | The full text of an App Store Connect API key (`AuthKey_XXXX.p8`). |
+| `NOTARY_KEY_ID` | missing | notarize-macos | That key's ID. |
+| `NOTARY_ISSUER_ID` | missing | notarize-macos | The issuer ID shown on the App Store Connect Keys page. |
+| `HOMEBREW_TAP_TOKEN` | missing | publish-homebrew-formula | A fine-grained personal access token with Contents read and write on `AlexanderTar/homebrew-tap`. |
 
-Create the `AlexanderTar/homebrew-tap` repository on GitHub before the first tag. The `.mcpb` bundles need no extra secret.
+If a signing secret is missing, dist warns and ships an unsigned binary. `notarize-macos` then fails, so an unsigned or unnotarized macOS build is never hosted. Update the "Set today" column when you add a secret.
+
+Create the `AlexanderTar/homebrew-tap` repository on GitHub before the first tag; it does not exist yet. The `.mcpb` bundles need no extra secret.
 
 ## Editing the workflow by hand
 

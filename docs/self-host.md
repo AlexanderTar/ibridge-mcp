@@ -1,4 +1,4 @@
-# Self-hosting ibridge
+# Self-hosting iBridge
 
 The hosted server lets Claude.ai and other remote MCP clients reach your iCloud Mail, Calendar and Contacts. It speaks OAuth 2.1 and MCP over HTTPS. You run it, so you decide who may sign in. Read [security-model.md](security-model.md) first: it says what the server can and cannot see.
 
@@ -48,12 +48,14 @@ Both groups are off by default. A self-hosted or local server needs none of them
 
 | Setting | What it is |
 |---|---|
-| `IBRIDGE_APPLE_SERVICES_ID` | The Services ID (the Apple web client id). The public instance uses `fyi.ibridge.mcp`. Its return URL must be `<public url>/signin/apple/callback`. |
+| `IBRIDGE_APPLE_SERVICES_ID` | The Services ID (the Apple web client id). The public instance uses `fyi.ibridge.mcp`. Its return URL must be `<public url>/signin/apple/callback`; for the public instance that is `https://mcp.ibridge.fyi/signin/apple/callback`. |
 | `IBRIDGE_APPLE_TEAM_ID` | The Apple developer team id (the public instance: `44CQ69ZSP6`). |
 | `IBRIDGE_APPLE_KEY_ID` | The id of the Sign in with Apple key (the public instance: `2QKR8GY5WS`). |
 | `IBRIDGE_APPLE_PRIVATE_KEY` | The `.p8` key, a P-256 key in PEM form. A secret. |
 | `IBRIDGE_FIREBASE_PROJECT_ID` | The Firebase project, with its Apple provider enabled (the public instance: `ibridge-fyi`). It is the audience the server requires in Firebase ID tokens. |
 | `IBRIDGE_FIREBASE_API_KEY` | The project's web API key. |
+
+The Firebase project's authorized domains (Authentication, Settings) must include the server's host, the host of `--public-url` (for the public instance, `mcp.ibridge.fyi`).
 
 With the group set, `/account` and `/authorize` sign people in with Apple, each user links exactly one iCloud address, and an app-specific password is still needed to connect it.
 
@@ -159,7 +161,7 @@ PORT=8080
 RAILWAY_RUN_UID=0
 ```
 
-Set the start command to `ibridge serve --hosted --http 0.0.0.0:8080 --public-url https://<your domain> --data-dir /data`, the health check path to `/readyz`, and generate a domain. `RAILWAY_RUN_UID=0` is there because Railway mounts volumes as root. If the container fails with the command repeated (for example `ibridge ibridge serve`), Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from it, so it starts with `serve`. Step 5 of the runbook below says the same. `docs/deploy-railway.md` has the full runbook the public instance follows, including the account checks, the identity and billing variables and the Stripe setup.
+Set the start command to `ibridge serve --hosted --http 0.0.0.0:8080 --public-url https://<your domain> --data-dir /data`, the health check path to `/readyz`, and generate a domain. Railway's start command replaces the image's entrypoint (the public instance's first deploy showed this), so the command names the program: it starts with `ibridge`, unlike Fly's `[processes]` line above. `RAILWAY_RUN_UID=0` is there because Railway mounts volumes as root. [deploy-railway.md](deploy-railway.md) has the full runbook the public instance follows, including the account checks, the identity and billing variables and the Stripe setup.
 
 ## Behind a proxy
 
@@ -193,4 +195,4 @@ It prints a `https://<random>.trycloudflare.com` address. Stop the container, re
 
 ### Protocol version Claude.ai negotiated
 
-Not recorded yet. After the first successful run, write here the MCP protocol version Claude.ai negotiated, the date and the ibridge version. The server does not log request bodies, so read the version from the `protocolVersion` field of the `initialize` exchange as the client shows it, or point an MCP inspector at the tunnel URL.
+Not recorded yet. After the first successful run, write here the MCP protocol version Claude.ai negotiated, the date and the iBridge version. The server does not log request bodies, so read the version from the `protocolVersion` field of the `initialize` exchange as the client shows it, or point an MCP inspector at the tunnel URL.

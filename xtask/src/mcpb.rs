@@ -77,6 +77,11 @@ const TARGETS: [Target; 5] = [
     },
 ];
 
+/// The target triples a release builds a bundle for.
+pub(crate) fn triples() -> impl Iterator<Item = &'static str> {
+    TARGETS.iter().map(|target| target.triple)
+}
+
 /// Everything that can go wrong while building a bundle.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum McpbError {
@@ -96,15 +101,15 @@ fn manifest(version: &str, platform: Platform) -> Value {
     json!({
         "manifest_version": "0.3",
         "name": "ibridge",
-        "display_name": "ibridge",
+        "display_name": "iBridge",
         "version": version,
-        "description": "Read and search iCloud Mail, Calendar, Reminders and Contacts from Claude.",
+        "description": "Read, search and manage iCloud Mail, Calendar and Contacts from Claude.",
         "long_description": "Runs on your machine and talks to iCloud with an app-specific password. The password is kept by Claude Desktop and passed to the server as an environment variable.",
         "author": { "name": "Alexander Tar", "url": "https://github.com/AlexanderTar" },
         "repository": { "type": "git", "url": "https://github.com/AlexanderTar/icloud-mcp" },
-        "homepage": "https://github.com/AlexanderTar/icloud-mcp",
+        "homepage": "https://ibridge.fyi",
         "license": "Apache-2.0",
-        "keywords": ["icloud", "mail", "calendar", "reminders", "contacts"],
+        "keywords": ["icloud", "mail", "calendar", "contacts"],
         "server": {
             "type": "binary",
             "entry_point": binary,

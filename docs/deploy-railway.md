@@ -1,10 +1,22 @@
 # Deploying the public instance on Railway
 
-This is the runbook for the public instance at `https://ibridge.fyi`. Every step that changes something comes after the account checks in step 1. Do not skip them: this machine's Railway CLI is logged in to a different (work) account, and `vercel` may default to another scope.
+This is the runbook for the public instance at `https://mcp.ibridge.fyi`, the hosted connector (`https://mcp.ibridge.fyi/mcp`). The product site `https://ibridge.fyi` is a separate site with its own `/privacy` and `/terms`; it is not served by this server. Every step that changes something comes after the account checks in step 1. Do not skip them: this machine's Railway CLI is logged in to a different (work) account, and `vercel` may default to another scope.
 
 Never print the Railway token or an app-specific password. Do not paste either into a command line, a log, an issue or a commit. Steps that read a secret say how to do it without echoing it.
 
-The Railway commands below were checked against `railway` 5.62.1's `--help`. The deploy steps have not been run against a live account; if a command behaves differently, stop and fix the runbook before going on.
+The Railway commands below were checked against `railway` 5.62.1's `--help`. The first deploy has been run once; what it settled is recorded below. If a command behaves differently, stop and fix the runbook before going on.
+
+## The first deploy
+
+What it settled, and where each point is used below:
+
+- **Where it runs.** Railway project `e20f91a4-970a-483e-86af-f10d5107b4d9`, service `ibridge`, environment `production`, deployed from commit `9c1e17a`. These ids are not secrets.
+- **Host.** `mcp.ibridge.fyi`, a subdomain: a `CNAME` to `dymkwjd1.up.railway.app` and a `_railway-verify.mcp` `TXT` record, both on Vercel DNS (step 6). The apex `ibridge.fyi` is the product site and is not pointed at Railway.
+- **Start command.** Railway's start command replaces the image's entrypoint, so it starts with the program, `ibridge serve ...`, not `serve ...` (step 5).
+- **Sign-in domains.** The Apple Services ID's return URL is `<public-url>/signin/apple/callback`, here `https://mcp.ibridge.fyi/signin/apple/callback`, and the Firebase project's authorized domains must include the server's host, `mcp.ibridge.fyi` (step 10).
+- **Stripe.** The live objects were created through the Stripe API, and the sandbox stage (step 11) was skipped by the owner's choice. The ids are in step 12.
+- **`railway ssh`.** It needs an SSH key registered on the personal Railway account (step 9).
+- **Datacenter test account.** It is the owner's own Apple ID, so step 14's `ibridge admin delete` is skipped.
 
 ## 1. Check the accounts
 
@@ -65,7 +77,7 @@ RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable set
 printf '%s' '<contact address>' | RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable set IBRIDGE_CONTACT --stdin --project <project id> --environment production --service ibridge --skip-deploys
 ```
 
-The allowlist holds two addresses: yours, and the test Apple ID the datacenter check in step 7 signs in with (`IBRIDGE_TEST_APPLE_ID` in `~/.config/ibridge/test-account.env`). The check refuses an address that is not on the list. Step 14 removes the test account before sign-ups open.
+The allowlist holds your address and the test Apple ID the datacenter check in step 7 signs in with (`IBRIDGE_TEST_APPLE_ID` in `~/.config/ibridge/test-account.env`). The check refuses an address that is not on the list. For the first deploy the test account is the owner's own Apple ID, so both are the same address. If you use a different test Apple ID, step 14 removes its account before sign-ups open; with your own Apple ID that removal is skipped.
 
 `RAILWAY_RUN_UID=0` is needed because Railway mounts volumes as root, while the image runs as uid 65532. `IBRIDGE_BEHIND_PROXY=true` makes the server rate-limit by the client address Railway's proxy forwards instead of the proxy's own, so visitors get separate sign-in budgets (see [Behind a proxy](self-host.md#behind-a-proxy)). `IBRIDGE_CONTACT` is the address `/privacy` and `/terms` show; the legal review supplies it. To check what is set without showing values, use the dashboard's Variables tab. `railway variable list` prints values, and `--kv` and `--json` print them raw, so none of those forms is safe on a shared screen.
 
@@ -73,13 +85,13 @@ The allowlist holds two addresses: yours, and the test Apple ID the datacenter c
 
 Set the start command and health check in the service's settings (Railway dashboard, Settings, Deploy), or through Railway's public API with the same token (the CLI cannot set them):
 
-- Start command: `ibridge serve --hosted --multi-tenant --http 0.0.0.0:8080 --public-url https://ibridge.fyi --data-dir /data`
+- Start command: `ibridge serve --hosted --multi-tenant --http 0.0.0.0:8080 --public-url https://mcp.ibridge.fyi --data-dir /data`
 - Healthcheck path: `/readyz`
 
 Through the API (`<service id>` and `<environment id>` from step 3; `printf` is a shell builtin, so the token never appears in a process list):
 
 ```sh
-jq -n --arg s '<service id>' --arg e '<environment id>' '{query: "mutation($s:String!,$e:String!,$i:ServiceInstanceUpdateInput!){serviceInstanceUpdate(serviceId:$s,environmentId:$e,input:$i)}", variables: {s: $s, e: $e, i: {startCommand: "ibridge serve --hosted --multi-tenant --http 0.0.0.0:8080 --public-url https://ibridge.fyi --data-dir /data", healthcheckPath: "/readyz"}}}' \
+jq -n --arg s '<service id>' --arg e '<environment id>' '{query: "mutation($s:String!,$e:String!,$i:ServiceInstanceUpdateInput!){serviceInstanceUpdate(serviceId:$s,environmentId:$e,input:$i)}", variables: {s: $s, e: $e, i: {startCommand: "ibridge serve --hosted --multi-tenant --http 0.0.0.0:8080 --public-url https://mcp.ibridge.fyi --data-dir /data", healthcheckPath: "/readyz"}}}' \
   | curl -fsS https://backboard.railway.com/graphql/v2 -H @<(printf 'Authorization: Bearer %s\n' "$(cat ~/.config/railway-personal/token)") -H 'Content-Type: application/json' -d @-
 ```
 
@@ -94,29 +106,29 @@ RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway logs --project <project id> --environment production --service ibridge
 ```
 
-The logs must show a line containing `serving MCP over HTTP, hosted`. If the server refuses to start, the message names the setting (for example, closed sign-ups need `IBRIDGE_ALLOWED_APPLE_IDS`). If the container fails with the entrypoint repeated, for example `ibridge ibridge serve`, Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from the start command, so it starts with `serve`. Do not go on until the deployment is healthy. After the first deploy, record here whether Railway's start command replaced or was added to the image's entrypoint, and whether the apex record needed an ALIAS.
+The logs must show a line containing `serving MCP over HTTP, hosted`. If the server refuses to start, the message names the setting (for example, closed sign-ups need `IBRIDGE_ALLOWED_APPLE_IDS`). Railway's start command replaces the image's entrypoint (the first deploy showed this), so the command above names the program, `ibridge`. Do not go on until the deployment is healthy.
 
 An allowlist limits sign-in even with `--multi-tenant`, so the closed instance accepts only your address.
 
-## 6. Point ibridge.fyi at the service
+## 6. Point mcp.ibridge.fyi at the service
 
 ```sh
-RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway domain ibridge.fyi --project <project id> --environment production --service ibridge --port 8080
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway domain mcp.ibridge.fyi --project <project id> --environment production --service ibridge --port 8080
 ```
 
-This prints the DNS records Railway wants (a CNAME target and a `_railway-verify` TXT record). Re-run step 1's `vercel` checks, then add exactly those records, with the scope from step 1:
+This prints the DNS records Railway wants: a CNAME target (for the first deploy, `dymkwjd1.up.railway.app`) and a `_railway-verify` TXT record. `mcp` is a subdomain, so the records are a plain `CNAME` named `mcp` and a TXT record named `_railway-verify.mcp`. Re-run step 1's `vercel` checks, then add exactly those records on the `ibridge.fyi` zone in Vercel DNS, with the scope from step 1:
 
 ```sh
 vercel dns ls ibridge.fyi --scope <scope>
-vercel dns add ibridge.fyi '@' ALIAS <railway target> --scope <scope>
-vercel dns add ibridge.fyi '_railway-verify' TXT '<value Railway printed>' --scope <scope>
+vercel dns add ibridge.fyi mcp CNAME <railway target> --scope <scope>
+vercel dns add ibridge.fyi _railway-verify.mcp TXT '<value Railway printed>' --scope <scope>
 ```
 
-Vercel DNS takes an `ALIAS` record at the apex, where a plain CNAME is not allowed; use the type Railway prints for a subdomain. Add nothing else and do not touch existing records. Then wait for `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway domain --project <project id> --environment production status ibridge.fyi --service ibridge` to show the certificate issued, and:
+Add nothing else and do not touch existing records, above all the apex, which serves the product site. Then wait for `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway domain --project <project id> --environment production status mcp.ibridge.fyi --service ibridge` to show the certificate issued, and:
 
 ```sh
-curl -fsS https://ibridge.fyi/readyz     # ready
-curl -fsS https://ibridge.fyi/healthz    # ok
+curl -fsS https://mcp.ibridge.fyi/readyz     # ready
+curl -fsS https://mcp.ibridge.fyi/healthz    # ok
 ```
 
 ## 7. Datacenter check
@@ -124,18 +136,26 @@ curl -fsS https://ibridge.fyi/healthz    # ok
 Apple may refuse sign-ins that come from a datacenter address. The server makes the call to Apple when you sign in, so a successful sign-in through the deployed server shows Apple accepts Railway's egress. Run the check from a checkout of the approved commit, with the live test account file in `~/.config/ibridge/test-account.env` (mode `0600`, never printed):
 
 ```sh
-cargo xtask live-hosted-check --url https://ibridge.fyi
+cargo xtask live-hosted-check --url https://mcp.ibridge.fyi
 ```
 
-It signs in as a client does, calls `account_status`, and prints one line per step with no password, token or code. The account address must be one of the addresses in `IBRIDGE_ALLOWED_APPLE_IDS`. Record the result with the sha and the date. If Apple refuses the sign-in, stop: the public launch cannot go on from this host. Say so, do not retry in a loop, and do not open sign-ups.
+It signs in as a client does, calls `account_status`, and prints one line per step with no password, token or code. The account address must be one of the addresses in `IBRIDGE_ALLOWED_APPLE_IDS`. The test account is the owner's own Apple ID, so the sign-in creates the owner's real account on the host. Record the result with the sha and the date. If Apple refuses the sign-in, stop: the public launch cannot go on from this host. Say so, do not retry in a loop, and do not open sign-ups.
 
 This check needs the live test account, and the live recording has not run yet, so it has not run against this host.
 
 ## 8. Uptime monitor (you create it)
 
-You create the monitor in your own monitoring service; the runbook does not hold its credentials. Watch `https://ibridge.fyi/healthz` every minute, expect `200` with the body `ok`, and send alerts to yourself. Use `/healthz`, not `/readyz`: Railway already restarts the service on `/readyz`.
+You create the monitor in your own monitoring service; the runbook does not hold its credentials. Watch `https://mcp.ibridge.fyi/healthz` every minute, expect `200` with the body `ok`, and send alerts to yourself. Use `/healthz`, not `/readyz`: Railway already restarts the service on `/readyz`.
 
 ## 9. Verify backups
+
+`railway ssh` needs an SSH key registered on the personal Railway account: without one the command cannot connect. List the registered keys, and register a local one if there is none (`railway ssh keys add` registers a local key, `railway ssh keys github` imports yours from GitHub):
+
+```sh
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh keys list
+```
+
+This applies to every `railway ssh` command in this runbook: the backup check, the `ibridge admin` commands in steps 13 and 14, and the operating commands.
 
 The server writes its first snapshot as soon as it starts, then one a day, and keeps seven.
 
@@ -160,12 +180,12 @@ The paid-plan launch goes in this order. Each stage must pass before the next st
 
 1. Steps 1 to 9: deploy **without** the identity and billing variables, so the instance is the closed app-password server. The datacenter check (step 7) uses that login, and `cargo xtask live-hosted-check` cannot complete a Sign in with Apple, so it must run before step 10.
 2. Step 10: set the Sign in with Apple variables.
-3. Step 11: the sandbox stage, on the deployed host, with sandbox Stripe keys.
-4. Step 12: create the live Stripe objects and swap to live keys.
+3. Step 11: the sandbox stage, on the deployed host, with sandbox Stripe keys. The owner skipped it for the first launch.
+4. Step 12: create the live Stripe objects and swap to live keys. The objects exist; the key swap is not done.
 5. Step 13: the live checks, then link and comp the owner and test user. Do this before you connect Claude.ai and call `account_status`: a grant made before billing was on, such as the datacenter check's, belongs to no user, so it gets the no-plan error. After billing is on, comp the owner first, then link the owner's address (create an API key on `/account`; with billing on a key for a new address needs a plan or a comp), or disconnect and reconnect Claude.ai so the new grant is tied to the user.
 6. Step 14: open sign-ups.
 
-**Status: none of steps 10 to 13 has been run.** Every command and every check in them is untested against the real services, and the restricted live key's permissions are unproven (see step 12).
+**Status after the first deploy:** the service is deployed and `mcp.ibridge.fyi` points at it (step 6). Step 11 was skipped by the owner's choice, so nothing has proved the restricted key's permission list against Stripe; the live Stripe objects in step 12 exist. This runbook does not record the live checks in step 13 or the swap to live keys as done, so treat the commands in steps 10 to 13 as untested against the real services.
 
 ## 10. Turn on Sign in with Apple
 
@@ -173,12 +193,14 @@ Needs the datacenter check (step 7) to have passed. Values and where they come f
 
 | Variable | Value | Read in |
 |---|---|---|
-| `IBRIDGE_APPLE_SERVICES_ID` | `fyi.ibridge.mcp` (App ID `fyi.ibridge`; return URL `https://ibridge.fyi/signin/apple/callback`) | `crates/ibridge-hosted/src/identity/mod.rs` |
+| `IBRIDGE_APPLE_SERVICES_ID` | `fyi.ibridge.mcp` (App ID `fyi.ibridge`; the Services ID's return URL is `<public-url>/signin/apple/callback`, here `https://mcp.ibridge.fyi/signin/apple/callback`) | `crates/ibridge-hosted/src/identity/mod.rs` |
 | `IBRIDGE_APPLE_TEAM_ID` | `44CQ69ZSP6` | same |
 | `IBRIDGE_APPLE_KEY_ID` | `2QKR8GY5WS` | same |
 | `IBRIDGE_APPLE_PRIVATE_KEY` | the key file `~/.config/ibridge/AuthKey_2QKR8GY5WS.p8` | same |
 | `IBRIDGE_FIREBASE_PROJECT_ID` | `ibridge-fyi` | same |
 | `IBRIDGE_FIREBASE_API_KEY` | the Firebase project's web API key (Firebase console, Project settings) | same |
+
+Two things outside Railway must match the host before sign-in works. In the Apple Developer account, the Services ID's return URL must be exactly `https://mcp.ibridge.fyi/signin/apple/callback`, which is the server's `--public-url` plus `/signin/apple/callback`. In the Firebase console (Authentication, Settings, Authorized domains), the project's authorized domains must include `mcp.ibridge.fyi`. A change of `--public-url` means changing both.
 
 Set every new variable with `--stdin`, so no value is on a command line or in shell history. The Apple key goes in from its file, never printed:
 
@@ -194,6 +216,8 @@ pbpaste | RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway va
 The server refuses to start with half of this group. Do not redeploy yet: step 11 sets the Stripe variables, and billing without identity or `IBRIDGE_CONTACT` (step 4) also stops the server. Keep `IBRIDGE_SIGNUPS=closed` and the allowlist. With billing on, a signed-in person who has not connected an allowlisted iCloud address is told the service is private and is not offered a plan, so everyone who tests must first link an address on the list. Linking takes a sign-up slot, so with billing on it needs access: a person with no plan cannot link by creating a key (they are told to choose a plan, and none is offered). Sign in with Apple once, run `ibridge admin comp <Apple email or Firebase uid>` (step 13) for that person, then on `/account` create an API key with the address (this links it). For a tester who should pay, run `ibridge admin uncomp <...>` afterwards; the Subscribe button appears once the address is linked.
 
 ## 11. Sandbox stage (deployed host, sandbox Stripe keys)
+
+**Skipped for the first launch, by the owner's choice.** The live objects of step 12 were created without it, so the restricted key's permission list and Managed Payments Checkout have not been proven against Stripe's sandbox. Keep the section for the next change to billing.
 
 Do this before any live key goes in. It proves the real Sign in with Apple, a Managed Payments Checkout, the portal and the webhook on the deployed host, none of which a local server or an API-only test can.
 
@@ -211,7 +235,7 @@ Do this before any live key goes in. It proves the real Sign in with Apple, a Ma
 ```sh
 (set -eo pipefail; set -a; . ~/.config/ibridge/stripe-sandbox.env; set +a
  curl -fsS https://api.stripe.com/v1/webhook_endpoints -u "$IBRIDGE_TEST_STRIPE_SECRET_KEY:" \
-   -d url=https://ibridge.fyi/billing/webhook -d api_version=2026-10-28.endive \
+   -d url=https://mcp.ibridge.fyi/billing/webhook -d api_version=2026-10-28.endive \
    -d 'enabled_events[]=checkout.session.completed' \
    -d 'enabled_events[]=customer.subscription.created' \
    -d 'enabled_events[]=customer.subscription.updated' \
@@ -226,8 +250,8 @@ Set the other four the same way, with `--stdin`, never printed: the restricted t
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project <project id> --environment production --service ibridge --detach
-curl -fsS https://ibridge.fyi/readyz
-curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://ibridge.fyi/billing/webhook -d '{}'   # 400: the route exists and rejects an unsigned body (404 means billing is off)
+curl -fsS https://mcp.ibridge.fyi/readyz
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://mcp.ibridge.fyi/billing/webhook -d '{}'   # 400: the route exists and rejects an unsigned body (404 means billing is off)
 ```
 
 **Checks.** Use a browser, a real Apple ID whose iCloud address is on the allowlist, and Stripe's test card `4242 4242 4242 4242`. Record each result with the sha and the date:
@@ -252,12 +276,22 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://ibridge.fyi/billing/we
 
 Only after step 11 passes. The live account is `acct_1UcveBK7W1ABbSCm`. The owner reports country GB, charges enabled and Managed Payments activated; the Stripe CLI here cannot read it, so confirm those in the Dashboard first.
 
-Create these in the **live** Dashboard (or the Stripe CLI logged in to the live account by the owner), mirroring the sandbox:
+The live objects were created through the Stripe API (sandbox stage skipped, see step 11), mirroring the sandbox. Their ids, which are not secrets:
 
-- Product `ibridge hosted`, tax code `txcd_10103000` (SaaS, personal use).
+| Object | Id |
+|---|---|
+| Product (tax code `txcd_10103000`, SaaS, personal use) | `prod_VeTQJWSFlbuWDm` |
+| Monthly price, US$1.99 (`IBRIDGE_STRIPE_PRICE_MONTHLY`) | `price_1UdATsK7W1ABbSCmQllObfNX` |
+| Yearly price, US$19.99 (`IBRIDGE_STRIPE_PRICE_YEARLY`) | `price_1UdATsK7W1ABbSCmn1p14S1B` |
+| Customer portal configuration | `bpc_1UdATsK7W1ABbSCmxHvxhzH7` |
+| Webhook endpoint `https://mcp.ibridge.fyi/billing/webhook` | `we_1UdAU7K7W1ABbSCmIshZolTF` |
+
+If you have to create them again (in the **live** Dashboard, the API, or the Stripe CLI logged in to the live account by the owner):
+
+- Product with tax code `txcd_10103000` (SaaS, personal use).
 - Monthly price US$1.99 and yearly price US$19.99, both `tax_behavior` exclusive.
-- Customer portal configuration: cancel at period end; switch between the two prices (proration `create_prorations`); update payment method; invoice history; default return URL `https://ibridge.fyi/account`.
-- Webhook endpoint `https://ibridge.fyi/billing/webhook` with `api_version` `2026-10-28.endive` and the six events from step 11.
+- Customer portal configuration: cancel at period end; switch between the two prices (proration `create_prorations`); update payment method; invoice history; default return URL `https://mcp.ibridge.fyi/account`.
+- Webhook endpoint `https://mcp.ibridge.fyi/billing/webhook` with `api_version` `2026-10-28.endive` and the six events from step 11. Stripe shows the signing secret only when the endpoint is created, and this runbook does not hold it.
 - Restricted key `ibridge-server-live`, with exactly the permissions the client's calls need and everything else None. The calls are `POST /v1/customers`, `POST` and `GET /v1/checkout/sessions`, `POST /v1/billing_portal/sessions`, `GET /v1/subscriptions?customer=...&status=all`, and `GET` and `DELETE /v1/subscriptions/{id}`. So **Write**: Customers, Checkout Sessions, Customer portal, Subscriptions; **Read**: Prices. The server makes no call to `/v1/prices`, so Prices read is a precaution for Checkout naming a price. **This list is unproven**: the sandbox key used so far is a full `sk_test` key. Step 11's restricted test key is the proof; if it needed more or less, change this list to match.
 
 Then swap. Delete the sandbox webhook endpoint (the server holds one secret) and set the live values with `--stdin`:
@@ -274,7 +308,7 @@ RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project
 
 None of these has been run. Tick each with the sha and the date when done:
 
-- [ ] Real Sign in with Apple on `https://ibridge.fyi` with the Services ID `fyi.ibridge.mcp`.
+- [ ] Real Sign in with Apple on `https://mcp.ibridge.fyi` with the Services ID `fyi.ibridge.mcp`.
 - [ ] The live webhook endpoint exists with the pinned `api_version` and the six events, and its first delivery is answered 2xx.
 - [ ] One live Checkout with a user who is **not** comped (the host is closed, so first comp them, link an allowlisted address on `/account` by creating an API key, then uncomp them: a key for a new address needs access when billing is on), US$1.99 on a real card: `/billing/return` shows an active plan and `tools/call` works. Then cancel from the portal and refund the charge in the Dashboard.
 - [ ] Comp the owner and the test user, so they are never charged. Each must have signed in with Apple once, because comp matches a user row; comp them before they link their iCloud address (an API key on `/account`, which needs access when billing is on), because a grant only counts once it belongs to that user. `ibridge admin comp` takes the Apple email (a private relay address is fine) or the Firebase uid:
@@ -289,13 +323,13 @@ RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --projec
 
 ## 14. Open sign-ups at 50
 
-Only after steps 5 to 13 pass and you have connected Claude.ai to `https://ibridge.fyi/mcp` and called `account_status` yourself, after the owner's address is linked and comped (step 13); a connection made earlier gets the no-plan error until you reconnect. First remove the test account the datacenter check created, so it does not use up one of the 50 places (it holds a sealed password for the test Apple ID until you do):
+Only after steps 5 to 13 pass and you have connected Claude.ai to `https://mcp.ibridge.fyi/mcp` and called `account_status` yourself, after the owner's address is linked and comped (step 13); a connection made earlier gets the no-plan error until you reconnect. **Skip the delete below for the first launch:** the datacenter test account is the owner's own Apple ID, and `delete` would remove the owner's real account. The owner's account counts toward the cap like any other. If the datacenter check used a test Apple ID that is not the owner's, first remove that account, so it does not use up one of the 50 places (it holds a sealed password for the test Apple ID until you do):
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --environment production --service ibridge -- ibridge admin delete <test Apple ID>
 ```
 
-It prints how many accounts it deleted; `1` is expected. If you keep the test account instead, it counts toward the cap like any other. Then remove the allowlist and open sign-ups at the cap:
+It prints how many accounts it deleted; `1` is expected. Then remove the allowlist and open sign-ups at the cap:
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable delete IBRIDGE_ALLOWED_APPLE_IDS --project <project id> --environment production --service ibridge

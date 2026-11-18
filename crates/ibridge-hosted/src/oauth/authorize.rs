@@ -66,7 +66,6 @@ struct SignIn {
     csrf: String,
     apple_id: String,
     password: String,
-    read_only: Option<String>,
 }
 
 /// A request that passed every check up to the password.
@@ -106,7 +105,6 @@ struct AuthorizePage<'a> {
     resource: Option<&'a str>,
     csrf: &'a str,
     apple_id: &'a str,
-    read_only: bool,
     error: Option<&'a str>,
     /// Step 1: the stored request's id, to come back to after Sign in with Apple.
     sign_in: Option<&'a str>,
@@ -220,7 +218,6 @@ async fn form_for(
             let fill = Fill {
                 csrf: &token,
                 apple_id: "",
-                read_only: !valid.wants_write,
                 error: None,
                 linked: linked.as_ref(),
                 signed_in,
@@ -241,7 +238,6 @@ async fn form_for(
             let fill = Fill {
                 csrf: "",
                 apple_id: "",
-                read_only: false,
                 error: None,
                 linked: None,
                 signed_in: plan.is_some(),
@@ -383,13 +379,11 @@ async fn submit(
         Ok(valid) => valid,
         Err(refusal) => return refuse(&shared, refusal),
     };
-    let read_only = form.read_only.is_some();
     let linked = user.as_ref().and_then(|user| user.account.as_ref());
     let again = |status, error: &str| {
         let fill = Fill {
             csrf: &form.csrf,
             apple_id: form.apple_id.trim(),
-            read_only,
             error: Some(error),
             linked,
             signed_in: user.is_some(),
@@ -414,11 +408,11 @@ async fn submit(
             return again(StatusCode::BAD_REQUEST, GENERIC_FAILURE);
         }
     };
-    // A client that asked for read alone never gets write, whatever the box says.
-    let scope = if read_only || !valid.wants_write {
-        Scope::Read
-    } else {
+    // A client that asked for read alone never gets write; every other grant is full access.
+    let scope = if valid.wants_write {
         Scope::ReadWrite
+    } else {
+        Scope::Read
     };
     let issued = match shared
         .store
@@ -649,7 +643,6 @@ fn redirect(
 struct Fill<'a> {
     csrf: &'a str,
     apple_id: &'a str,
-    read_only: bool,
     error: Option<&'a str>,
     /// The address linked to the signed-in user, who connects that one.
     linked: Option<&'a AppleId>,
@@ -681,7 +674,6 @@ fn render(
         resource: valid.resource.as_deref(),
         csrf: fill.csrf,
         apple_id: fill.apple_id,
-        read_only: fill.read_only,
         error: fill.error,
         sign_in,
         plan,
@@ -1045,7 +1037,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_only_checkbox_sets_scope() {
+    async fn the_page_grants_what_the_client_asked_for() {
         let h = harness(Access::MultiTenant).await;
         let both = h
             .get_authorize(&Harness::authorize_path(&[], &[]), IP)
@@ -1056,18 +1048,19 @@ mod tests {
                 IP,
             )
             .await;
-        assert!(
-            !both.text.contains(" checked"),
-            "read-only starts unchecked when the client asked for write"
-        );
-        assert!(
-            only_read.text.contains(" checked"),
-            "read-only starts checked when the client asked for read alone"
-        );
+        for (what, page) in [("write", &both), ("read", &only_read)] {
+            assert!(
+                !page.text.contains("read_only") && !page.text.contains("Read-only access"),
+                "the page offers no read-only choice when the client asked for {what}: {}",
+                page.text
+            );
+        }
 
         let granted = |reply: &crate::oauth::test_support::Reply| code_from(&reply.location());
-        let checked = h.post_form(&both, IP, ADA, ASP_ALL, Some("on")).await;
-        let unchecked = h.post_form(&both, IP, ADA, ASP_ALL, None).await;
+        // A form that still carries the old `read_only` field (a page opened before this
+        // change) is ignored: the grant is what the client asked for.
+        let stale = h.post_form(&both, IP, ADA, ASP_ALL, Some("on")).await;
+        let plain = h.post_form(&both, IP, ADA, ASP_ALL, None).await;
         let read_request = h.post_form(&only_read, IP, ADA, ASP_ALL, None).await;
         let scope_of = |code: String| {
             let store = h.store.clone();
@@ -1080,12 +1073,12 @@ mod tests {
             }
         };
         assert_eq!(
-            scope_of(granted(&checked)).await,
-            Scope::Read,
-            "the box wins"
+            scope_of(granted(&stale)).await,
+            Scope::ReadWrite,
+            "a posted read_only field no longer limits the grant"
         );
         assert_eq!(
-            scope_of(granted(&unchecked)).await,
+            scope_of(granted(&plain)).await,
             Scope::ReadWrite,
             "write was requested and allowed"
         );

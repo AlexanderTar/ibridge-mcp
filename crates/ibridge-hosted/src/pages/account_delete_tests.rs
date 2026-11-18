@@ -491,3 +491,22 @@ async fn a_failed_cancel_of_a_listed_subscription_that_no_longer_pays_is_reporte
     assert!(done.text.contains("billing may continue"), "{}", done.text);
     assert_eq!(rows(&rig).await, [0, 0, 0, 0]);
 }
+
+#[tokio::test]
+async fn delete_without_the_confirmation_box_is_refused_and_changes_nothing() {
+    let rig = Rig::billing().await;
+    let (browser, user) = member(&rig).await;
+    rig.subscribe(&user, "active").await;
+    let before = rows(&rig).await;
+
+    // The button looks inactive until the box is ticked, but only the server decides.
+    for fields in [&[][..], &[("confirm", "")][..], &[("confirm", "no")][..]] {
+        let refused = rig.post("/account/delete", &browser, fields).await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+        assert!(refused.error_text().is_some(), "{}", refused.text);
+    }
+    assert_eq!(rows(&rig).await, before, "nothing is deleted");
+    assert_eq!(rig.apple.revoke_requests().len(), 0);
+    assert_eq!(rig.firebase.deletes().len(), 0);
+    assert_eq!(stripe_deletes(&rig).len(), 0);
+}

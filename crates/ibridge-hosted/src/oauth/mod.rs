@@ -405,6 +405,7 @@ pub(crate) async fn router_with(
         .merge(crate::pages::signin::routes(&shared))
         .merge(crate::billing::routes::routes(&shared))
         .merge(crate::pages::landing::routes(&shared))
+        .merge(crate::assets::routes())
         .layer(tracing_layer());
     Ok((router, shared))
 }

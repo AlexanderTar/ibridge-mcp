@@ -4,6 +4,7 @@
 
 mod admin;
 mod app;
+mod assets;
 mod backup;
 pub mod billing;
 mod config;

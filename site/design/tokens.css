@@ -30,6 +30,9 @@
   --color-accent: #E0532B;           /* decorative only (icon, rules) */
   --color-accent-text: #B03C17;      /* 6.0:1 on bg, for accent-coloured text */
   --color-accent-tint: #FCEBE4;
+  --color-danger: #B3261E;           /* destructive button fill; white text 6.5:1 */
+  --color-danger-hover: #8F1E18;
+  --color-on-danger: #FFFFFF;
   --color-focus: #0B7A80;
   --color-dusk: #0F2538;             /* dark band used by the Horizon direction */
   --color-on-dusk: #EAF2F5;
@@ -128,6 +131,9 @@
     --color-accent: #FF7F57;
     --color-accent-text: #FF9A7A;
     --color-accent-tint: #3A1F18;
+    --color-danger: #FF8A80;          /* destructive button fill; dark text 8.1:1 */
+    --color-danger-hover: #FFA39B;
+    --color-on-danger: #2A0806;
     --color-focus: #6CD0D3;
     --color-dusk: #070C12;
     --color-on-dusk: #EAF2F5;
@@ -158,6 +164,9 @@
   --color-accent: #FF7F57;
   --color-accent-text: #FF9A7A;
   --color-accent-tint: #3A1F18;
+  --color-danger: #FF8A80;
+  --color-danger-hover: #FFA39B;
+  --color-on-danger: #2A0806;
   --color-focus: #6CD0D3;
   --color-dusk: #070C12;
   --color-on-dusk: #EAF2F5;

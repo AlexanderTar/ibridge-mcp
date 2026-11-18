@@ -305,7 +305,7 @@ impl Reply {
 
     /// The text of the page's error paragraph, if it has one.
     pub(crate) fn error_text(&self) -> Option<String> {
-        let marker = r#"<p class="error" role="alert">"#;
+        let marker = r#"<p class="alert" role="alert">"#;
         let start = self.text.find(marker)? + marker.len();
         let end = self.text[start..].find("</p>")?;
         Some(self.text[start..start + end].trim().to_owned())

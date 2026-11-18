@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block robots %}{% endblock %}
-{% block width %}container--narrow{% endblock %}
+{% block layout %}layout-narrow{% endblock %}
 {% block panel %}panel--prose{% endblock %}
 {% block title %}iBridge: iCloud for AI assistants{% endblock %}
 {% block body %}
@@ -14,11 +14,11 @@
 {% endif %}
 <h2 class="h3">Connect Claude</h2>
 <p>The connector address is:</p>
-<p><code class="key">{{ connector }}</code></p>
+<p><span class="copy-box"><code>{{ connector }}</code></span></p>
 <ol class="steps">
-<li><p class="step-body">In Claude, open Settings, then Connectors, and add a custom connector. Paste the address above.</p></li>
-<li><p class="step-body">Claude opens a sign-in page here. {% if identity %}Sign in with Apple{% if price.is_some() %}, choose a plan{% endif %}, then enter{% else %}Enter{% endif %} your primary iCloud address and an <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">app-specific password</a>. Never use your main Apple ID password.</p></li>
-<li><p class="step-body">Approve, and you are connected.</p></li>
+<li><span class="step-title">In Claude, open Settings, then Connectors, and add a custom connector.</span><span class="step-body">Paste the address above.</span></li>
+<li><span class="step-title">Claude opens a sign-in page here.</span><span class="step-body">{% if identity %}Sign in with Apple{% if price.is_some() %}, choose a plan{% endif %}, then enter{% else %}Enter{% endif %} your primary iCloud address and an <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">app-specific password</a>. Never use your main Apple ID password.</span></li>
+<li><span class="step-title">Approve, and you are connected.</span></li>
 </ol>
 <p>In Claude Code, run <code>claude mcp add --transport http ibridge {{ connector }}</code>. Other assistants that support MCP sign-in work the same way. For one that cannot sign in, make a personal API key on your account page.</p>
 <h2 class="h3">What to know first</h2>

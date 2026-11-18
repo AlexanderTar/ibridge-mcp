@@ -342,3 +342,67 @@ async fn links_to_other_sites_open_in_a_new_tab_without_opener() {
     }
     assert!(seen >= 4, "the pages link outside at all ({seen})");
 }
+
+#[tokio::test]
+async fn every_page_has_the_design_system_nav_and_footer() {
+    let h = harness(Access::MultiTenant).await;
+    let authorize = h
+        .get_authorize(&Harness::authorize_path(&[], &[]), IP)
+        .await;
+    let mut pages = vec![("/authorize", authorize)];
+    for path in ["/", "/privacy", "/terms", "/account"] {
+        pages.push((path, h.get_path(path, IP, None).await));
+    }
+    for (path, page) in pages {
+        let html = &page.text;
+        // The nav, the page and the footer share one container edge: one width class on <body>.
+        assert!(
+            html.contains(r#"<body class="layout-form">"#)
+                || html.contains(r#"<body class="layout-narrow">"#),
+            "{path}: the body sets the layout width: {html}"
+        );
+        assert!(
+            html.contains(r#"<div class="container nav-inner">"#)
+                && html.contains(r#"<div class="container page">"#),
+            "{path}: the nav and the page use the same container: {html}"
+        );
+        for part in [
+            r#"<div class="footer-top">"#,
+            r#"<a class="logo" href="/">"#,
+            r#"<p class="disclaimer">iBridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>"#,
+        ] {
+            let footer = html.split("<footer").nth(1).unwrap_or_default();
+            assert!(
+                footer.contains(part),
+                "{path}: the footer has {part}: {footer}"
+            );
+        }
+    }
+    let css = h.get_path("/static/ibridge.css", IP, None).await.text;
+    for drift in [
+        ".nav { position: static",
+        ".footer { flex: none; padding",
+        "border-left-width: 4px",
+        ".steps .step-body {",
+    ] {
+        assert!(
+            !css[css.find(".shell-top").unwrap_or(0)..].contains(drift),
+            "the server stylesheet does not override the design system: {drift}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_landing_page_uses_the_step_and_copy_box_components() {
+    let h = harness(Access::MultiTenant).await;
+    let landing = h.get_path("/", IP, None).await.text;
+    assert!(
+        landing.contains(r#"<span class="step-title">"#)
+            && landing.contains(r#"<span class="step-body">"#),
+        "the steps have a title and a body: {landing}"
+    );
+    assert!(
+        landing.contains(r#"<span class="copy-box"><code>"#),
+        "the connector address is in a copy box: {landing}"
+    );
+}

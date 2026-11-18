@@ -32,8 +32,9 @@ const MARK_DARK: &str = include_str!("../../../site/design/icons/b-cloud-arch-ma
 /// `b-cloud-arch-tile-light.svg` at 180 × 180, because iOS ignores an SVG touch icon.
 const TOUCH_ICON: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
 
-/// A day. The files change only with a new release, and a stale copy is harmless.
-const CACHE: &str = "public, max-age=86400";
+/// Five minutes. The files sit at unversioned addresses, so a longer lifetime would leave
+/// browsers pairing a new page with the old stylesheet after a deploy.
+const CACHE: &str = "public, max-age=300";
 
 /// The stylesheet: the design system, the server's own rules and, when present, the logo rule.
 fn stylesheet() -> &'static str {

@@ -46,6 +46,22 @@ async fn assets_are_served_with_type_and_cache_headers() {
         );
     }
 
+    // A deploy that changes the markup must reach browsers soon: the stylesheet is at an
+    // unversioned address, so its cache lifetime is short.
+    let cache = h.get_path(CSS, IP, None).await.headers[header::CACHE_CONTROL]
+        .to_str()
+        .expect("ascii")
+        .to_owned();
+    let max_age: u32 = cache
+        .split(',')
+        .find_map(|d| d.trim().strip_prefix("max-age="))
+        .and_then(|n| n.parse().ok())
+        .expect("a max-age");
+    assert!(
+        max_age <= 3600,
+        "the stylesheet is not cached for long: {cache}"
+    );
+
     let css = h.get_path(CSS, IP, None).await.text;
     for needle in [
         "--color-brand:",

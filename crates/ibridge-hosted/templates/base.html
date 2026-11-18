@@ -9,14 +9,14 @@
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/ibridge.css">
 </head>
-<body>
+<body class="{% block layout %}layout-form{% endblock %}">
 <div class="shell-top">
 <header class="nav">
 <div class="container nav-inner">
 <a class="logo" href="/"><img class="when-light" src="/static/mark-light.svg" alt="" width="28" height="28"><img class="when-dark" src="/static/mark-dark.svg" alt="" width="28" height="28"><span>iBridge</span></a>
 </div>
 </header>
-<div class="container page {% block width %}page--form{% endblock %}">
+<div class="container page">
 <main class="panel {% block panel %}panel--card{% endblock %}">
 {% block body %}{% endblock %}
 </main>
@@ -24,7 +24,11 @@
 </div>
 <footer class="footer">
 <div class="container">
+<div class="footer-top">
+<a class="logo" href="/"><img class="when-light" src="/static/mark-light.svg" alt="" width="28" height="28"><img class="when-dark" src="/static/mark-dark.svg" alt="" width="28" height="28"><span>iBridge</span></a>
 <ul class="footer-links"><li><a href="/privacy">Privacy</a></li><li><a href="/terms">Terms</a></li></ul>
+</div>
+<p class="disclaimer">iBridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>
 </div>
 </footer>
 </body>

@@ -1,6 +1,6 @@
 // Copy box: <div class="copy-box"><code>…</code><button type="button" aria-label="Copy">…</button></div>
-// Copies the code text, shows "Copied" for 2 s and announces it to screen readers.
-// A button with an icon (an svg child) keeps its markup and toggles data-copied;
+// Copies the code text, shows the copied state for 2 s and announces "Copied" to screen readers.
+// A button with an icon (an svg child) keeps its markup and toggles data-copied (the tick shows, no word);
 // a text-only button swaps its label between "Copy" and "Copied".
 for (const box of document.querySelectorAll(".copy-box")) {
   const button = box.querySelector("button");
@@ -15,7 +15,7 @@ for (const box of document.querySelectorAll(".copy-box")) {
       await navigator.clipboard.writeText(text);
       if (!iconOnly) button.textContent = "Copied";
       button.dataset.copied = "";
-      status.textContent = "Copied to clipboard";
+      status.textContent = "Copied";
     } catch {
       const range = document.createRange();
       range.selectNodeContents(box.querySelector("code"));

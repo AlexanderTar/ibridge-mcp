@@ -123,13 +123,13 @@ h1, h2, h3, p { margin: 0; }
 .copy-box button { flex: none; min-height: 36px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--color-border-strong); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--text-caption); font-weight: var(--weight-semibold); cursor: pointer; }
 .copy-box button:hover { border-color: var(--color-text-tertiary); }
 .copy-box button[data-copied] { background: var(--color-brand); border-color: var(--color-brand); color: var(--color-on-brand); }
-/* Icon variant: <button aria-label="Copy"><svg class="icon-copy">…</svg><svg class="icon-done">…</svg><span class="copy-done">Copied</span></button>.
-   The icon swaps to a tick and "Copied" appears beside it while data-copied is set. */
-.copy-box button:has(svg) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 12px; }
+/* Icon variant: <button aria-label="Copy"><svg class="icon-copy">…</svg><svg class="icon-done">…</svg></button>.
+   While data-copied is set the icon swaps to a tick of the same size, so nothing moves. No word is shown;
+   copy.js announces "Copied" in a visually hidden live region. */
+.copy-box button:has(svg) { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 0 12px; }
 .copy-box button svg { width: 20px; height: 20px; }
-.copy-box button .icon-done, .copy-box button .copy-done { display: none; }
+.copy-box button .icon-done { display: none; }
 .copy-box button[data-copied] .icon-copy { display: none; }
-.copy-box button[data-copied] .icon-done, .copy-box button[data-copied] .copy-done { display: inline; }
 .copy-box button[data-copied] .icon-done { display: block; }
 @media (max-width: 560px) { .copy-box code { font-size: 0.875rem; } }
 .copy-box-label { display: block; font-size: var(--text-caption); font-weight: var(--weight-semibold); color: var(--color-text-tertiary); margin-bottom: var(--space-2); }

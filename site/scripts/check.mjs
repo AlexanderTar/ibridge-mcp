@@ -97,6 +97,7 @@ function checkPage() {
   const boxes = [...html.matchAll(/<(?:div|span)\b[^>]*class="copy-box"[^>]*>[\s\S]*?<\/button>/gi)].map((m) => m[0]);
   assert(boxes.length === 3, `expected 3 copy boxes, found ${boxes.length}`);
   for (const b of boxes) assert(/<button\b[^>]*aria-label="Copy"[^>]*>\s*<svg/.test(b), "copy box button needs aria-label=\"Copy\" and an icon");
+  for (const b of boxes) assert(!/copy-done|>\s*Copied\s*</.test(b), "copy button must show only the tick icon, with no visible 'Copied' word");
   assert(html.includes("assets/copy.js"), "page must load assets/copy.js");
 
   // Prices exactly.
@@ -112,6 +113,12 @@ function checkPage() {
     else assert(existsSync(join(PUBLIC, href.split("#")[0].replace(/^\//, ""))), `local link ${href} does not resolve`);
   }
   for (const want of ALLOWED_EXTERNAL) if (want !== CONNECTOR) assert(hrefs.includes(want), `link missing: ${want}`);
+  // Round 2: links to another site open in a new tab with rel="noopener noreferrer"; in-page and same-site links do not.
+  for (const [tag, href] of [...html.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>/g)].map((m) => [m[0], m[1]])) {
+    const external = /^https?:/.test(href);
+    assert(external === /\btarget="_blank"/.test(tag), `${href}: target="_blank" belongs on links to other sites only`);
+    assert(external === /\brel="noopener noreferrer"/.test(tag), `${href}: rel="noopener noreferrer" belongs on links to other sites only`);
+  }
   const connectHrefs = [...html.matchAll(/<a\b[^>]*class="[^"]*btn[^"]*"[^>]*href="([^"]*)"[^>]*>\s*Connect\s*</g)].map((m) => m[1]);
   assert(connectHrefs.length >= 1 && connectHrefs.every((h) => h === "#how"), "Connect buttons must go to #how");
 
@@ -282,15 +289,28 @@ async function checkCopyButtons(page, browser, origin) {
   assert(count === 3, `expected 3 copy buttons, found ${count}`);
   const want = await page.$$eval(".copy-box code", (els) => els.map((e) => e.textContent.trim()));
   for (let i = 0; i < count; i++) {
+    const read = (n) => page.evaluate((k) => {
+      const b = document.querySelectorAll(".copy-box button")[k];
+      const size = (el) => { const r = el.getBoundingClientRect(); return [r.width, r.height]; };
+      const live = b.parentElement.querySelector("[role=status]");
+      return {
+        copied: "copied" in b.dataset,
+        text: b.innerText.trim(),
+        icons: [...b.querySelectorAll("svg")].filter((s) => getComputedStyle(s).display !== "none").map((s) => s.getAttribute("class")),
+        sizes: [size(b), size(b.parentElement), size(b.parentElement.querySelector("code"))],
+        live: live.textContent,
+        liveHidden: live.classList.contains("visually-hidden"),
+      };
+    }, n);
+    const before = await read(i);
     await (await page.$$(".copy-box button"))[i].click();
     await page.waitForFunction((n) => "copied" in document.querySelectorAll(".copy-box button")[n].dataset, { timeout: 1500 }, i).catch(() => {});
-    const state = await page.evaluate(async (n) => {
-      const b = document.querySelectorAll(".copy-box button")[n];
-      const done = b.querySelector(".copy-done");
-      return { copied: "copied" in b.dataset, shown: Boolean(done) && getComputedStyle(done).display !== "none", clipboard: await navigator.clipboard.readText(), status: b.parentElement.querySelector("[role=status]").textContent };
-    }, i);
-    assert(state.copied && state.shown && state.status === "Copied to clipboard", `copy button ${i + 1}: no "Copied" confirmation`);
-    assert(state.clipboard === want[i], `copy button ${i + 1}: clipboard holds "${state.clipboard}"`);
+    const state = await read(i);
+    const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+    assert(state.copied && state.icons.join() === "icon-done" && state.text === "", `copy button ${i + 1}: copied state must show only the tick icon and no text (shows ${JSON.stringify(state.icons)} / "${state.text}")`);
+    assert(state.liveHidden && state.live === "Copied", `copy button ${i + 1}: the visually hidden live region must say "Copied" (says "${state.live}")`);
+    assert(clipboard === want[i], `copy button ${i + 1}: clipboard holds "${clipboard}"`);
+    assert(JSON.stringify(before.sizes) === JSON.stringify(state.sizes), `copy button ${i + 1}: layout shifted when copied (${JSON.stringify(before.sizes)} -> ${JSON.stringify(state.sizes)})`);
   }
   await new Promise((r) => setTimeout(r, 2200));
   assert(await page.$$eval(".copy-box button", (bs) => bs.every((b) => !("copied" in b.dataset))), "copy confirmation must clear after a moment");

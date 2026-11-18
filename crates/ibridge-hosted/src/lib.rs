@@ -24,7 +24,7 @@ mod provider;
 mod serve;
 mod server;
 mod store;
-#[cfg(any(test, feature = "testing"))]
+#[cfg(test)]
 pub mod testing;
 mod web;
 

@@ -7,11 +7,14 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
-use ibridge_hosted::testing::{FakeImapBackend, accept_all, info};
+use fakes::{FakeImapBackend, accept_all, info};
 use ibridge_hosted::{HostedConfig, HostedOptions, serve};
 use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
+
+#[path = "common/fakes.rs"]
+mod fakes;
 
 const PASSWORD: &str = "cli-live-check-never-print";
 

@@ -4,10 +4,10 @@ The hosted server lets Claude.ai and other remote MCP clients reach your iCloud 
 
 ## The image
 
-The release workflow builds `ghcr.io/alexandertar/ibridge` when a `v*` tag is pushed. The image is `gcr.io/distroless/cc-debian12:debug-nonroot` (pinned by digest in the `Dockerfile`) plus one binary, so it has a busybox shell for `docker exec` and `railway ssh`. It runs as the `nonroot` user (uid 65532; the Railway setup below overrides this and runs as root) and keeps its database in `/data`. Build it yourself from a checkout:
+iBridge publishes no prebuilt image: you build it from source. The image is `gcr.io/distroless/cc-debian12:debug-nonroot` (pinned by digest in the `Dockerfile`) plus one binary, so it has a busybox shell for `docker exec` and `railway ssh`. It runs as the `nonroot` user (uid 65532; the Railway setup below overrides this and runs as root) and keeps its database in `/data`. Build it from a checkout:
 
 ```sh
-docker build -t ibridge:test .
+docker build -t ibridge:src .
 ```
 
 The image's default command prints `ibridge --help`. Start the server with:
@@ -15,7 +15,7 @@ The image's default command prints `ibridge --help`. Start the server with:
 ```sh
 docker run --rm --name ibridge -p 8080:8080 -v ibridge-data:/data \
   -e IBRIDGE_ALLOWED_APPLE_IDS=you@icloud.com \
-  ibridge:test serve --hosted --http 0.0.0.0:8080 \
+  ibridge:src serve --hosted --http 0.0.0.0:8080 \
   --public-url https://ibridge.example.com --data-dir /data
 ```
 
@@ -117,8 +117,10 @@ The server writes a consistent snapshot of the database to `/data/backups/` once
 
 ## Fly.io
 
+Run these in a checkout of the repository: Fly builds its `Dockerfile`.
+
 ```sh
-fly launch --no-deploy --image ghcr.io/alexandertar/ibridge:<version>
+fly launch --no-deploy
 fly volumes create ibridge_data --size 1
 fly secrets set IBRIDGE_ALLOWED_APPLE_IDS=you@icloud.com
 ```
@@ -152,7 +154,7 @@ Fly runs the image's entrypoint (`ibridge`) and appends the `[processes]` comman
 
 ## Railway
 
-Create a service from the image `ghcr.io/alexandertar/ibridge:<version>`, attach a volume at `/data`, and set these variables:
+Create a service from your fork or clone of the repository (Railway builds the `Dockerfile`), attach a volume at `/data`, and set these variables:
 
 ```
 IBRIDGE_ALLOWED_APPLE_IDS=you@icloud.com
@@ -181,7 +183,7 @@ Before you put it on a host, you can try the whole flow through a tunnel. Claude
 ```sh
 docker run --rm --name ibridge -p 8080:8080 -v ibridge-data:/data \
   -e IBRIDGE_ALLOWED_APPLE_IDS=you@icloud.com \
-  ibridge:test serve --hosted --http 0.0.0.0:8080 \
+  ibridge:src serve --hosted --http 0.0.0.0:8080 \
   --public-url https://<tunnel-host> --data-dir /data
 ```
 

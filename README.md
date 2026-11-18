@@ -1,44 +1,56 @@
+<p align="center">
+  <img src="site/public/icon-512.png" alt="iBridge" width="96" height="96">
+</p>
+
 # iBridge
 
-An [MCP](https://modelcontextprotocol.io) server that gives Claude and other MCP clients access to your iCloud Mail, Calendar and Contacts. Run it on your machine, or use the hosted connector. It talks to iCloud over IMAP, SMTP, CalDAV and CardDAV with an app-specific password. Your Apple ID password is never used.
+[![CI](https://github.com/AlexanderTar/icloud-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexanderTar/icloud-mcp/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![crates.io](https://img.shields.io/crates/v/ibridge.svg)](https://crates.io/crates/ibridge)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.AlexanderTar%2Fibridge-informational)](https://registry.modelcontextprotocol.io)
+
+An [MCP](https://modelcontextprotocol.io) server that lets Claude and other MCP clients read, search and manage your iCloud Mail, Calendar and Contacts.
+
+It talks to iCloud over IMAP, SMTP, CalDAV and CardDAV with an app-specific password. Your Apple ID password is never used. Run it on your machine, run your own hosted copy, or use the hosted connector at [ibridge.fyi](https://ibridge.fyi).
+
+iBridge is distributed as source. There are no prebuilt binaries: you build it with Rust, or you use the hosted connector.
+
+## Tools
+
+- **Mail:** list mailboxes, search, read messages and attachments, create drafts, send, move and set flags.
+- **Calendar:** list calendars, search and read events, create, update and delete them.
+- **Contacts:** search and read contacts, create, update and delete them.
+- **Account:** `account_status` reports which services are reachable.
+
+Tools that change anything are marked as such. Mail, event and contact text reaches the client as plain JSON fields, with hidden characters and hidden HTML removed, and each read tool says where its text comes from.
 
 ## Start read-only
 
-Some tools send mail, move messages, and change or delete events and contacts. While you are finding out what Claude does with them, run the server read-only: every tool that changes anything is hidden and rejected.
+Some tools send mail, move messages, and change or delete events and contacts. While you find out what Claude does with them, run the server read-only: every tool that changes anything is hidden and rejected.
 
 ```sh
 ibridge serve --stdio --read-only
 ```
 
-Drop `--read-only` once you trust the setup. The Claude Desktop extension (below) has no read-only switch yet; use Claude Code if you want one.
+Drop `--read-only` once you trust the setup.
 
-## Before you install
+## Install from source
 
-Create an app-specific password at [account.apple.com](https://account.apple.com) under Sign-In and Security. Use one password per tool, so you can revoke it on its own.
-
-## Install
-
-Releases are built for macOS (Apple silicon and Intel), Linux (x64 and arm64) and Windows (x64). Pick one:
-
-**Homebrew** (macOS and Linux):
+You need Rust 1.98 or newer. First create an app-specific password at [account.apple.com](https://account.apple.com) under Sign-In and Security. Use one password per tool, so you can revoke it on its own.
 
 ```sh
-brew install AlexanderTar/tap/ibridge
+cargo install ibridge
 ```
 
-**Install script** (macOS and Linux):
+Or build from a checkout:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/AlexanderTar/icloud-mcp/releases/latest/download/ibridge-installer.sh | sh
+git clone https://github.com/AlexanderTar/icloud-mcp
+cd icloud-mcp
+cargo install --path crates/ibridge
 ```
 
-**PowerShell** (Windows):
-
-```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/AlexanderTar/icloud-mcp/releases/latest/download/ibridge-installer.ps1 | iex"
-```
-
-You can also download an archive from the [releases page](https://github.com/AlexanderTar/icloud-mcp/releases) and put `ibridge` on your `PATH`.
+Or install straight from git: `cargo install --git https://github.com/AlexanderTar/icloud-mcp ibridge`.
 
 ## Connect Claude Code
 
@@ -55,11 +67,28 @@ To keep one server running in the background on macOS or Linux, `ibridge daemon 
 
 ## Connect Claude Desktop
 
-Download `ibridge-<target>.mcpb` for your platform from the releases page and open it. Claude Desktop asks for your Apple ID and the app-specific password, keeps the password out of the config file and passes it to the server as an environment variable.
+Build the Claude Desktop extension from your own build, in a checkout:
+
+```sh
+cargo build --release -p ibridge
+cargo xtask mcpb
+```
+
+That writes `target/mcpb/ibridge-<version>-<platform>.mcpb` (it needs `zip` on your `PATH`). Open the file in Claude Desktop. It asks for your Apple ID and the app-specific password, keeps the password out of the config file and passes it to the server as an environment variable. The extension has no read-only switch; use Claude Code if you want one.
 
 ## Hosted connector
 
-[ibridge.fyi](https://ibridge.fyi) runs iBridge for you, for Claude.ai and other remote MCP clients. Add a custom connector with the URL `https://mcp.ibridge.fyi/mcp`, sign in with Apple, then connect your iCloud address with an app-specific password. It costs US$1.99 per month or US$19.99 per year. Running iBridge on your own machine or [self-hosting](docs/self-host.md) is free and never gated.
+[ibridge.fyi](https://ibridge.fyi) runs iBridge for you, for Claude.ai and other remote MCP clients. Add a custom connector with the URL `https://mcp.ibridge.fyi/mcp`, sign in with Apple, then connect your iCloud address with an app-specific password. It costs US$1.99 per month or US$19.99 per year. Running iBridge on your own machine or self-hosting is free and never gated.
+
+## Self-host
+
+To run your own hosted server, build the image from a checkout:
+
+```sh
+docker build -t ibridge:src .
+```
+
+[docs/self-host.md](docs/self-host.md) covers running it, sign-in, backups and platforms such as Fly.io and Railway. Read [docs/security-model.md](docs/security-model.md) first: it says what the hosted server stores and where its protection ends.
 
 ## Reminders
 
@@ -67,14 +96,14 @@ The reminders tools read and change old-style reminder lists only. Apple's newer
 
 ## Security
 
-Credentials are only ever sent to Apple's iCloud hosts. Mail, event and contact text reaches Claude marked as untrusted content. See [SECURITY.md](SECURITY.md) to report a problem. The hosted server's sealing, its limits and its threat model are in [docs/security-model.md](docs/security-model.md), and running your own copy is in [docs/self-host.md](docs/self-host.md).
+Credentials are only ever sent to Apple's iCloud hosts. See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
-## Contributing and releases
+## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/local-development.md](docs/local-development.md) and [docs/release.md](docs/release.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). [docs/local-development.md](docs/local-development.md) covers the toolchain, [docs/release.md](docs/release.md) covers releases and [CHANGELOG.md](CHANGELOG.md) lists what changed.
 
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The one exception is Apple's Sign in with Apple logo in `crates/ibridge-hosted/assets/`: it is Apple's artwork, committed unmodified, and not covered by that licence.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The one exception is Apple's Sign in with Apple logo in `crates/ibridge-hosted/assets/`: it is Apple's artwork, committed unmodified, kept out of the published crate, and not covered by that licence.
 
-<!-- mcp-name: io.github.AlexanderTar/ibridge -->
+mcp-name: io.github.AlexanderTar/ibridge

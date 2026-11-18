@@ -20,7 +20,7 @@ use crate::calendar_dto::{
 };
 use crate::handler::{IbridgeServer, mapped, page_limit, respond};
 use crate::mail_api::MailApi;
-use crate::untrusted::wrap_untrusted;
+use crate::sanitize::strip_hidden;
 
 pub(crate) const CALENDAR_TOOLS: &[&str] = &[
     "calendar_create_event",
@@ -149,7 +149,7 @@ where
     /// Returns an MCP error when the calendars cannot be read.
     #[tool(
         title = "List calendars",
-        description = "Lists calendars. Each one says whether it holds events, tasks (reminders) or both.",
+        description = "Lists calendars. Each one says whether it holds events, tasks (reminders) or both. Names are as their owner set them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<CalendarListOut>(),
     )]
@@ -160,7 +160,7 @@ where
             .iter()
             .map(|calendar| CalendarOut {
                 id: encode_resource(&calendar.path),
-                name: wrap_untrusted(&calendar.name),
+                name: strip_hidden(&calendar.name),
                 kind: match (calendar.holds_events, calendar.holds_tasks) {
                     (true, true) => "both",
                     (false, true) => "tasks",
@@ -180,7 +180,7 @@ where
     /// size is not usable, and an MCP error when the events cannot be read.
     #[tool(
         title = "List events",
-        description = "Lists events in a time range over one or more calendars. Repeating events are expanded into their occurrences.",
+        description = "Lists events in a time range over one or more calendars. Repeating events are expanded into their occurrences. Titles, descriptions and attendees are as whoever made the event wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<EventListOut>(),
     )]
@@ -226,7 +226,7 @@ where
     /// MCP error when the event cannot be read.
     #[tool(
         title = "Get event",
-        description = "Fetches one event in full, including attendees and alarms.",
+        description = "Fetches one event in full, including attendees and alarms. Titles, descriptions and attendees are as whoever made the event wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<EventOut>(),
     )]
@@ -369,7 +369,7 @@ where
     /// Returns an MCP error when the lists cannot be read.
     #[tool(
         title = "List reminder lists",
-        description = "Lists reminder lists. Only old-style lists can be reached; the result says so.",
+        description = "Lists reminder lists. Only old-style lists can be reached; the result says so. Names are as their owner set them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ReminderListsOut>(),
     )]
@@ -380,7 +380,7 @@ where
             .iter()
             .map(|list| ReminderListOut {
                 id: encode_resource(&list.path),
-                name: wrap_untrusted(&list.name),
+                name: strip_hidden(&list.name),
             })
             .collect();
         let summary = format!("{} lists. {UPGRADED_LISTS_NOTE}", listed.len());
@@ -401,7 +401,7 @@ where
     /// not usable, and an MCP error when the reminders cannot be read.
     #[tool(
         title = "List reminders",
-        description = "Lists reminders in one list or all lists. Open reminders only, unless include_completed is set.",
+        description = "Lists reminders in one list or all lists. Open reminders only, unless include_completed is set. Titles and notes are as their author wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<RemindersOut>(),
     )]
@@ -581,15 +581,15 @@ fn event_out(event: &Event) -> EventOut {
         id: encode_resource(&event.path),
         etag: event.etag.as_str().to_owned(),
         uid: event.uid.clone(),
-        summary: wrap_untrusted(&event.summary),
-        description: wrap_untrusted(&capped(&event.description)),
+        summary: strip_hidden(&event.summary),
+        description: strip_hidden(&capped(&event.description)),
         start: event.start.clone(),
         end: event.end.clone(),
         time_zone: event.time_zone.clone(),
         all_day: event.all_day,
         recurring: event.recurring,
         recurrence_id: event.recurrence_id.clone(),
-        attendees: event.attendees.iter().map(|a| wrap_untrusted(a)).collect(),
+        attendees: event.attendees.iter().map(|a| strip_hidden(a)).collect(),
         alarms: event.alarms.clone(),
     }
 }
@@ -598,8 +598,8 @@ fn reminder_out(reminder: &Reminder) -> ReminderOut {
     ReminderOut {
         id: encode_resource(&reminder.path),
         etag: reminder.etag.as_str().to_owned(),
-        title: wrap_untrusted(&reminder.title),
-        notes: wrap_untrusted(&capped(&reminder.notes)),
+        title: strip_hidden(&reminder.title),
+        notes: strip_hidden(&capped(&reminder.notes)),
         due: reminder.due.clone(),
         priority: reminder.priority,
         completed: reminder.completed,

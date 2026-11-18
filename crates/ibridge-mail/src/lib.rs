@@ -2,6 +2,7 @@
 
 //! IMAP and SMTP mail provider.
 
+mod html;
 mod imap;
 mod limits;
 mod mime;

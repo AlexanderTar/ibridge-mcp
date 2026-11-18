@@ -10,10 +10,10 @@ rustup toolchain install 1.98
 Install the CI tools with the pinned toolchain. `cargo-shear` 1.14.1 does not build on rustc 1.91, which is what an un-updated `stable` may still be:
 
 ```sh
-cargo +1.100.0 install --locked cargo-nextest cargo-hack cargo-deny cargo-shear cargo-llvm-cov cargo-dist
+cargo +1.100.0 install --locked cargo-nextest cargo-hack cargo-deny cargo-shear cargo-llvm-cov
 ```
 
-`cargo-dist` installs a binary named `dist`. `actionlint` checks the workflow files (`brew install actionlint`).
+`actionlint` checks the workflow files; install it with your package manager.
 
 The commands CI runs are listed in `AGENTS.md`. Run that list on a clean tree before pushing. Docker is required only for `cargo nextest run --workspace --profile integration`. The default nextest profile does not run those tests.
 

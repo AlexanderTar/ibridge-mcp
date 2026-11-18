@@ -44,7 +44,7 @@ Deploy a named commit, not a branch. Check out the approved sha in a clean workt
 
 ```sh
 git rev-parse HEAD && git status --short   # the sha you approved, and no output
-docker build -t ibridge:test .             # builds before it is uploaded
+docker build -t ibridge:src .             # builds before it is uploaded
 ```
 
 Write the sha in the deploy notes. `/privacy` tells users each deployment names its exact version, so keep a record.
@@ -197,7 +197,7 @@ The paid-plan launch goes in this order. Each stage must pass before the next st
 5. Step 13: the live checks, then link and comp the owner and test user. Do this before you connect Claude.ai and call `account_status`: a grant made before billing was on, such as the datacenter check's, belongs to no user, so it gets the no-plan error. After billing is on, comp the owner first, then link the owner's address (create an API key on `/account`; with billing on a key for a new address needs a plan or a comp), or disconnect and reconnect Claude.ai so the new grant is tied to the user.
 6. Step 14: open sign-ups.
 
-**Status after the first deploy (2026-11-18):** the service is deployed and `mcp.ibridge.fyi` points at it (step 6); the datacenter check (step 7) passed; the first backup was downloaded and `pragma integrity_check` printed `ok` (step 9); Sign in with Apple is on and the owner signed in with it (step 10); the live Stripe objects and keys are in place (step 12) and the owner is comped (step 13); the live checkout check in step 13 has not run yet. Step 11 was skipped by the owner's choice, so nothing has proved the restricted key's permission list against Stripe; the live Stripe objects in step 12 exist. This runbook does not record the live checks in step 13 or the swap to live keys as done, so treat the commands in steps 10 to 13 as untested against the real services.
+**Status after the first deploy (2026-11-18):** the service is deployed and `mcp.ibridge.fyi` points at it (step 6); the datacenter check (step 7) passed; the first backup was downloaded and `pragma integrity_check` printed `ok` (step 9); Sign in with Apple is on and the owner signed in with it (step 10); the live Stripe objects and keys are in place (step 12); the live checkout in step 13 ran on 2026-11-18 with a single-use 100%-off-forever promotion code on a session copied from the server's own with `allow_promotion_codes` (the server does not offer a code field), and the webhooks `checkout.session.completed`, `customer.subscription.created` and `invoice.paid` were handled; the owner now has a US$0 subscription instead of a comp. Step 11 was skipped by the owner's choice, so nothing has proved the restricted key's permission list against Stripe; the live Stripe objects in step 12 exist. This runbook does not record the live checks in step 13 or the swap to live keys as done, so treat the commands in steps 10 to 13 as untested against the real services.
 
 ## 10. Turn on Sign in with Apple
 

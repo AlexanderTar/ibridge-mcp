@@ -153,7 +153,7 @@ pub struct UpdateReminderParams {
 #[derive(Debug, Serialize, JsonSchema)]
 pub(crate) struct CalendarOut {
     pub(crate) id: String,
-    /// Untrusted content.
+    /// As the calendar's owner named it.
     pub(crate) name: String,
     /// `events`, `tasks` or `both`.
     pub(crate) kind: &'static str,
@@ -169,9 +169,9 @@ pub(crate) struct EventOut {
     pub(crate) id: String,
     pub(crate) etag: String,
     pub(crate) uid: String,
-    /// Untrusted content.
+    /// As the event's author wrote it.
     pub(crate) summary: String,
-    /// Untrusted content.
+    /// As the event's author wrote it.
     pub(crate) description: String,
     pub(crate) start: String,
     pub(crate) end: String,
@@ -180,7 +180,7 @@ pub(crate) struct EventOut {
     pub(crate) recurring: bool,
     /// Pass as `occurrence` to change only this occurrence.
     pub(crate) recurrence_id: Option<String>,
-    /// Untrusted content.
+    /// As the event's author entered them.
     pub(crate) attendees: Vec<String>,
     pub(crate) alarms: Vec<String>,
 }
@@ -208,7 +208,7 @@ pub(crate) struct DeleteOut {
 #[derive(Debug, Serialize, JsonSchema)]
 pub(crate) struct ReminderListOut {
     pub(crate) id: String,
-    /// Untrusted content.
+    /// As the calendar's owner named it.
     pub(crate) name: String,
 }
 
@@ -223,9 +223,9 @@ pub(crate) struct ReminderListsOut {
 pub(crate) struct ReminderOut {
     pub(crate) id: String,
     pub(crate) etag: String,
-    /// Untrusted content.
+    /// As the reminder's author wrote it.
     pub(crate) title: String,
-    /// Untrusted content.
+    /// As the reminder's author wrote it.
     pub(crate) notes: String,
     pub(crate) due: Option<String>,
     pub(crate) priority: Option<u8>,

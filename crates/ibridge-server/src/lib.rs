@@ -12,8 +12,8 @@ mod error_map;
 mod handler;
 pub mod http;
 mod mail_api;
+mod sanitize;
 mod save;
-mod untrusted;
 
 #[cfg(test)]
 mod tests;
@@ -35,4 +35,3 @@ pub use dto::{
 pub use error_map::{MappedError, map_core_error};
 pub use handler::IbridgeServer;
 pub use mail_api::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
-pub use untrusted::wrap_untrusted;

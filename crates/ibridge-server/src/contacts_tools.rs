@@ -20,7 +20,7 @@ use crate::contacts_dto::{
 };
 use crate::handler::{IbridgeServer, mapped, page_limit, respond};
 use crate::mail_api::MailApi;
-use crate::untrusted::wrap_untrusted;
+use crate::sanitize::strip_hidden;
 
 pub(crate) const CONTACTS_TOOLS: &[&str] = &[
     "contacts_create",
@@ -105,7 +105,7 @@ where
     /// limit is above 100, and an MCP error when the search cannot be run.
     #[tool(
         title = "Search contacts",
-        description = "Searches contacts by name, email address or phone number. Matching is done by this server, not by iCloud.",
+        description = "Searches contacts by name, email address or phone number. Matching is done by this server, not by iCloud. Names, labels and notes are as stored on each card.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ContactListOut>(),
     )]
@@ -153,7 +153,7 @@ where
     /// MCP error when the contact cannot be read.
     #[tool(
         title = "Get contact",
-        description = "Fetches one contact in full: labels, note, company and the groups it is in.",
+        description = "Fetches one contact in full: labels, note, company and the groups it is in. Names, labels and notes are as stored on the card.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ContactOut>(),
     )]
@@ -301,8 +301,8 @@ where
 
 fn labeled_out(value: &LabeledValue) -> LabeledOut {
     LabeledOut {
-        value: wrap_untrusted(&value.value),
-        label: value.label.as_deref().map(wrap_untrusted),
+        value: strip_hidden(&value.value),
+        label: value.label.as_deref().map(strip_hidden),
     }
 }
 
@@ -310,21 +310,21 @@ fn contact_out(contact: &Contact) -> ContactOut {
     ContactOut {
         id: encode_resource(&contact.path),
         etag: contact.etag.as_str().to_owned(),
-        name: wrap_untrusted(&contact.full_name),
+        name: strip_hidden(&contact.full_name),
         emails: contact.emails.iter().map(labeled_out).collect(),
         phones: contact.phones.iter().map(labeled_out).collect(),
-        organization: contact.organization.as_deref().map(wrap_untrusted),
+        organization: contact.organization.as_deref().map(strip_hidden),
         note: contact
             .note
             .as_deref()
-            .map(|note| wrap_untrusted(&capped(note))),
+            .map(|note| strip_hidden(&capped(note))),
         is_group: contact.is_group,
         groups: contact
             .groups
             .iter()
             .map(|group| GroupOut {
                 id: encode_resource(&group.path),
-                name: wrap_untrusted(&group.name),
+                name: strip_hidden(&group.name),
             })
             .collect(),
     }

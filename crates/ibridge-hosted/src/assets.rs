@@ -14,9 +14,11 @@ use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
+// The files in `assets/design/` are copies of `site/design/`, which a published crate cannot
+// reach; a test in `pages/assets_tests.rs` fails when a copy drifts.
 const STYLESHEET: &str = concat!(
-    include_str!("../../../site/design/tokens.css"),
-    include_str!("../../../site/design/components.css"),
+    include_str!("../assets/design/tokens.css"),
+    include_str!("../assets/design/components.css"),
     include_str!("../assets/server.css"),
 );
 /// Apple's logo, Apple's own artwork (see `assets/NOTICE`), committed unmodified. While both
@@ -37,9 +39,9 @@ const APPLE_LOGO_CSS: &str = "
 :root[data-theme=\"dark\"] { --apple-logo: url(/static/apple-logo-black.svg); }
 .btn-apple::before { content: \"\"; flex: none; width: 56px; height: 56px; margin: -6px -6px -6px -14px; background: var(--apple-logo) center / 56px 56px no-repeat; }
 ";
-const FAVICON: &str = include_str!("../../../site/design/icons/b-cloud-arch-favicon.svg");
-const MARK_LIGHT: &str = include_str!("../../../site/design/icons/b-cloud-arch-mark-light.svg");
-const MARK_DARK: &str = include_str!("../../../site/design/icons/b-cloud-arch-mark-dark.svg");
+const FAVICON: &str = include_str!("../assets/design/b-cloud-arch-favicon.svg");
+const MARK_LIGHT: &str = include_str!("../assets/design/b-cloud-arch-mark-light.svg");
+const MARK_DARK: &str = include_str!("../assets/design/b-cloud-arch-mark-dark.svg");
 /// `b-cloud-arch-tile-light.svg` at 180 × 180, because iOS ignores an SVG touch icon.
 const TOUCH_ICON: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
 

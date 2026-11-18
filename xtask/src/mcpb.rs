@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Builds the Claude Desktop extension bundles (`.mcpb`) from dist's archives.
+//! Builds a Claude Desktop extension bundle (`.mcpb`) from your own build.
 //!
-//! One bundle per release target. Each holds `manifest.json`, the `ibridge`
-//! binary dist built and the licence. Claude Desktop asks for the Apple ID and
-//! the app-specific password and passes them to the server as environment
-//! variables, so the password never lands in a config file.
+//! The bundle holds `manifest.json`, the `ibridge` binary you built and the
+//! licence. Claude Desktop asks for the Apple ID and the app-specific password
+//! and passes them to the server as environment variables, so the password
+//! never lands in a config file.
 
 use std::fs;
 use std::io;
@@ -14,13 +14,7 @@ use std::process::Command;
 
 use serde_json::{Value, json};
 
-/// A release target, as dist names it, and the manifest platform it runs on.
-#[derive(Debug, Clone, Copy)]
-struct Target {
-    triple: &'static str,
-    platform: Platform,
-}
-
+/// The platform a bundle runs on: the one `cargo xtask mcpb` itself runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Platform {
     Darwin,
@@ -29,6 +23,16 @@ enum Platform {
 }
 
 impl Platform {
+    fn host() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Darwin
+        } else if cfg!(windows) {
+            Self::Win32
+        } else {
+            Self::Linux
+        }
+    }
+
     fn name(self) -> &'static str {
         match self {
             Self::Darwin => "darwin",
@@ -43,56 +47,19 @@ impl Platform {
             Self::Darwin | Self::Linux => "ibridge",
         }
     }
-
-    /// dist ships Windows as `.zip` and everything else as `.tar.xz`.
-    fn archive_extension(self) -> &'static str {
-        match self {
-            Self::Win32 => "zip",
-            Self::Darwin | Self::Linux => "tar.xz",
-        }
-    }
-}
-
-/// The targets in `dist-workspace.toml`.
-const TARGETS: [Target; 5] = [
-    Target {
-        triple: "aarch64-apple-darwin",
-        platform: Platform::Darwin,
-    },
-    Target {
-        triple: "x86_64-apple-darwin",
-        platform: Platform::Darwin,
-    },
-    Target {
-        triple: "aarch64-unknown-linux-musl",
-        platform: Platform::Linux,
-    },
-    Target {
-        triple: "x86_64-unknown-linux-musl",
-        platform: Platform::Linux,
-    },
-    Target {
-        triple: "x86_64-pc-windows-msvc",
-        platform: Platform::Win32,
-    },
-];
-
-/// The target triples a release builds a bundle for.
-pub(crate) fn triples() -> impl Iterator<Item = &'static str> {
-    TARGETS.iter().map(|target| target.triple)
 }
 
 /// Everything that can go wrong while building a bundle.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum McpbError {
-    #[error("usage: cargo xtask mcpb [--dist DIR] [--out DIR]")]
+    #[error("usage: cargo xtask mcpb [--binary PATH] [--out DIR]")]
     Usage,
     #[error("{0}")]
     Io(#[from] io::Error),
     #[error("{tool} failed: {detail}")]
     Tool { tool: &'static str, detail: String },
-    #[error("no {0} in the archive")]
-    NoBinary(&'static str),
+    #[error("{0} not found; build it first with `cargo build --release -p ibridge`")]
+    NoBinary(PathBuf),
 }
 
 /// The extension manifest, spec 0.3, for one platform.
@@ -144,76 +111,55 @@ fn manifest(version: &str, platform: Platform) -> Value {
     })
 }
 
-/// `mcpb [--dist DIR] [--out DIR]`: reads `ibridge-<triple>` archives from
-/// `--dist` (default `target/distrib`) and writes `ibridge-<triple>.mcpb` files
-/// to `--out` (default `target/mcpb`). Needs `tar`, `unzip` and `zip` on PATH.
+/// `mcpb [--binary PATH] [--out DIR]`: packs your own build of `ibridge` into
+/// `ibridge-<version>-<platform>.mcpb`. `--binary` defaults to
+/// `target/release/ibridge` and `--out` to `target/mcpb`. Needs `zip` on PATH.
 pub(crate) fn run(
     root: &Path,
     mut args: impl Iterator<Item = String>,
 ) -> Result<Vec<PathBuf>, McpbError> {
-    let mut dist = root.join("target/distrib");
+    let platform = Platform::host();
+    let mut binary = root.join("target/release").join(platform.binary());
     let mut out = root.join("target/mcpb");
     while let Some(flag) = args.next() {
         let slot = match flag.as_str() {
-            "--dist" => &mut dist,
+            "--binary" => &mut binary,
             "--out" => &mut out,
             _ => return Err(McpbError::Usage),
         };
         *slot = PathBuf::from(args.next().ok_or(McpbError::Usage)?);
     }
+    if !binary.is_file() {
+        return Err(McpbError::NoBinary(binary));
+    }
     fs::create_dir_all(&out)?;
-    TARGETS
-        .iter()
-        .map(|target| bundle(*target, &dist, &out))
-        .collect()
+    Ok(vec![bundle(root, platform, &binary, &out)?])
 }
 
-fn bundle(target: Target, dist: &Path, out: &Path) -> Result<PathBuf, McpbError> {
-    let archive = dist.join(format!(
-        "ibridge-{}.{}",
-        target.triple,
-        target.platform.archive_extension()
-    ));
-    let stage = out.join(format!("stage-{}", target.triple));
+fn bundle(
+    root: &Path,
+    platform: Platform,
+    binary: &Path,
+    out: &Path,
+) -> Result<PathBuf, McpbError> {
+    let stage = out.join("stage");
     if stage.exists() {
         fs::remove_dir_all(&stage)?;
     }
-    let unpacked = stage.join("unpacked");
     let server = stage.join("bundle/server");
-    fs::create_dir_all(&unpacked)?;
     fs::create_dir_all(&server)?;
-
-    match target.platform {
-        Platform::Win32 => tool(
-            "unzip",
-            Command::new("unzip")
-                .arg("-q")
-                .arg(&archive)
-                .arg("-d")
-                .arg(&unpacked),
-        )?,
-        Platform::Darwin | Platform::Linux => tool(
-            "tar",
-            Command::new("tar")
-                .arg("-xJf")
-                .arg(&archive)
-                .arg("-C")
-                .arg(&unpacked),
-        )?,
-    }
-    let binary = find(&unpacked, target.platform.binary())?
-        .ok_or(McpbError::NoBinary(target.platform.binary()))?;
-    fs::copy(&binary, server.join(target.platform.binary()))?;
-    if let Some(licence) = find(&unpacked, "LICENSE")? {
-        fs::copy(licence, stage.join("bundle/LICENSE"))?;
-    }
-    let mut text =
-        serde_json::to_string_pretty(&manifest(env!("CARGO_PKG_VERSION"), target.platform))
-            .map_err(io::Error::other)?;
+    fs::copy(binary, server.join(platform.binary()))?;
+    fs::copy(root.join("LICENSE"), stage.join("bundle/LICENSE"))?;
+    let mut text = serde_json::to_string_pretty(&manifest(env!("CARGO_PKG_VERSION"), platform))
+        .map_err(io::Error::other)?;
     text.push('\n');
     fs::write(stage.join("bundle/manifest.json"), text)?;
 
-    let bundle = out.join(format!("ibridge-{}.mcpb", target.triple));
+    let bundle = out.join(format!(
+        "ibridge-{}-{}.mcpb",
+        env!("CARGO_PKG_VERSION"),
+        platform.name()
+    ));
     if bundle.exists() {
         fs::remove_file(&bundle)?;
     }
@@ -227,21 +173,6 @@ fn bundle(target: Target, dist: &Path, out: &Path) -> Result<PathBuf, McpbError>
     )?;
     fs::remove_dir_all(&stage)?;
     Ok(bundle)
-}
-
-/// Finds the first file called `name` under `dir`, depth first.
-fn find(dir: &Path, name: &str) -> io::Result<Option<PathBuf>> {
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            if let Some(found) = find(&path, name)? {
-                return Ok(Some(found));
-            }
-        } else if path.file_name().is_some_and(|file| file == name) {
-            return Ok(Some(path));
-        }
-    }
-    Ok(None)
 }
 
 fn tool(name: &'static str, command: &mut Command) -> Result<(), McpbError> {

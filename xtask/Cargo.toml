@@ -37,7 +37,9 @@ zeroize.workspace = true
 [dev-dependencies]
 insta.workspace = true
 ibridge-dav = { workspace = true, features = ["test-hosts"] }
-ibridge-hosted = { workspace = true, features = ["testing"] }
+ibridge-hosted.workspace = true
+ibridge-server.workspace = true
+rmcp.workspace = true
 ibridge-testkit.workspace = true
 tempfile.workspace = true
 

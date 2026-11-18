@@ -28,8 +28,8 @@ use crate::dto::{
 };
 use crate::error_map::{MappedError, map_core_error};
 use crate::mail_api::{MailApi, MailDest};
+use crate::sanitize::strip_hidden;
 use crate::save::{safe_name, save_unique};
-use crate::untrusted::wrap_untrusted;
 
 const MAX_IN_FLIGHT: usize = 4;
 const DEFAULT_LIMIT: u32 = 25;
@@ -371,7 +371,7 @@ where
     /// or a filter is not usable, and an MCP error when the search cannot be run.
     #[tool(
         title = "Search mail",
-        description = "Searches messages, newest first.",
+        description = "Searches messages, newest first. Subjects are as the sender wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<SearchOut>(),
     )]
@@ -410,7 +410,7 @@ where
     /// and an MCP error when the message cannot be read.
     #[tool(
         title = "Get message",
-        description = "Fetches one message, including its text and attachment list.",
+        description = "Fetches one message, including its text and attachment list. The subject and body are as the sender wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<MessageOut>(),
     )]
@@ -434,7 +434,7 @@ where
     /// and an MCP error when the part cannot be read.
     #[tool(
         title = "Get attachment",
-        description = "Fetches one attachment as text or as a small inline file.",
+        description = "Fetches one attachment as text or as a small inline file. The file name and text are as the sender wrote them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<AttachmentOut>(),
     )]
@@ -454,9 +454,9 @@ where
         respond(
             &AttachmentOut {
                 content_type: part.info.content_type,
-                name: wrap_untrusted(&part.info.name),
+                name: strip_hidden(&part.info.name),
                 size: part.info.size,
-                text: part.text.as_deref().map(wrap_untrusted),
+                text: part.text.as_deref().map(strip_hidden),
                 bytes_base64,
                 next_offset: widen(fetched.next_offset),
             },
@@ -791,8 +791,8 @@ fn mailbox_out(mailbox: &Mailbox) -> MailboxOut {
 fn hit_out(hit: &MessageSummary) -> SearchHitOut {
     SearchHitOut {
         id: encode(&hit.id),
-        from: hit.from.clone(),
-        subject: wrap_untrusted(&hit.subject),
+        from: strip_hidden(&hit.from),
+        subject: strip_hidden(&hit.subject),
         date: hit.date.clone(),
         unread: hit.unread,
         flagged: hit.flagged,
@@ -802,11 +802,11 @@ fn hit_out(hit: &MessageSummary) -> SearchHitOut {
 fn message_out(message: &Message, next_offset: Option<usize>) -> MessageOut {
     MessageOut {
         id: encode(&message.id),
-        from: message.from.clone(),
-        to: message.to.clone(),
-        subject: wrap_untrusted(&message.subject),
+        from: strip_hidden(&message.from),
+        to: message.to.iter().map(|to| strip_hidden(to)).collect(),
+        subject: strip_hidden(&message.subject),
         date: message.date.clone(),
-        body: wrap_untrusted(&message.body),
+        body: strip_hidden(&message.body),
         attachments: message
             .attachments
             .iter()
@@ -814,7 +814,7 @@ fn message_out(message: &Message, next_offset: Option<usize>) -> MessageOut {
                 part: info.part.clone(),
                 content_type: info.content_type.clone(),
                 size: info.size,
-                name: wrap_untrusted(&info.name),
+                name: strip_hidden(&info.name),
             })
             .collect(),
         next_offset: widen(next_offset),

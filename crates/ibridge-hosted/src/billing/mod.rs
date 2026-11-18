@@ -2,7 +2,7 @@
 
 //! Paid plans: the settings that switch billing on, the access rule, and the Stripe client.
 
-#[cfg(any(test, feature = "testing"))]
+#[cfg(test)]
 pub mod fakes;
 #[cfg(test)]
 mod gate_tests;

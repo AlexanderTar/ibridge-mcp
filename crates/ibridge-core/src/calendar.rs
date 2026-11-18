@@ -38,9 +38,9 @@ pub struct Event {
     pub etag: ETag,
     /// The iCalendar `UID`.
     pub uid: String,
-    /// Summary. Untrusted content.
+    /// Summary.
     pub summary: String,
-    /// Description. Untrusted content.
+    /// Description.
     pub description: String,
     /// Start, as an ISO-8601 timestamp.
     pub start: String,
@@ -55,7 +55,7 @@ pub struct Event {
     /// Original start of this occurrence, as an ISO-8601 timestamp, for a
     /// recurring event. Pass it back to change only this occurrence.
     pub recurrence_id: Option<String>,
-    /// Attendee addresses. Untrusted content.
+    /// Attendee addresses.
     pub attendees: Vec<String>,
     /// Alarm triggers, such as `-PT15M`.
     pub alarms: Vec<String>,
@@ -187,9 +187,9 @@ pub struct Reminder {
     pub path: ResourcePath,
     /// `ETag` for a conditional write.
     pub etag: ETag,
-    /// Title. Untrusted content.
+    /// Title.
     pub title: String,
-    /// Notes. Untrusted content.
+    /// Notes.
     pub notes: String,
     /// Due date, when the reminder has one.
     pub due: Option<String>,

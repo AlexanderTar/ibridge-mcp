@@ -62,11 +62,11 @@ impl MailApi for Scripted {
         Ok(MailBody {
             message: Message {
                 id: id.clone(),
-                from: "bob@example.com".to_owned(),
-                to: vec!["ada@icloud.com".to_owned()],
-                subject: "Picnic".to_owned(),
+                from: "Bob\u{202E}\u{E0049} <bob@example.com>".to_owned(),
+                to: vec!["Ada\u{200B} <ada@icloud.com>".to_owned()],
+                subject: "Pic\u{FEFF}nic\u{202E}".to_owned(),
                 date: "2026-11-01".to_owned(),
-                body: "Bring napkins.".to_owned(),
+                body: "Bring\u{200B} napkins.\u{E0049}\u{E0067}\u{2066}".to_owned(),
                 attachments: Vec::new(),
             },
             next_offset: None,
@@ -185,11 +185,58 @@ async fn e2e_search_then_get() {
     let message = fetched
         .structured_content
         .expect("message structured content");
-    let body = message["body"].as_str().expect("body text");
-    assert!(
-        body.contains("Bring napkins.") && body.contains("untrusted"),
-        "the body arrives wrapped as untrusted, got {body}"
+    assert_eq!(
+        message["body"].as_str(),
+        Some("Bring napkins."),
+        "the body arrives as plain text with hidden characters stripped"
     );
+    assert_eq!(
+        message["subject"].as_str(),
+        Some("Picnic"),
+        "the subject arrives as plain text with hidden characters stripped"
+    );
+    assert_eq!(
+        message["from"].as_str(),
+        Some("Bob <bob@example.com>"),
+        "the sender's display name has hidden characters stripped"
+    );
+    assert_eq!(
+        message["to"][0].as_str(),
+        Some("Ada <ada@icloud.com>"),
+        "recipient display names have hidden characters stripped"
+    );
+    assert!(
+        !message.to_string().contains("untrusted"),
+        "no untrusted marker, got {message}"
+    );
+}
+
+#[tokio::test]
+async fn mail_read_tools_say_where_the_text_comes_from() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let tools = client.list_all_tools().await.expect("list tools");
+    for (name, sentence) in [
+        ("mail_search", "Subjects are as the sender wrote them."),
+        (
+            "mail_get_message",
+            "The subject and body are as the sender wrote them.",
+        ),
+        (
+            "mail_get_attachment",
+            "The file name and text are as the sender wrote them.",
+        ),
+    ] {
+        let tool = tools.iter().find(|tool| tool.name == name).expect(name);
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains(sentence),
+            "{name} names the source of the text, got {description:?}"
+        );
+    }
 }
 
 #[tokio::test]

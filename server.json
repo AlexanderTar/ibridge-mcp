@@ -3,7 +3,7 @@
   "name": "io.github.AlexanderTar/ibridge",
   "title": "iBridge",
   "description": "Read, search and manage iCloud Mail, Calendar and Contacts from Claude and other MCP clients.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "websiteUrl": "https://ibridge.fyi",
   "repository": {
     "url": "https://github.com/AlexanderTar/icloud-mcp",
@@ -11,59 +11,10 @@
   },
   "packages": [
     {
-      "registryType": "mcpb",
-      "identifier": "https://github.com/AlexanderTar/icloud-mcp/releases/download/v0.1.0/ibridge-aarch64-apple-darwin.mcpb",
-      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "transport": {
-        "type": "stdio"
-      }
-    },
-    {
-      "registryType": "mcpb",
-      "identifier": "https://github.com/AlexanderTar/icloud-mcp/releases/download/v0.1.0/ibridge-x86_64-apple-darwin.mcpb",
-      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "transport": {
-        "type": "stdio"
-      }
-    },
-    {
-      "registryType": "mcpb",
-      "identifier": "https://github.com/AlexanderTar/icloud-mcp/releases/download/v0.1.0/ibridge-aarch64-unknown-linux-musl.mcpb",
-      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "transport": {
-        "type": "stdio"
-      }
-    },
-    {
-      "registryType": "mcpb",
-      "identifier": "https://github.com/AlexanderTar/icloud-mcp/releases/download/v0.1.0/ibridge-x86_64-unknown-linux-musl.mcpb",
-      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "transport": {
-        "type": "stdio"
-      }
-    },
-    {
-      "registryType": "mcpb",
-      "identifier": "https://github.com/AlexanderTar/icloud-mcp/releases/download/v0.1.0/ibridge-x86_64-pc-windows-msvc.mcpb",
-      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "transport": {
-        "type": "stdio"
-      }
-    },
-    {
-      "registryType": "oci",
-      "identifier": "ghcr.io/alexandertar/ibridge:0.1.0",
-      "runtimeHint": "docker",
-      "runtimeArguments": [
-        {
-          "type": "named",
-          "name": "-i"
-        },
-        {
-          "type": "named",
-          "name": "--rm"
-        }
-      ],
+      "registryType": "cargo",
+      "registryBaseUrl": "https://crates.io",
+      "identifier": "ibridge",
+      "version": "1.0.0",
       "packageArguments": [
         {
           "type": "positional",

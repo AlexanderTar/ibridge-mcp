@@ -248,3 +248,33 @@ async fn the_stylesheet_has_a_destructive_colour_and_greys_the_delete_button_unt
         "the button is inactive until its box is ticked, with no script"
     );
 }
+
+/// `assets/design/` holds copies of the design-system files in `site/design/`, because a
+/// published crate cannot include files outside its own directory. Copy the file again when
+/// the site's changes.
+#[test]
+fn the_design_copies_match_the_site() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (copy, original) in [
+        ("tokens.css", "tokens.css"),
+        ("components.css", "components.css"),
+        ("b-cloud-arch-favicon.svg", "icons/b-cloud-arch-favicon.svg"),
+        (
+            "b-cloud-arch-mark-light.svg",
+            "icons/b-cloud-arch-mark-light.svg",
+        ),
+        (
+            "b-cloud-arch-mark-dark.svg",
+            "icons/b-cloud-arch-mark-dark.svg",
+        ),
+    ] {
+        let mine = std::fs::read(manifest.join("assets/design").join(copy))
+            .unwrap_or_else(|e| panic!("assets/design/{copy}: {e}"));
+        let site = std::fs::read(manifest.join("../../site/design").join(original))
+            .unwrap_or_else(|e| panic!("site/design/{original}: {e}"));
+        assert!(
+            mine == site,
+            "assets/design/{copy} differs from site/design/{original}"
+        );
+    }
+}

@@ -28,6 +28,7 @@ const CUSTOMER: &str = include_str!("fixtures/customer.json");
 const SESSION_MANAGED: &str = include_str!("fixtures/checkout-session-managed.json");
 const SESSION_AUTOMATIC: &str = include_str!("fixtures/checkout-session-automatic-mp-off.json");
 const SUBSCRIPTION: &str = include_str!("fixtures/subscription.json");
+const SUBSCRIPTION_LIST: &str = include_str!("fixtures/subscription-list.json");
 
 /// The key the fake accepts.
 pub const FAKE_SECRET_KEY: &str = "sk_test_fake_key_for_tests";
@@ -71,6 +72,7 @@ struct FakeState {
     subscriptions: Mutex<HashMap<String, Value>>,
     counter: AtomicUsize,
     refuse: Mutex<Option<StatusCode>>,
+    refuse_cancel: Mutex<HashMap<String, StatusCode>>,
     last_session: Mutex<Option<String>>,
 }
 
@@ -150,6 +152,16 @@ impl FakeStripe {
     /// Ends an outage started by [`FakeStripe::refuse_with`].
     pub fn recover(&self) {
         *lock(&self.state.refuse) = None;
+    }
+
+    /// Makes the cancel (DELETE) of subscription `id` fail with `status`, while every other call works.
+    pub fn refuse_cancel_of(&self, id: &str, status: StatusCode) {
+        lock(&self.state.refuse_cancel).insert(id.to_owned(), status);
+    }
+
+    /// Undoes [`FakeStripe::refuse_cancel_of`] for subscription `id`.
+    pub fn allow_cancel_of(&self, id: &str) {
+        lock(&self.state.refuse_cancel).remove(id);
     }
 
     /// Stores a subscription the client can fetch: the sandbox's, with these fields set.
@@ -303,20 +315,57 @@ async fn handle(
             Some(object) => axum::Json(object.clone()).into_response(),
             None => stripe_error(StatusCode::NOT_FOUND, "invalid_request_error"),
         },
-        ("DELETE", ["v1", "subscriptions", id]) => match lock(&state.subscriptions).get_mut(*id) {
-            // Real Stripe (sandbox, 2026-11-18) answers a DELETE on an already-canceled
-            // subscription with 404 and code `resource_missing`, though a GET still finds it.
-            Some(object) if object["status"] == "canceled" => {
-                stripe_error(StatusCode::NOT_FOUND, "invalid_request_error")
-            }
-            Some(object) => {
-                object["status"] = json!("canceled");
-                axum::Json(object.clone()).into_response()
-            }
-            None => stripe_error(StatusCode::NOT_FOUND, "invalid_request_error"),
-        },
+        ("GET", ["v1", "subscriptions"]) => list_subscriptions(&state, &uri),
+        ("DELETE", ["v1", "subscriptions", id]) => cancel_subscription(&state, id),
         _ => stripe_error(StatusCode::NOT_FOUND, "invalid_request_error"),
     }
+}
+
+/// `DELETE /v1/subscriptions/{id}`.
+fn cancel_subscription(state: &FakeState, id: &str) -> Response {
+    if let Some(status) = lock(&state.refuse_cancel).get(id) {
+        return stripe_error(*status, "api_error");
+    }
+    match lock(&state.subscriptions).get_mut(id) {
+        // Real Stripe (sandbox, 2026-11-18) answers a DELETE on an already-canceled
+        // subscription with 404 and code `resource_missing`, though a GET still finds it.
+        Some(object) if object["status"] == "canceled" => {
+            stripe_error(StatusCode::NOT_FOUND, "invalid_request_error")
+        }
+        Some(object) => {
+            object["status"] = json!("canceled");
+            axum::Json(object.clone()).into_response()
+        }
+        None => stripe_error(StatusCode::NOT_FOUND, "invalid_request_error"),
+    }
+}
+
+/// `GET /v1/subscriptions`. Like Stripe, it takes `customer` and `status` (`all` includes
+/// ended subscriptions; no status leaves them out).
+fn list_subscriptions(state: &FakeState, uri: &Uri) -> Response {
+    let query: HashMap<String, String> = uri.query().map_or_default(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect()
+    });
+    let mut found: Vec<(String, Value)> = lock(&state.subscriptions)
+        .iter()
+        .filter(|(_, object)| {
+            query
+                .get("customer")
+                .is_none_or(|customer| object["customer"] == json!(customer))
+                && match query.get("status").map(String::as_str) {
+                    Some("all") => true,
+                    Some(status) => object["status"] == json!(status),
+                    None => object["status"] != "canceled",
+                }
+        })
+        .map(|(id, object)| (id.clone(), object.clone()))
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut list = fixture(SUBSCRIPTION_LIST);
+    list["data"] = Value::Array(found.into_iter().map(|(_, object)| object).collect());
+    axum::Json(list).into_response()
 }
 
 /// The `Stripe-Signature` header value for `body` at `timestamp`, signed with `secret`.

@@ -208,17 +208,35 @@ impl Stripe {
     pub async fn subscription(&self, id: &str) -> Result<Subscription, BillingError> {
         let path = format!("/v1/subscriptions/{}", checked_id(id)?);
         let raw: RawSubscription = self.call(Method::GET, &path, &[], None).await?;
-        Ok(Subscription {
-            id: raw.id,
-            customer: raw.customer,
-            status: raw.status,
-            // The subscription has no period of its own; each item carries it.
-            period_end: raw
-                .items
-                .data
-                .first()
-                .and_then(|item| item.current_period_end),
-        })
+        Ok(raw.into())
+    }
+
+    /// Every subscription on `customer`, ended ones included.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BillingError::BadId`] for an id that is not shaped like one,
+    /// [`BillingError::Malformed`] when the customer has more than one page of them, and the
+    /// other [`BillingError`]s when Stripe cannot be reached or refuses.
+    pub async fn subscriptions_of(
+        &self,
+        customer: &str,
+    ) -> Result<Vec<Subscription>, BillingError> {
+        let customer = checked_id(customer)?;
+        // ponytail: one page of 100. A customer with more would need `starting_after`; this
+        // service sells one plan, so more is refused rather than half read.
+        let list: RawList = self
+            .call(
+                Method::GET,
+                "/v1/subscriptions",
+                &[("customer", customer), ("status", "all"), ("limit", "100")],
+                None,
+            )
+            .await?;
+        if list.has_more {
+            return Err(BillingError::Malformed);
+        }
+        Ok(list.data.into_iter().map(Subscription::from).collect())
     }
 
     /// The Checkout Session `id` as Stripe has it now.
@@ -267,6 +285,15 @@ impl Stripe {
     ) -> Result<T, BillingError> {
         let mut url = self.base.clone();
         url.set_path(path);
+        // Stripe reads a GET's parameters from the query, not a body.
+        let (query, form) = if method == Method::GET {
+            (form, &[][..])
+        } else {
+            (&[][..], form)
+        };
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query);
+        }
         let mut authorization =
             HeaderValue::from_str(&format!("Bearer {}", self.key.expose_secret()))
                 .map_err(|_| BillingError::Malformed)?;
@@ -335,6 +362,28 @@ struct RawSubscription {
     customer: String,
     status: String,
     items: RawItems,
+}
+
+impl From<RawSubscription> for Subscription {
+    fn from(raw: RawSubscription) -> Self {
+        Self {
+            id: raw.id,
+            customer: raw.customer,
+            status: raw.status,
+            // The subscription has no period of its own; each item carries it.
+            period_end: raw
+                .items
+                .data
+                .first()
+                .and_then(|item| item.current_period_end),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct RawList {
+    data: Vec<RawSubscription>,
+    has_more: bool,
 }
 
 #[derive(Deserialize)]
@@ -661,6 +710,25 @@ mod tests {
         );
         let after = stripe.subscription("sub_1").await.expect("subscription");
         assert_eq!(after.status, "canceled");
+    }
+
+    #[tokio::test]
+    async fn subscriptions_of_lists_the_customers_including_ended_ones() {
+        let (stripe, fake) = client(TaxMode::Managed).await;
+        fake.put_subscription("sub_1", "cus_1", "active", 1_900_000_000);
+        fake.put_subscription("sub_2", "cus_1", "canceled", 1_800_000_000);
+        fake.put_subscription("sub_3", "cus_2", "active", 1_900_000_000);
+        let found = stripe.subscriptions_of("cus_1").await.expect("list");
+        let seen: Vec<(&str, &str)> = found
+            .iter()
+            .map(|sub| (sub.id.as_str(), sub.status.as_str()))
+            .collect();
+        assert_eq!(seen, [("sub_1", "active"), ("sub_2", "canceled")]);
+        assert_eq!(found[0].period_end, Some(1_900_000_000));
+        assert_eq!(
+            stripe.subscriptions_of("cus/1").await.expect_err("bad id"),
+            BillingError::BadId
+        );
     }
 
     #[tokio::test]

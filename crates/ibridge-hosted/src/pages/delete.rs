@@ -7,9 +7,9 @@
 //! what the providers need: Apple's access token to revoke, and a Firebase ID token to
 //! delete the Firebase user. Neither is stored.
 //!
-//! Order matters for a failure half way. The subscription is cancelled first, so nobody is
-//! billed for an account that is going. If that fails while the subscription still gives
-//! access, the deletion stops there. The rows go next, and a failure there stops before
+//! Order matters for a failure half way. Every live subscription on the person's Stripe
+//! customer is cancelled first, so nobody is billed for an account that is going. If one
+//! that still gives access cannot be cancelled, the deletion stops there. The rows go next, and a failure there stops before
 //! anything is revoked, so the person can try again. Apple and Firebase come last: they
 //! hold no data of ours, and a failure there is reported, not retried.
 
@@ -61,17 +61,19 @@ pub(super) async fn complete(shared: &Shared, asked: UserId, signed: SignedIn) -
         );
     };
     let mut failed: Vec<&'static str> = Vec::new();
-    if cancel_subscription(shared, &user).await.is_err() {
+    match cancel_subscriptions(shared, &user).await {
+        Cancelled::Done => {}
         // A subscription that still gives access keeps billing, so nothing is deleted
-        // until it is cancelled. Any other status is not billing, so the rest goes on.
-        if user.status.as_deref().is_some_and(grants_access) {
+        // until it is cancelled.
+        Cancelled::PayingOneFailed => {
             return message(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Something went wrong",
                 TROUBLE,
             );
         }
-        failed.push("Stripe");
+        // Any other status is not billing, so the rest goes on.
+        Cancelled::OnlyOthersFailed => failed.push("Stripe"),
     }
     match shared.store.delete_user(user.id).await {
         Ok(accounts) => accounts.iter().for_each(|account| (shared.evict)(account)),
@@ -100,22 +102,75 @@ pub(super) async fn complete(shared: &Shared, asked: UserId, signed: SignedIn) -
     response
 }
 
-/// Ends the user's subscription at once. Nothing to do when they never paid or it already ended.
-async fn cancel_subscription(shared: &Shared, user: &User) -> Result<(), ()> {
-    let (Some(billing), Some(subscription)) =
-        (shared.billing.as_ref(), user.stripe_subscription.as_deref())
-    else {
-        return Ok(());
+/// How ending the user's subscriptions went.
+enum Cancelled {
+    /// Every live subscription is ended, or there was none.
+    Done,
+    /// A subscription that gives access could not be ended, so billing may go on.
+    PayingOneFailed,
+    /// Only subscriptions that no longer give access could not be ended.
+    OnlyOthersFailed,
+}
+
+/// Ends every live subscription on the user's Stripe customer at once, and the one on the row.
+///
+/// The customer may hold more than the row records (a second checkout, one the return route
+/// never saw), so Stripe is asked. Ended ones are skipped. Every subscription is tried even
+/// after one fails, so a retry has less left. When Stripe cannot list them, the row's own
+/// status says whether billing may be going on.
+async fn cancel_subscriptions(shared: &Shared, user: &User) -> Cancelled {
+    let Some(billing) = shared.billing.as_ref() else {
+        return Cancelled::Done;
     };
-    if matches!(
-        user.status.as_deref(),
-        Some("canceled" | "incomplete_expired")
-    ) {
-        return Ok(());
+    // (id, whether it gives access)
+    let mut live: Vec<(String, bool)> = Vec::new();
+    let mut listing_failed = false;
+    if let Some(customer) = user.stripe_customer.as_deref() {
+        match billing.stripe.subscriptions_of(customer).await {
+            Ok(all) => live.extend(
+                all.into_iter()
+                    .filter(|sub| !is_ended(&sub.status))
+                    .map(|sub| (sub.id, grants_access(&sub.status))),
+            ),
+            Err(error) => {
+                tracing::warn!(user = %user.id, %error, "could not list subscriptions while deleting an account");
+                listing_failed = true;
+            }
+        }
     }
-    billing.stripe.cancel_now(subscription).await.map_err(|error| {
-        tracing::warn!(user = %user.id, %error, "could not cancel a subscription while deleting an account");
-    })
+    let row_status = user.status.as_deref();
+    if let Some(id) = user.stripe_subscription.as_deref()
+        && !row_status.is_some_and(is_ended)
+        && !live.iter().any(|(known, _)| known == id)
+    {
+        live.push((id.to_owned(), row_status.is_some_and(grants_access)));
+    }
+    let mut result = if listing_failed {
+        // Unknown subscriptions may be paying; trust the row for how serious that is.
+        if row_status.is_some_and(grants_access) {
+            Cancelled::PayingOneFailed
+        } else {
+            Cancelled::OnlyOthersFailed
+        }
+    } else {
+        Cancelled::Done
+    };
+    for (id, paying) in live {
+        if let Err(error) = billing.stripe.cancel_now(&id).await {
+            tracing::warn!(user = %user.id, %error, "could not cancel a subscription while deleting an account");
+            if paying {
+                result = Cancelled::PayingOneFailed;
+            } else if matches!(result, Cancelled::Done) {
+                result = Cancelled::OnlyOthersFailed;
+            }
+        }
+    }
+    result
+}
+
+/// Whether Stripe will never bill this subscription again.
+fn is_ended(status: &str) -> bool {
+    matches!(status, "canceled" | "incomplete_expired")
 }
 
 async fn revoke_apple(shared: &Shared, user: &User, signed: &SignedIn) -> Result<(), ()> {

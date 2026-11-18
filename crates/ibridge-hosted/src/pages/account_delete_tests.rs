@@ -389,3 +389,105 @@ async fn subscription_already_cancelled_at_stripe_counts_as_done() {
     );
     assert_eq!(rows(&rig).await, [0, 0, 0, 0]);
 }
+
+#[tokio::test]
+async fn every_live_subscription_on_the_customer_is_cancelled() {
+    let rig = Rig::billing().await;
+    let (browser, user) = member(&rig).await;
+    rig.subscribe(&user, "active").await;
+    let stripe = rig.stripe.as_ref().expect("stripe");
+    // A second subscription the row never recorded, a paused-for-payment one, and two ended
+    // ones, all on the same customer; plus a live subscription of someone else.
+    stripe.put_subscription("sub_second", "cus_page", "past_due", 1_900_000_000);
+    stripe.put_subscription("sub_ended", "cus_page", "canceled", 1_800_000_000);
+    stripe.put_subscription(
+        "sub_expired",
+        "cus_page",
+        "incomplete_expired",
+        1_800_000_000,
+    );
+    stripe.put_subscription("sub_other", "cus_someone_else", "active", 1_900_000_000);
+
+    let done = delete_now(&rig, &browser).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.text);
+    assert!(!done.text.contains("Stripe"), "{}", done.text);
+    let mut cancelled: Vec<String> = stripe_deletes(&rig)
+        .into_iter()
+        .map(|request| request.path)
+        .collect();
+    cancelled.sort();
+    assert_eq!(
+        cancelled,
+        ["/v1/subscriptions/sub_page", "/v1/subscriptions/sub_second"],
+        "both live ones, each once; no ended one, no stranger's"
+    );
+    assert_eq!(rows(&rig).await, [0, 0, 0, 0]);
+}
+
+#[tokio::test]
+async fn a_live_subscription_the_row_calls_ended_is_still_cancelled() {
+    let rig = Rig::billing().await;
+    let (browser, user) = member(&rig).await;
+    // The row holds the old, ended subscription; the customer has a newer paying one.
+    rig.subscribe(&user, "canceled").await;
+    let stripe = rig.stripe.as_ref().expect("stripe");
+    stripe.put_subscription("sub_newer", "cus_page", "active", 1_900_000_000);
+
+    let done = delete_now(&rig, &browser).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.text);
+    let cancelled: Vec<String> = stripe_deletes(&rig)
+        .into_iter()
+        .map(|request| request.path)
+        .collect();
+    assert_eq!(cancelled, ["/v1/subscriptions/sub_newer"]);
+}
+
+#[tokio::test]
+async fn one_failed_cancel_of_a_paying_subscription_deletes_nothing() {
+    let rig = Rig::billing().await;
+    let (browser, user) = member(&rig).await;
+    rig.subscribe(&user, "canceled").await;
+    let stripe = rig.stripe.as_ref().expect("stripe");
+    stripe.put_subscription("sub_first", "cus_page", "active", 1_900_000_000);
+    stripe.put_subscription("sub_second", "cus_page", "active", 1_900_000_000);
+    stripe.refuse_cancel_of("sub_second", StatusCode::INTERNAL_SERVER_ERROR);
+    let before = rows(&rig).await;
+
+    let done = delete_now(&rig, &browser).await;
+    assert_eq!(
+        done.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        done.text
+    );
+    assert!(done.text.contains("Nothing was deleted"), "{}", done.text);
+    assert_eq!(rows(&rig).await, before, "rows stay");
+    assert_eq!(rig.apple.revoke_requests().len(), 0);
+    assert_eq!(rig.firebase.deletes().len(), 0);
+    assert!(!session_cleared(&done), "still signed in");
+
+    // Stripe recovers; the retry cancels what is left and deletes.
+    stripe.recover();
+    let again = {
+        // `recover` only lifts an outage, so lift the one refused cancel the same way.
+        stripe.allow_cancel_of("sub_second");
+        delete_now(&rig, &browser).await
+    };
+    assert_eq!(again.status, StatusCode::OK, "{}", again.text);
+    assert_eq!(rows(&rig).await, [0, 0, 0, 0]);
+}
+
+#[tokio::test]
+async fn a_failed_cancel_of_a_listed_subscription_that_no_longer_pays_is_reported_not_a_stop() {
+    let rig = Rig::billing().await;
+    let (browser, user) = member(&rig).await;
+    rig.subscribe(&user, "canceled").await;
+    let stripe = rig.stripe.as_ref().expect("stripe");
+    stripe.put_subscription("sub_unpaid", "cus_page", "unpaid", 1_900_000_000);
+    stripe.refuse_cancel_of("sub_unpaid", StatusCode::INTERNAL_SERVER_ERROR);
+
+    let done = delete_now(&rig, &browser).await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.text);
+    assert!(done.text.contains("billing may continue"), "{}", done.text);
+    assert_eq!(rows(&rig).await, [0, 0, 0, 0]);
+}

@@ -26,15 +26,15 @@ use secrecy::SecretString;
 use serde::Deserialize;
 
 use crate::oauth::{Peer, Shared, address_key};
-use crate::store::{GrantId, GrantKind, GrantSummary, Scope, StoreError};
+use crate::store::{GrantId, GrantKind, GrantSummary, Scope, StoreError, UserId};
 use crate::web::{
     GENERIC_FAILURE, cookie_value, csrf_matches, harden, html, message, random_token, set_cookie,
     tokens_match,
 };
 
-const SESSION_COOKIE: &str = "__Host-ibridge_session";
+pub(crate) const SESSION_COOKIE: &str = "__Host-ibridge_session";
 const CSRF_COOKIE: &str = "__Host-ibridge_account_csrf";
-const SESSION_SECS: u32 = 30 * 60;
+pub(crate) const SESSION_SECS: u32 = 30 * 60;
 const MAX_FORM: usize = 8 * 1024;
 const MAX_NAME: usize = 64;
 const EXPIRED: &str = "This page expired. Go to the account page and sign in again.";
@@ -44,23 +44,53 @@ const TROUBLE: &str = "Something went wrong on our side. Try again in a moment."
 #[derive(Debug, Default)]
 pub(crate) struct Sessions(Mutex<HashMap<String, Session>>);
 
+/// Who a session belongs to.
+#[derive(Debug, Clone)]
+pub(crate) enum Principal {
+    /// Someone who proved an iCloud address with its app-specific password.
+    Password(AppleId),
+    /// A Sign in with Apple user, and the iCloud address linked to them, once there is one.
+    User {
+        id: UserId,
+        account: Option<AppleId>,
+    },
+}
+
+impl Principal {
+    /// The iCloud address this session may act on.
+    fn address(&self) -> Option<&AppleId> {
+        match self {
+            Self::Password(address) => Some(address),
+            Self::User { account, .. } => account.as_ref(),
+        }
+    }
+
+    /// The Sign in with Apple user, which a key or a connection links to its address.
+    fn user(&self) -> Option<UserId> {
+        match self {
+            Self::Password(_) => None,
+            Self::User { id, .. } => Some(*id),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Session {
-    apple_id: AppleId,
+    principal: Principal,
     csrf: String,
     until: Instant,
 }
 
 impl Sessions {
-    /// Starts a session for `apple_id`. Returns its cookie token and its form token.
-    fn start(&self, apple_id: AppleId, now: Instant) -> Option<(String, String)> {
+    /// Starts a session for `principal`. Returns its cookie token and its form token.
+    pub(crate) fn start(&self, principal: Principal, now: Instant) -> Option<(String, String)> {
         let (token, csrf) = (random_token()?, random_token()?);
         let mut sessions = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         sessions.retain(|_, session| session.until > now);
         sessions.insert(
             token.clone(),
             Session {
-                apple_id,
+                principal,
                 csrf: csrf.clone(),
                 until: now + Duration::from_secs(u64::from(SESSION_SECS)),
             },
@@ -221,7 +251,10 @@ async fn login(
         }
         return again();
     }
-    let Some((token, _)) = shared.sessions.start(apple_id, Instant::now()) else {
+    let Some((token, _)) = shared
+        .sessions
+        .start(Principal::Password(apple_id), Instant::now())
+    else {
         tracing::error!("random source failed while starting a session");
         return message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -258,8 +291,11 @@ async fn revoke(
         return expired();
     };
     // A malformed id, or one that is not this person's, changes nothing and says nothing.
+    let Some(address) = session.principal.address() else {
+        return to_account();
+    };
     if let Some(grant) = GrantId::from_hex(&form.grant) {
-        match shared.store.revoke_grant_of(&session.apple_id, grant).await {
+        match shared.store.revoke_grant_of(address, grant).await {
             Ok(accounts) => accounts.iter().for_each(|account| (shared.evict)(account)),
             Err(error) => {
                 tracing::error!(%error, "could not revoke a grant");
@@ -283,12 +319,20 @@ async fn mint(
     let Some((_, session)) = checked_session(&shared, &headers, &form.csrf) else {
         return expired();
     };
+    let Some(address) = session.principal.address() else {
+        return dashboard(
+            &shared,
+            &session,
+            StatusCode::BAD_REQUEST,
+            Some("Connect an iCloud address first."),
+        )
+        .await;
+    };
     // Checking the password asks iCloud, so it spends the same budget as signing in.
-    if !shared.limits.allow(
-        &peer.0,
-        Some(&address_key(&session.apple_id)),
-        Instant::now(),
-    ) {
+    if !shared
+        .limits
+        .allow(&peer.0, Some(&address_key(address)), Instant::now())
+    {
         return message(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many attempts",
@@ -305,7 +349,7 @@ async fn mint(
         )
         .await;
     }
-    let credentials = Credentials::new(session.apple_id.clone(), SecretString::from(form.password));
+    let credentials = Credentials::new(address.clone(), SecretString::from(form.password));
     let validated = match shared.checker.check(credentials).await {
         Ok(validated) => validated,
         Err(error) => {
@@ -328,7 +372,13 @@ async fn mint(
     };
     match shared
         .store
-        .mint_api_key(&validated, name, scope, SystemTime::now(), None)
+        .mint_api_key(
+            &validated,
+            name,
+            scope,
+            SystemTime::now(),
+            session.principal.user(),
+        )
         .await
     {
         Ok(key) => {
@@ -384,7 +434,16 @@ async fn delete(
         )
         .await;
     }
-    match shared.store.delete_accounts_of(&session.apple_id).await {
+    let Some(address) = session.principal.address() else {
+        return dashboard(
+            &shared,
+            &session,
+            StatusCode::BAD_REQUEST,
+            Some("There is no iCloud address connected to delete."),
+        )
+        .await;
+    };
+    match shared.store.delete_accounts_of(address).await {
         Ok(accounts) => accounts.iter().for_each(|account| (shared.evict)(account)),
         Err(error) => {
             tracing::error!(%error, "could not delete an account");
@@ -452,21 +511,27 @@ async fn dashboard(
     status: StatusCode,
     error: Option<&str>,
 ) -> Response {
-    let grants = match shared.store.grants_of(&session.apple_id).await {
-        Ok(grants) => grants,
-        Err(error) => {
-            tracing::error!(%error, "could not list grants");
-            return message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Something went wrong",
-                TROUBLE,
-            );
-        }
+    let grants = match session.principal.address() {
+        Some(address) => match shared.store.grants_of(address).await {
+            Ok(grants) => grants,
+            Err(error) => {
+                tracing::error!(%error, "could not list grants");
+                return message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Something went wrong",
+                    TROUBLE,
+                );
+            }
+        },
+        None => Vec::new(),
     };
     html(
         status,
         AccountPage {
-            apple_id: session.apple_id.as_str(),
+            apple_id: session
+                .principal
+                .address()
+                .map_or("no iCloud address connected yet", AppleId::as_str),
             csrf: &session.csrf,
             grants: grants.iter().map(row).collect(),
             error,

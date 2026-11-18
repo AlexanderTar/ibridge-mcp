@@ -19,9 +19,12 @@ use url::Url;
 
 use super::client::ClientInfo;
 use super::codes::PendingCode;
+use super::pending::PENDING_COOKIE;
 use super::{Peer, Shared, address_key};
 use crate::store::Scope;
-use crate::web::{GENERIC_FAILURE, csrf_matches, harden, html, message, random_token, set_cookie};
+use crate::web::{
+    GENERIC_FAILURE, cookie_value, csrf_matches, harden, html, message, random_token, set_cookie,
+};
 
 const CSRF_COOKIE: &str = "__Host-ibridge_csrf";
 const CSRF_LIFETIME_SECS: u32 = 30 * 60;
@@ -32,13 +35,14 @@ const MAX_SCOPE: usize = 256;
 pub(super) fn routes(shared: &Arc<Shared>) -> Router {
     Router::new()
         .route("/authorize", get(show).post(submit))
+        .route("/authorize/resume", get(resume))
         .layer(DefaultBodyLimit::max(MAX_FORM))
         .with_state(Arc::clone(shared))
 }
 
 /// The authorization request, from the query string or the posted form.
-#[derive(Deserialize)]
-struct Params {
+#[derive(Clone, Deserialize)]
+pub(crate) struct Params {
     response_type: Option<String>,
     client_id: Option<String>,
     redirect_uri: Option<String>,
@@ -113,8 +117,48 @@ async fn show(
             GENERIC_FAILURE,
         );
     }
-    match validate(&shared, &params).await {
-        Err(refusal) => refuse(&shared, refusal),
+    form_for(&shared, &params).await
+}
+
+/// The query of `/authorize/resume`: the id a stored request was kept under.
+#[derive(Deserialize)]
+struct Resume {
+    pending: String,
+}
+
+/// Shows a stored `/authorize` request again, to the browser that stored it and nobody else.
+async fn resume(
+    State(shared): State<Arc<Shared>>,
+    peer: Peer,
+    headers: HeaderMap,
+    Query(query): Query<Resume>,
+) -> Response {
+    if !shared.lookups.allow(&peer.0, Instant::now()) {
+        return message(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many requests",
+            GENERIC_FAILURE,
+        );
+    }
+    let stored = cookie_value(&headers, PENDING_COOKIE).and_then(|owner| {
+        shared
+            .pending_authorize
+            .get(&query.pending, owner, Instant::now())
+    });
+    match stored {
+        Some(params) => form_for(&shared, &params).await,
+        None => message(
+            StatusCode::BAD_REQUEST,
+            "This page expired",
+            "This sign-in page expired. Go back to the app and start the sign-in again.",
+        ),
+    }
+}
+
+/// Validates the request and renders the sign-in form for it.
+async fn form_for(shared: &Shared, params: &Params) -> Response {
+    match validate(shared, params).await {
+        Err(refusal) => refuse(shared, refusal),
         Ok(valid) => {
             let Some(token) = random_token() else {
                 tracing::error!("random source failed while making a sign-in token");
@@ -1077,5 +1121,130 @@ mod tests {
             StatusCode::SEE_OTHER,
             "multi-tenant lets anyone try"
         );
+    }
+
+    const OWNER: &str = "__Host-ibridge_pending=owner-cookie-value";
+    const EXPIRED_TEXT: &str = "This page expired";
+
+    fn stored_params() -> super::Params {
+        let query = Harness::authorize_path(&[], &[]);
+        let query = query.split_once('?').expect("a query").1;
+        serde_json::from_value(
+            url::form_urlencoded::parse(query.as_bytes())
+                .map(|(name, value)| {
+                    (
+                        name.into_owned(),
+                        serde_json::Value::String(value.into_owned()),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into(),
+        )
+        .expect("params")
+    }
+
+    #[tokio::test]
+    async fn authorize_resume_renders_stored_request() {
+        let (h, shared) = crate::oauth::test_support::harness_with_shared().await;
+        let id = shared
+            .pending_authorize
+            .put(
+                stored_params(),
+                "owner-cookie-value",
+                std::time::Instant::now(),
+            )
+            .expect("stored");
+        let reply = h
+            .get_path(&format!("/authorize/resume?pending={id}"), IP, Some(OWNER))
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+        assert!(
+            reply.text.contains("Claude Test"),
+            "the stored client is shown"
+        );
+        assert_eq!(
+            reply.input("code_challenge"),
+            crate::oauth::test_support::CHALLENGE,
+            "the page carries the stored request"
+        );
+        assert!(
+            reply
+                .headers
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .any(|value| value
+                    .to_str()
+                    .is_ok_and(|text| text.starts_with("__Host-ibridge_csrf="))),
+            "it sets the form's CSRF cookie like /authorize does"
+        );
+        let again = h
+            .get_path(&format!("/authorize/resume?pending={id}"), IP, Some(OWNER))
+            .await;
+        assert_eq!(
+            again.status,
+            StatusCode::OK,
+            "resuming twice works until the request expires"
+        );
+    }
+
+    #[tokio::test]
+    async fn authorize_resume_refuses_another_owner() {
+        let (h, shared) = crate::oauth::test_support::harness_with_shared().await;
+        let id = shared
+            .pending_authorize
+            .put(
+                stored_params(),
+                "owner-cookie-value",
+                std::time::Instant::now(),
+            )
+            .expect("stored");
+        for cookie in [
+            Some("__Host-ibridge_pending=someone-else"),
+            Some("__Host-ibridge_pending="),
+            None,
+        ] {
+            let reply = h
+                .get_path(&format!("/authorize/resume?pending={id}"), IP, cookie)
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::BAD_REQUEST,
+                "{cookie:?}: {}",
+                reply.text
+            );
+            assert!(
+                reply.text.contains(EXPIRED_TEXT),
+                "{cookie:?}: {}",
+                reply.text
+            );
+            assert!(
+                !reply.text.contains("Claude Test"),
+                "nothing of the request leaks"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn authorize_resume_unknown_or_expired_shows_expired_page() {
+        let (h, shared) = crate::oauth::test_support::harness_with_shared().await;
+        let two_hours_ago = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_hours(2))
+            .expect("the clock has run for two hours");
+        let old = shared
+            .pending_authorize
+            .put(stored_params(), "owner-cookie-value", two_hours_ago)
+            .expect("stored");
+        for id in [old.as_str(), "unknown-id"] {
+            let reply = h
+                .get_path(&format!("/authorize/resume?pending={id}"), IP, Some(OWNER))
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::BAD_REQUEST,
+                "{id}: {}",
+                reply.text
+            );
+            assert!(reply.text.contains(EXPIRED_TEXT), "{id}: {}", reply.text);
+        }
     }
 }

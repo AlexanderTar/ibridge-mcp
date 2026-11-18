@@ -9,6 +9,7 @@ mod client;
 mod codes;
 mod dcr;
 mod metadata;
+pub(crate) mod pending;
 mod token;
 
 #[cfg(test)]
@@ -30,6 +31,7 @@ use axum::http::request::Parts;
 use ibridge_core::AppleId;
 use url::Url;
 
+use crate::identity::{Identity, IdentityConfig};
 use crate::limits::{Limiter, SignInLimits};
 use crate::store::{Store, StoreError};
 
@@ -55,6 +57,7 @@ pub struct OAuthConfig {
     allowed: Option<HashSet<String>>,
     behind_proxy: bool,
     contact: Option<String>,
+    identity: Option<IdentityConfig>,
 }
 
 /// The public URL cannot be used as an OAuth issuer.
@@ -110,6 +113,7 @@ impl OAuthConfig {
             allowed,
             behind_proxy: false,
             contact: None,
+            identity: None,
         })
     }
 
@@ -131,6 +135,13 @@ impl OAuthConfig {
     #[must_use]
     pub fn contact(mut self, contact: impl Into<String>) -> Self {
         self.contact = Some(contact.into());
+        self
+    }
+
+    /// Turns on Sign in with Apple through Firebase.
+    #[must_use]
+    pub fn identity(mut self, identity: IdentityConfig) -> Self {
+        self.identity = Some(identity);
         self
     }
 
@@ -236,6 +247,10 @@ pub(crate) struct Shared {
     pub(crate) codes: codes::PendingCodes,
     pub(crate) sessions: crate::pages::account::Sessions,
     pub(crate) evict: Evict,
+    /// Sign in with Apple, when its settings are present.
+    pub(crate) identity: Option<Identity>,
+    /// `/authorize` requests waiting for a sign-in or a payment.
+    pub(crate) pending_authorize: pending::PendingAuthorize,
 }
 
 impl Shared {
@@ -276,18 +291,27 @@ pub async fn router(
     mcp: Router,
 ) -> Result<Router, StoreError> {
     let transport = cimd::HttpsTransport::new().map_err(|_| StoreError::Rejected)?;
-    router_with(
+    let identity = config
+        .identity
+        .as_ref()
+        .map(|identity| Identity::new(identity, &config.issuer()))
+        .transpose()
+        .map_err(|_| StoreError::Rejected)?;
+    let (router, _) = router_with(
         config,
         store,
         Arc::new(cimd::CimdFetcher::new(transport)),
         Arc::new(checker),
         evict,
         mcp,
+        identity,
     )
-    .await
+    .await?;
+    Ok(router)
 }
 
 /// [`router`] with the client lookup replaced, so tests can name clients without a network.
+/// Also returns the shared state, so a test can reach the stores the pages use.
 pub(crate) async fn router_with(
     config: OAuthConfig,
     store: &Store,
@@ -295,7 +319,8 @@ pub(crate) async fn router_with(
     checker: Arc<dyn SignInCheck>,
     evict: Evict,
     mcp: Router,
-) -> Result<Router, StoreError> {
+    identity: Option<Identity>,
+) -> Result<(Router, Arc<Shared>), StoreError> {
     let metadata_url = config.url(metadata::PRM_MCP_PATH);
     let registry = dcr::ClientRegistry::open(store).await?;
     let shared = Arc::new(Shared {
@@ -311,16 +336,20 @@ pub(crate) async fn router_with(
         codes: codes::PendingCodes::default(),
         sessions: crate::pages::account::Sessions::default(),
         evict,
+        identity,
+        pending_authorize: pending::PendingAuthorize::new(pending::MAX_PENDING),
     });
-    Ok(Router::new()
+    let router = Router::new()
         .merge(crate::middleware::protect(mcp, store.clone(), metadata_url))
         .merge(metadata::routes(&shared))
         .merge(dcr::routes(&shared))
         .merge(authorize::routes(&shared))
         .merge(token::routes(&shared))
         .merge(crate::pages::account::routes(&shared))
+        .merge(crate::pages::signin::routes(&shared))
         .merge(crate::pages::landing::routes(&shared))
-        .layer(tracing_layer()))
+        .layer(tracing_layer());
+    Ok((router, shared))
 }
 
 /// Request logging that records the method, the path and the outcome, and nothing else.

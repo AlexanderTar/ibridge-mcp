@@ -8,9 +8,14 @@ pub mod fakes;
 pub mod firebase;
 mod http;
 pub mod jwt;
+pub(crate) mod pending;
 
 use secrecy::SecretString;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
+
+use crate::web::random_token;
 
 use crate::oauth::ConfigError;
 
@@ -43,6 +48,194 @@ pub enum IdentityError {
     /// A token failed its checks: signature, issuer, audience, expiry or issue time.
     #[error("the sign-in token is not valid")]
     InvalidToken,
+    /// The callback's `state` is unknown, expired or already used, or the browser's binder
+    /// cookie does not match it.
+    #[error("the sign-in link is not valid")]
+    StateRejected,
+    /// Too many sign-ins are waiting, so a new one is refused.
+    #[error("too many sign-ins are waiting")]
+    Busy,
+    /// The system has no randomness, so a sign-in cannot be started safely.
+    #[error("a sign-in could not be started")]
+    Unavailable,
+}
+
+/// Where a sign-in sends the person afterwards. It travels in server memory, never in a URL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReturnTo {
+    /// The account page.
+    Account,
+    /// A stored `/authorize` request, by its pending id.
+    Authorize(String),
+    /// The delete-account step, which needs a fresh sign-in.
+    DeleteAccount,
+}
+
+/// The form Apple posts to the callback. It has no `Debug`, so a code cannot reach a log.
+#[derive(serde::Deserialize)]
+pub struct CallbackForm {
+    /// The authorization code.
+    pub code: Option<String>,
+    /// The `state` this server sent.
+    pub state: Option<String>,
+    /// Set when the person cancelled or Apple refused.
+    pub error: Option<String>,
+}
+
+impl std::fmt::Debug for CallbackForm {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CallbackForm")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Who signed in, with Firebase and Apple's answers already checked.
+#[derive(Debug)]
+pub struct SignedIn {
+    /// Firebase's stable id for the user.
+    pub firebase_uid: String,
+    /// Apple's `sub` for the identity.
+    pub apple_sub: String,
+    /// The email Apple gave, which may be a relay address.
+    pub email: Option<String>,
+    /// Where the person was going.
+    pub return_to: ReturnTo,
+    /// Apple's access token, for revoking at delete. Never stored.
+    pub apple_access: Option<SecretString>,
+}
+
+/// The Apple and Firebase clients and the sign-ins waiting for Apple's callback.
+#[derive(Debug)]
+pub struct Identity {
+    apple: apple::AppleClient,
+    firebase: firebase::FirebaseClient,
+    pending: pending::PendingSignIns,
+}
+
+/// The hash the pending sign-in keeps instead of the cookie value itself.
+fn binder_hash(binder: &str) -> [u8; 32] {
+    Sha256::digest(binder.as_bytes()).into()
+}
+
+/// The cookie that ties a callback to the browser that began the sign-in.
+pub const BINDER_COOKIE: &str = "__Host-ibridge_siwa";
+
+impl Identity {
+    /// The real Apple and Firebase, for a server whose public origin is `issuer`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentityError::Unreachable`] when the system's root certificates cannot be loaded.
+    pub fn new(config: &IdentityConfig, issuer: &str) -> Result<Self, IdentityError> {
+        let callback = format!("{issuer}/signin/apple/callback");
+        Ok(Self {
+            apple: apple::AppleClient::new(config, &callback)?,
+            firebase: firebase::FirebaseClient::new(config, &callback)?,
+            pending: pending::PendingSignIns::standard(),
+        })
+    }
+
+    /// Fakes on loopback, for tests.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentityError::Unreachable`] when the system's root certificates cannot be loaded.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_bases(
+        config: &IdentityConfig,
+        issuer: &str,
+        apple: url::Url,
+        firebase: url::Url,
+    ) -> Result<Self, IdentityError> {
+        let callback = format!("{issuer}/signin/apple/callback");
+        Ok(Self {
+            apple: apple::AppleClient::with_base(config, &callback, apple)?,
+            firebase: firebase::FirebaseClient::with_base(config, &callback, firebase)?,
+            pending: pending::PendingSignIns::standard(),
+        })
+    }
+
+    /// Replaces the pending-sign-in store, so a test can shorten the lifetime or the cap.
+    #[cfg(test)]
+    pub(crate) fn with_pending(mut self, pending: pending::PendingSignIns) -> Self {
+        self.pending = pending;
+        self
+    }
+
+    /// Starts a sign-in: returns the Apple URL to send the browser to and the binder cookie value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentityError::Busy`] when too many sign-ins are waiting and
+    /// [`IdentityError::Unavailable`] when the system has no randomness.
+    pub fn begin(
+        &self,
+        return_to: ReturnTo,
+        now: std::time::Instant,
+    ) -> Result<(String, String), IdentityError> {
+        let (Some(state), Some(nonce), Some(binder)) =
+            (random_token(), random_token(), random_token())
+        else {
+            return Err(IdentityError::Unavailable);
+        };
+        let pending = pending::PendingSignIn {
+            nonce: nonce.clone(),
+            binder: binder_hash(&binder),
+            return_to,
+        };
+        self.pending
+            .insert(state.clone(), pending, now)
+            .map_err(|_| IdentityError::Busy)?;
+        Ok((self.apple.authorize_url(&state, &nonce).into(), binder))
+    }
+
+    /// Finishes a sign-in from Apple's callback. The `state` is used up whatever happens.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentityError::StateRejected`] for an unknown, expired, replayed or
+    /// wrong-browser callback, and the clients' errors for anything Apple or Firebase refuses.
+    pub async fn finish(
+        &self,
+        form: CallbackForm,
+        binder: Option<&str>,
+        now: std::time::Instant,
+        wall: std::time::SystemTime,
+    ) -> Result<SignedIn, IdentityError> {
+        // The state is taken first, so every outcome below uses it up: a replayed callback,
+        // or one finished in another browser, finds nothing to try again.
+        let state = form.state.as_deref().ok_or(IdentityError::StateRejected)?;
+        let pending = self
+            .pending
+            .take(state, now)
+            .ok_or(IdentityError::StateRejected)?;
+        let binder = binder.ok_or(IdentityError::StateRejected)?;
+        if !bool::from(pending.binder.ct_eq(&binder_hash(binder))) {
+            return Err(IdentityError::StateRejected);
+        }
+        if form.error.is_some() {
+            return Err(IdentityError::Refused);
+        }
+        let code = form
+            .code
+            .as_deref()
+            .filter(|code| !code.is_empty())
+            .ok_or(IdentityError::Refused)?;
+        let tokens = self.apple.exchange_code(code, wall).await?;
+        let user = self
+            .firebase
+            .sign_in_with_idp(&tokens.id_token, &pending.nonce, wall)
+            .await?;
+        Ok(SignedIn {
+            firebase_uid: user.uid,
+            apple_sub: user.apple_sub,
+            email: user.email,
+            return_to: pending.return_to,
+            apple_access: Some(tokens.access_token),
+        })
+    }
 }
 
 /// Sign in with Apple and Firebase settings. All six are set, or none.

@@ -6,7 +6,7 @@
 //! host. Firebase's fake signs its ID tokens with the fixed test key in [`super::jwt::test_key`].
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Router;
@@ -171,6 +171,7 @@ struct FirebaseState {
     deletes: Mutex<Vec<Value>>,
     key_fetches: AtomicUsize,
     max_age: AtomicU64,
+    real_time: AtomicBool,
 }
 
 /// A fake Firebase: `accounts:signInWithIdp`, `accounts:delete` and Google's key set.
@@ -211,6 +212,7 @@ impl FakeFirebase {
             deletes: Mutex::new(Vec::new()),
             key_fetches: AtomicUsize::new(0),
             max_age: AtomicU64::new(3600),
+            real_time: AtomicBool::new(false),
         });
         let app = Router::new()
             .route("/v1/accounts:signInWithIdp", post(firebase_sign_in))
@@ -230,6 +232,12 @@ impl FakeFirebase {
     #[must_use]
     pub fn base(&self) -> Url {
         self.served.base.clone()
+    }
+
+    /// Issues tokens valid around the real clock instead of [`FAKE_NOW_SECS`], for a server
+    /// that checks them against its own clock.
+    pub fn issue_at_real_time(&self) {
+        self.state.real_time.store(true, Ordering::SeqCst);
     }
 
     /// Changes the claims of the next ID tokens, for a token the client must refuse.
@@ -298,14 +306,21 @@ async fn firebase_sign_in(
         )
             .into_response();
     }
+    let issued = if state.real_time.load(Ordering::SeqCst) {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(FAKE_NOW_SECS, |elapsed| elapsed.as_secs())
+    } else {
+        FAKE_NOW_SECS
+    };
     let mut claims = json!({
         "iss": format!("https://securetoken.google.com/{}", state.project),
         "aud": state.project,
         "sub": state.uid,
         "user_id": state.uid,
-        "iat": FAKE_NOW_SECS,
-        "auth_time": FAKE_NOW_SECS,
-        "exp": FAKE_NOW_SECS + 3600,
+        "iat": issued,
+        "auth_time": issued,
+        "exp": issued + 3600,
         "email": state.email,
         "firebase": {
             "identities": { "apple.com": [state.apple_sub], "email": [state.email] },

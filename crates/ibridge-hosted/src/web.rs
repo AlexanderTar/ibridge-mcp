@@ -73,14 +73,27 @@ pub(crate) fn random_token() -> Option<String> {
     Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random))
 }
 
-/// Sets a `__Host-` cookie (`Secure`, `Path=/`, no `Domain`). `max_age` 0 deletes it.
+/// Sets a `__Host-` cookie (`Secure`, `Path=/`, no `Domain`, `SameSite=Lax`). `max_age` 0 deletes it.
 pub(crate) fn set_cookie(response: &mut Response, name: &str, value: &str, max_age: u32) {
+    set_cookie_same_site(response, name, value, max_age, "Lax");
+}
+
+/// [`set_cookie`] with the `SameSite` value named: `None` is for the one cookie that must
+/// ride a cross-site POST, which is Apple's callback.
+pub(crate) fn set_cookie_same_site(
+    response: &mut Response,
+    name: &str,
+    value: &str,
+    max_age: u32,
+    same_site: &str,
+) {
     debug_assert!(
         name.starts_with("__Host-"),
         "{name} needs the __Host- prefix"
     );
-    let cookie =
-        format!("{name}={value}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax");
+    let cookie = format!(
+        "{name}={value}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite={same_site}"
+    );
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }

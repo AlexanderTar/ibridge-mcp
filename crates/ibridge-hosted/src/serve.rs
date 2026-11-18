@@ -54,7 +54,11 @@ pub async fn serve<B: Backend>(
         None => store,
     };
     let backups = crate::backup::spawn_daily(store.clone(), config.data_dir.join(BACKUP_DIR));
-    let app = crate::app::app(config.oauth, store, backend, checker, info, &config.guards).await?;
+    let oauth = match config.identity {
+        Some(identity) => config.oauth.identity(identity),
+        None => config.oauth,
+    };
+    let app = crate::app::app(oauth, store, backend, checker, info, &config.guards).await?;
     let served = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -136,5 +140,71 @@ mod tests {
 
         stop.send(()).expect("server is running");
         server.await.expect("task").expect("clean stop");
+    }
+
+    #[tokio::test]
+    async fn serve_turns_on_apple_sign_in_when_the_identity_settings_are_present() {
+        use crate::identity::jwt::test_key::es256_pem;
+        let pem = es256_pem();
+        let settings = |name: &str| match name {
+            "IBRIDGE_APPLE_SERVICES_ID" => Some("fyi.ibridge.signin".to_owned()),
+            "IBRIDGE_APPLE_TEAM_ID" => Some("TEAM123456".to_owned()),
+            "IBRIDGE_APPLE_KEY_ID" => Some("KEY1234567".to_owned()),
+            "IBRIDGE_APPLE_PRIVATE_KEY" => Some(pem.clone()),
+            "IBRIDGE_FIREBASE_PROJECT_ID" => Some("ibridge-fyi".to_owned()),
+            "IBRIDGE_FIREBASE_API_KEY" => Some("api-key".to_owned()),
+            _ => None,
+        };
+        let dir = tempfile::tempdir().expect("temp dir");
+        let options = || HostedOptions {
+            addr: "127.0.0.1:0".parse().expect("address"),
+            public_url: "https://ibridge.example".to_owned(),
+            data_dir: dir.path().join("data"),
+            multi_tenant: true,
+            behind_proxy: false,
+        };
+        for (env_on, expected) in [(true, 303), (false, 404)] {
+            let config = if env_on {
+                HostedConfig::resolve(options(), settings)
+            } else {
+                HostedConfig::resolve(options(), |_| None)
+            }
+            .expect("config");
+            let listener = TcpListener::bind(config.addr).await.expect("bind");
+            let base = format!("http://{}", listener.local_addr().expect("address"));
+            let (stop, stopped) = oneshot::channel::<()>();
+            let server = tokio::spawn(serve(
+                config,
+                listener,
+                FakeBackend,
+                validated_by(|_: &Credentials| crate::test_app::AcceptAll),
+                info(),
+                async move {
+                    let _ = stopped.await;
+                },
+            ));
+            let reply = send("GET", &format!("{base}/signin/apple"), &[], "").await;
+            assert_eq!(
+                reply.status, expected,
+                "identity on: {env_on}: {}",
+                reply.body
+            );
+            if env_on {
+                let location = reply
+                    .headers
+                    .get("location")
+                    .and_then(|value| value.to_str().ok())
+                    .expect("a Location header");
+                assert!(
+                    location.starts_with("https://appleid.apple.com/auth/authorize?"),
+                    "{location}"
+                );
+            }
+            let _ = stop.send(());
+            server
+                .await
+                .expect("the server task")
+                .expect("it stops cleanly");
+        }
     }
 }

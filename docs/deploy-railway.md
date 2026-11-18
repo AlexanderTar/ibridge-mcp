@@ -141,7 +141,7 @@ cargo xtask live-hosted-check --url https://mcp.ibridge.fyi
 
 It signs in as a client does, calls `account_status`, and prints one line per step with no password, token or code. The account address must be one of the addresses in `IBRIDGE_ALLOWED_APPLE_IDS`. The test account is the owner's own Apple ID, so the sign-in creates the owner's real account on the host. Record the result with the sha and the date. If Apple refuses the sign-in, stop: the public launch cannot go on from this host. Say so, do not retry in a loop, and do not open sign-ups.
 
-This check needs the live test account, and the live recording has not run yet, so it has not run against this host.
+**Result on the first deploy:** passed on 2026-11-18 at `9c1e17a` against `https://mcp.ibridge.fyi`: discovery, registration, sign-in, token and `account_status` all ok, with mail, calendar and contacts on. Apple accepts sign-ins from Railway's egress.
 
 ## 8. Uptime monitor (you create it)
 
@@ -185,7 +185,7 @@ The paid-plan launch goes in this order. Each stage must pass before the next st
 5. Step 13: the live checks, then link and comp the owner and test user. Do this before you connect Claude.ai and call `account_status`: a grant made before billing was on, such as the datacenter check's, belongs to no user, so it gets the no-plan error. After billing is on, comp the owner first, then link the owner's address (create an API key on `/account`; with billing on a key for a new address needs a plan or a comp), or disconnect and reconnect Claude.ai so the new grant is tied to the user.
 6. Step 14: open sign-ups.
 
-**Status after the first deploy:** the service is deployed and `mcp.ibridge.fyi` points at it (step 6). Step 11 was skipped by the owner's choice, so nothing has proved the restricted key's permission list against Stripe; the live Stripe objects in step 12 exist. This runbook does not record the live checks in step 13 or the swap to live keys as done, so treat the commands in steps 10 to 13 as untested against the real services.
+**Status after the first deploy (2026-11-18):** the service is deployed and `mcp.ibridge.fyi` points at it (step 6); the datacenter check (step 7) passed; the first backup was downloaded and `pragma integrity_check` printed `ok` (step 9); Sign in with Apple is on and the owner signed in with it (step 10); the live Stripe objects and keys are in place (step 12) and the owner is comped (step 13); the live checkout check in step 13 has not run yet. Step 11 was skipped by the owner's choice, so nothing has proved the restricted key's permission list against Stripe; the live Stripe objects in step 12 exist. This runbook does not record the live checks in step 13 or the swap to live keys as done, so treat the commands in steps 10 to 13 as untested against the real services.
 
 ## 10. Turn on Sign in with Apple
 

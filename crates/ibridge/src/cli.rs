@@ -57,7 +57,7 @@ enum Command {
             requires_all = ["http", "public_url", "data_dir"]
         )]
         hosted: bool,
-        /// The https origin clients reach, for example `https://ibridge.fyi`.
+        /// The https origin clients reach, for example `https://mcp.ibridge.fyi`.
         #[cfg(feature = "hosted")]
         #[arg(long, value_name = "URL", requires = "hosted")]
         public_url: Option<String>,

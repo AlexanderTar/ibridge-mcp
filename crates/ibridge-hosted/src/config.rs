@@ -33,7 +33,7 @@ const DEFAULT_SIGNUP_CAP: usize = 50;
 pub struct HostedOptions {
     /// Where to listen.
     pub addr: SocketAddr,
-    /// The origin clients reach, such as `https://ibridge.fyi`.
+    /// The origin clients reach, such as `https://mcp.ibridge.fyi`.
     pub public_url: String,
     /// Where the database and its backups live.
     pub data_dir: PathBuf,

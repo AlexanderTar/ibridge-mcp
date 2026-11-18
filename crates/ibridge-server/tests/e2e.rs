@@ -64,9 +64,9 @@ impl MailApi for Scripted {
                 id: id.clone(),
                 from: "bob@example.com".to_owned(),
                 to: vec!["ada@icloud.com".to_owned()],
-                subject: "Picnic".to_owned(),
+                subject: "Pic\u{FEFF}nic\u{202E}".to_owned(),
                 date: "2026-11-01".to_owned(),
-                body: "Bring napkins.".to_owned(),
+                body: "Bring\u{200B} napkins.\u{E0049}\u{E0067}\u{2066}".to_owned(),
                 attachments: Vec::new(),
             },
             next_offset: None,
@@ -185,10 +185,19 @@ async fn e2e_search_then_get() {
     let message = fetched
         .structured_content
         .expect("message structured content");
-    let body = message["body"].as_str().expect("body text");
+    assert_eq!(
+        message["body"].as_str(),
+        Some("Bring napkins."),
+        "the body arrives as plain text with hidden characters stripped"
+    );
+    assert_eq!(
+        message["subject"].as_str(),
+        Some("Picnic"),
+        "the subject arrives as plain text with hidden characters stripped"
+    );
     assert!(
-        body.contains("Bring napkins.") && body.contains("untrusted"),
-        "the body arrives wrapped as untrusted, got {body}"
+        !message.to_string().contains("untrusted"),
+        "no untrusted marker, got {message}"
     );
 }
 

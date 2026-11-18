@@ -20,7 +20,7 @@ use crate::calendar_dto::{
 };
 use crate::handler::{IbridgeServer, mapped, page_limit, respond};
 use crate::mail_api::MailApi;
-use crate::untrusted::wrap_untrusted;
+use crate::sanitize::strip_hidden;
 
 pub(crate) const CALENDAR_TOOLS: &[&str] = &[
     "calendar_create_event",
@@ -160,7 +160,7 @@ where
             .iter()
             .map(|calendar| CalendarOut {
                 id: encode_resource(&calendar.path),
-                name: wrap_untrusted(&calendar.name),
+                name: strip_hidden(&calendar.name),
                 kind: match (calendar.holds_events, calendar.holds_tasks) {
                     (true, true) => "both",
                     (false, true) => "tasks",
@@ -380,7 +380,7 @@ where
             .iter()
             .map(|list| ReminderListOut {
                 id: encode_resource(&list.path),
-                name: wrap_untrusted(&list.name),
+                name: strip_hidden(&list.name),
             })
             .collect();
         let summary = format!("{} lists. {UPGRADED_LISTS_NOTE}", listed.len());
@@ -581,15 +581,15 @@ fn event_out(event: &Event) -> EventOut {
         id: encode_resource(&event.path),
         etag: event.etag.as_str().to_owned(),
         uid: event.uid.clone(),
-        summary: wrap_untrusted(&event.summary),
-        description: wrap_untrusted(&capped(&event.description)),
+        summary: strip_hidden(&event.summary),
+        description: strip_hidden(&capped(&event.description)),
         start: event.start.clone(),
         end: event.end.clone(),
         time_zone: event.time_zone.clone(),
         all_day: event.all_day,
         recurring: event.recurring,
         recurrence_id: event.recurrence_id.clone(),
-        attendees: event.attendees.iter().map(|a| wrap_untrusted(a)).collect(),
+        attendees: event.attendees.iter().map(|a| strip_hidden(a)).collect(),
         alarms: event.alarms.clone(),
     }
 }
@@ -598,8 +598,8 @@ fn reminder_out(reminder: &Reminder) -> ReminderOut {
     ReminderOut {
         id: encode_resource(&reminder.path),
         etag: reminder.etag.as_str().to_owned(),
-        title: wrap_untrusted(&reminder.title),
-        notes: wrap_untrusted(&capped(&reminder.notes)),
+        title: strip_hidden(&reminder.title),
+        notes: strip_hidden(&capped(&reminder.notes)),
         due: reminder.due.clone(),
         priority: reminder.priority,
         completed: reminder.completed,

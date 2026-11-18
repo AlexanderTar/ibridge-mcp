@@ -5,11 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Hosted OAuth server and token-sealed credential store."
-
-[features]
-# Fakes for tests that run a hosted server without iCloud.
-testing = ["dep:ibridge-testkit"]
+# Apple's Sign in with Apple logo is Apple's artwork, not Apache-2.0. It stays in the
+# git repository and out of the published package; build.rs falls back to a text-only button.
+exclude = ["assets/apple-logo-*.svg", "assets/NOTICE"]
 
 [dependencies]
 aes-gcm.workspace = true
@@ -30,7 +33,6 @@ ibridge-core.workspace = true
 ibridge-dav.workspace = true
 ibridge-mail.workspace = true
 ibridge-server.workspace = true
-ibridge-testkit = { workspace = true, optional = true }
 ring.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 secrecy.workspace = true

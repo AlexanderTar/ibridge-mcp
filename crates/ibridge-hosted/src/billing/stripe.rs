@@ -94,7 +94,7 @@ impl Stripe {
     /// # Errors
     ///
     /// Returns [`BillingError::Unreachable`] when the system's root certificates cannot be loaded.
-    #[cfg(any(test, feature = "testing"))]
+    #[cfg(test)]
     pub fn with_base(config: &BillingConfig, base: Url) -> Result<Self, BillingError> {
         let http = Http::loopback().map_err(|_| BillingError::Unreachable)?;
         Ok(Self::build(config, base, http))

@@ -3,7 +3,7 @@
 //! Sign in with Apple through Firebase: the settings that switch it on, and the clients.
 
 pub mod apple;
-#[cfg(any(test, feature = "testing"))]
+#[cfg(test)]
 pub mod fakes;
 pub mod firebase;
 pub(crate) mod http;
@@ -154,7 +154,7 @@ impl Identity {
     /// # Errors
     ///
     /// Returns [`IdentityError::Unreachable`] when the system's root certificates cannot be loaded.
-    #[cfg(any(test, feature = "testing"))]
+    #[cfg(test)]
     pub fn with_bases(
         config: &IdentityConfig,
         issuer: &str,

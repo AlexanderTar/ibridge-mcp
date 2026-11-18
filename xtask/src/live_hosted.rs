@@ -426,7 +426,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::PathBuf;
 
-    use ibridge_hosted::testing::{FakeImapBackend, accept_all, info};
+    use crate::fakes::{FakeImapBackend, accept_all, info};
     use ibridge_hosted::{HostedConfig, HostedOptions, serve};
     use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
     use tokio::net::TcpListener;

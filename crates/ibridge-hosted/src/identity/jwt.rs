@@ -198,9 +198,8 @@ pub fn sign_es256(
 
 /// A fixed RSA key and a P-256 key generator for tests and the fake providers.
 ///
-/// The RSA key signs nothing real: it exists only here, and only a test or a build with
-/// the `testing` feature compiles it in.
-#[cfg(any(test, feature = "testing"))]
+/// The RSA key signs nothing real: it exists only here, and only a test compiles it in.
+#[cfg(test)]
 pub mod test_key {
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;

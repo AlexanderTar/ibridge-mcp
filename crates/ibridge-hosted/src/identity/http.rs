@@ -57,7 +57,7 @@ impl Http {
     }
 
     /// A client that also speaks plain http, for the fake servers on loopback in tests.
-    #[cfg(any(test, feature = "testing"))]
+    #[cfg(test)]
     pub(crate) fn loopback() -> Result<Self, IdentityError> {
         let connector = hyper_rustls::HttpsConnectorBuilder::new()
             .with_native_roots()

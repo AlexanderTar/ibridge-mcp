@@ -63,7 +63,7 @@ impl AppleClient {
     /// # Errors
     ///
     /// Returns [`IdentityError::Unreachable`] when the system's root certificates cannot be loaded.
-    #[cfg(any(test, feature = "testing"))]
+    #[cfg(test)]
     pub fn with_base(
         config: &IdentityConfig,
         redirect_uri: &str,

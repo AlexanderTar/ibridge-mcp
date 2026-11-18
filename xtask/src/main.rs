@@ -3,6 +3,9 @@
 //! Workspace maintenance tasks.
 
 mod docs;
+#[cfg(all(test, unix))]
+#[path = "../tests/common/fakes.rs"]
+mod fakes;
 mod live_hosted;
 mod mcpb;
 mod record_calendar;

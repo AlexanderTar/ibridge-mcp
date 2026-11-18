@@ -104,7 +104,7 @@ function checkPage() {
 
   // Links: hrefs are anchors that exist, files that exist, or allow-listed addresses.
   const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
-  const hrefs = [...html.matchAll(/\bhref="([^"]*)"/g)].map((m) => m[1]);
+  const hrefs = [...html.matchAll(/<a\b[^>]*\bhref="([^"]*)"/g)].map((m) => m[1]);
   for (const href of hrefs) {
     if (href.startsWith("#")) assert(ids.has(href.slice(1)), `anchor ${href} has no target`);
     else if (/^https?:/.test(href)) assert(ALLOWED_EXTERNAL.has(href), `unapproved external link ${href}`);
@@ -119,11 +119,15 @@ function checkPage() {
     const src = read(file).replace(/https?:\/\/www\.w3\.org\/\d+\/svg/g, "").replace(/https?:\/\/www\.w3\.org\/1999\/xlink/g, "");
     for (const [url] of src.matchAll(/https?:\/\/[^\s"'<>)\\]+/g)) {
       const clean = url.replace(/[.,]+$/, "");
-      assert(ALLOWED_EXTERNAL.has(clean), `${relative(SITE, file)}: external URL ${clean}`);
+      // Absolute URLs of this site (canonical, og:image) are metadata, not requests; they must name a shipped file.
+      if (clean.startsWith("https://ibridge.fyi/")) {
+        const path = clean.slice("https://ibridge.fyi/".length);
+        assert(existsSync(join(PUBLIC, path || "index.html")), `${relative(SITE, file)}: ${clean} names no shipped file`);
+      } else assert(ALLOWED_EXTERNAL.has(clean), `${relative(SITE, file)}: external URL ${clean}`);
     }
     assert(!/@import|url\(\s*["']?\/\//.test(src), `${relative(SITE, file)}: @import or protocol-relative url`);
   }
-  for (const m of html.matchAll(/<(?:script|link|img|iframe)\b[^>]*\b(?:src|href)="([^"]*)"/g)) {
+  for (const m of html.matchAll(/<(?:script|link(?![^>]*rel="canonical")|img|iframe)\b[^>]*\b(?:src|href)="([^"]*)"/g)) {
     assert(!/^(?:https?:)?\/\//.test(m[1]) || ALLOWED_EXTERNAL.has(m[1]), `external resource ${m[1]}`);
   }
   for (const m of html.matchAll(/<(?:script|img|link)\b[^>]*\b(?:src|href)="(?!https?:|#|mailto:)([^"]*)"/g)) {
@@ -138,6 +142,49 @@ function checkPage() {
 }
 
 checkPage();
+
+// ---------- Unit 2: icons and metadata ----------
+const SITE_URL = "https://ibridge.fyi";
+function pngSize(file) {
+  const b = existsSync(file) ? readFileSync(file) : Buffer.alloc(0);
+  const ok = b.length > 24 && b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  return ok ? [b.readUInt32BE(16), b.readUInt32BE(20)] : null;
+}
+function checkIcons() {
+  const html = read(join(PUBLIC, "index.html"));
+  const fav = read(join(PUBLIC, "favicon.svg"));
+  assert(fav.includes("<svg") && /prefers-color-scheme:\s*dark/.test(fav), "favicon.svg must exist and switch colours with prefers-color-scheme");
+  for (const [name, w, h] of [["apple-touch-icon.png", 180, 180], ["icon-512.png", 512, 512], ["og.png", 1200, 630]]) {
+    const size = pngSize(join(PUBLIC, name));
+    assert(size && size[0] === w && size[1] === h, `${name} must be a ${w}x${h} PNG (found ${size ? size.join("x") : "nothing"})`);
+  }
+  const tag = (re) => (html.match(re) || [])[1] || "";
+  const meta = (attr, name) => tag(new RegExp(`<meta\\b[^>]*\\b${attr}="${name}"[^>]*\\bcontent="([^"]*)"`)) || tag(new RegExp(`<meta\\b[^>]*\\bcontent="([^"]*)"[^>]*\\b${attr}="${name}"`));
+  assert(/<link\b[^>]*rel="icon"[^>]*href="favicon\.svg"[^>]*type="image\/svg\+xml"/.test(html), "head must link favicon.svg");
+  assert(/<link\b[^>]*rel="apple-touch-icon"[^>]*href="apple-touch-icon\.png"/.test(html), "head must link apple-touch-icon.png");
+  assert(/<link\b[^>]*rel="manifest"[^>]*href="site\.webmanifest"/.test(html), "head must link site.webmanifest");
+  const manifest = read(join(PUBLIC, "site.webmanifest"));
+  assert(manifest.includes('"name": "iBridge"') && manifest.includes("icon-512.png"), "site.webmanifest must name iBridge and list icon-512.png");
+  assert(tag(/<link\b[^>]*rel="canonical"[^>]*href="([^"]*)"/) === `${SITE_URL}/`, "canonical link must be https://ibridge.fyi/");
+  assert(tag(/<title>([^<]*)<\/title>/) === "iBridge · Connect iCloud to your AI assistant", "title must be 'iBridge · Connect iCloud to your AI assistant'");
+  const desc = meta("name", "description");
+  assert(desc === "iBridge lets Claude and other AI assistants read and manage your iCloud Mail, Calendar and Contacts.", "meta description must match the approved hero line");
+  assert(meta("property", "og:title") === "iBridge · Connect iCloud to your AI assistant", "og:title");
+  assert(desc !== "" && meta("property", "og:description") === desc, "og:description must equal the description");
+  assert(meta("property", "og:type") === "website", "og:type must be website");
+  assert(meta("property", "og:url") === `${SITE_URL}/`, "og:url");
+  assert(meta("property", "og:site_name") === "iBridge", "og:site_name must be iBridge");
+  assert(meta("property", "og:image") === `${SITE_URL}/og.png`, "og:image must be https://ibridge.fyi/og.png");
+  assert(meta("property", "og:image:width") === "1200" && meta("property", "og:image:height") === "630", "og:image width/height");
+  assert(/iBridge/.test(meta("property", "og:image:alt")), "og:image:alt must name iBridge");
+  assert(meta("name", "twitter:card") === "summary_large_image", "twitter:card must be summary_large_image");
+  assert(meta("name", "twitter:title") !== "" && meta("name", "twitter:title") === meta("property", "og:title"), "twitter:title");
+  assert(desc !== "" && meta("name", "twitter:description") === desc, "twitter:description");
+  assert(meta("name", "twitter:image") === `${SITE_URL}/og.png`, "twitter:image");
+  assert(existsSync(join(SITE, "scripts", "export-icons.mjs")), "scripts/export-icons.mjs (the committed icon export) is missing");
+}
+
+checkIcons();
 
 if (failures.length) {
   console.error(`check: ${failures.length} failure(s)`);

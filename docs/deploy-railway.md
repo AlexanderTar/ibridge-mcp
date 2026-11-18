@@ -101,7 +101,17 @@ It prints `{"data":{"serviceInstanceUpdate":true}}`.
 
 The Dockerfile must not declare `VOLUME`: Railway fails the build with `docker VOLUME ... is not supported, use Railway Volumes`.
 
-Then upload the commit:
+Then deploy the commit. The service builds the `Dockerfile` from the GitHub repository `AlexanderTar/icloud-mcp`, so a push to `main` deploys; `railway up` uploads a local checkout and is the manual fallback (an incident, or a commit that is not on `main`).
+
+**Connect the GitHub repository (once).** In the Railway dashboard, open the `ibridge` service, Settings, Source, and connect the repository `AlexanderTar/icloud-mcp`. This needs the Railway GitHub app installed on that repository (Railway asks for it the first time). Then set:
+
+- Branch: `main`.
+- Auto-deploy: on, so every push to `main` builds and deploys. Turn on "Wait for CI" so a push deploys only after the repository's checks pass.
+- Root directory: leave empty (the `Dockerfile` is at the repository root).
+
+The Dockerfile and the committed logo files are all the build needs: there is no ignore file to keep in sync. Check the Deployments tab for the new build, then `/readyz` and the logs as below. Whoever can push to `main` can deploy, so keep branch protection on `main` (pull requests with the checks required).
+
+**Manual deploy from a checkout (fallback).** Use it only when GitHub deploys are off or the commit is not on `main`:
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project <project id> --environment production --service ibridge --detach
@@ -248,7 +258,7 @@ Do this before any live key goes in. It proves the real Sign in with Apple, a Ma
  | RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable set IBRIDGE_STRIPE_WEBHOOK_SECRET --stdin --project <project id> --environment production --service ibridge --skip-deploys)
 ```
 
-Set the other four the same way, with `--stdin`, never printed: the restricted test key from the Dashboard (`pbpaste | … --stdin`, copy it first; the env file holds only the full key and must not go on the host), and the two price ids and `managed` from the env file inside a subshell. Then deploy and check:
+Set the other four the same way, with `--stdin`, never printed: the restricted test key from the Dashboard (`pbpaste | … --stdin`, copy it first; the env file holds only the full key and must not go on the host), and the two price ids and `managed` from the env file inside a subshell. Then deploy (the new variables apply on the next deploy; with GitHub deploys, redeploy the latest from the Deployments tab, or run the fallback below) and check:
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project <project id> --environment production --service ibridge --detach
@@ -344,6 +354,6 @@ Your own account was created while the instance was closed, so it counts toward 
 
 - **Suspend or delete an account:** `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --environment production --service ibridge -- ibridge admin suspend <address>` or `... delete <address>`. The command runs outside the server process, so the server refuses the account's tokens from the next call but its idle mail sessions close on their own within five minutes. Then tell the person to revoke the app-specific password at Apple.
 - **Comp or uncomp a user:** `... ibridge admin comp <Apple email or Firebase uid>` and `... uncomp <...>`, run the same way (step 13).
-- **Deploy a new version:** pick the commit as in step 2, then `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project <project id> --environment production --service ibridge --detach`. A deploy restarts the service and ends open sessions; people reconnect without signing in again.
+- **Deploy a new version:** merge the approved pull request into `main`. Railway builds that commit from GitHub and deploys it (step 5 sets this up); watch the Deployments tab and `/readyz`. If GitHub deploys are off, check out the approved sha as in step 2 and run `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project <project id> --environment production --service ibridge --detach`. A deploy restarts the service and ends open sessions; people reconnect without signing in again.
 - **Rate limits behind Railway's proxy:** `IBRIDGE_BEHIND_PROXY=true` is part of the variables in step 4. If sign-in limits ever lock everyone out together, check it is set with the dashboard's Variables tab, and see [Behind a proxy](self-host.md#behind-a-proxy).
-- **Roll back:** redeploy the previous sha with `railway up` (with the token, `--project` and `--environment production`, as above), or use Railway's deployment history. The database is forward-only: `/readyz` fails if a snapshot or a rollback meets a different schema, so restore a snapshot taken by the older build.
+- **Roll back:** in the Deployments tab, redeploy the previous successful deployment (it keeps the build of its own commit, so it does not follow `main`). Then land a revert pull request on `main`, or the next push deploys the bad commit again. To roll back to a specific sha from GitHub, revert on `main` back to it. Fallback: check out the previous sha and run `railway up` (with the token, `--project` and `--environment production`, as above). The database is forward-only: `/readyz` fails if a snapshot or a rollback meets a different schema, so restore a snapshot taken by the older build.

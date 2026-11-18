@@ -173,6 +173,9 @@ async fn the_apple_logo_is_used_exactly_when_its_files_are_present() {
 /// files in Apple's "Sign in with Apple - Logo Only" set), so a clean checkout and the Docker
 /// build serve the logo with no step to add it. Nothing ignores them, `build.rs` turns the logo on,
 /// and the notice says they are not under the Apache licence.
+///
+/// This guards the repository, not a fork: a self-hoster who deletes the files (the notice allows
+/// it) deletes this test with them. The test above passes in both states.
 #[test]
 fn the_logo_files_are_apples_originals_committed_in_the_repo() {
     use sha2::{Digest, Sha256};

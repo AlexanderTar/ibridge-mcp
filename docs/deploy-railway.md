@@ -323,13 +323,13 @@ RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --projec
 
 ## 14. Open sign-ups at 50
 
-Only after steps 5 to 13 pass and you have connected Claude.ai to `https://mcp.ibridge.fyi/mcp` and called `account_status` yourself, after the owner's address is linked and comped (step 13); a connection made earlier gets the no-plan error until you reconnect. If the datacenter check used a test Apple ID that is not the owner's, first remove that account, so it does not use up one of the 50 places (it holds a sealed password for the test Apple ID until you do):
+Only after steps 5 to 13 pass and you have connected Claude.ai to `https://mcp.ibridge.fyi/mcp` and called `account_status` yourself, after the owner's address is linked and comped (step 13); a connection made earlier gets the no-plan error until you reconnect. **Skip the delete below for the first launch:** the datacenter test account is the owner's own Apple ID, and `delete` would remove the owner's real account. The owner's account counts toward the cap like any other. If the datacenter check used a test Apple ID that is not the owner's, first remove that account, so it does not use up one of the 50 places (it holds a sealed password for the test Apple ID until you do):
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --environment production --service ibridge -- ibridge admin delete <test Apple ID>
 ```
 
-It prints how many accounts it deleted; `1` is expected. **Skip this for the first launch:** the test account is the owner's own Apple ID, and `delete` would remove the owner's real account. It counts toward the cap like any other. Then remove the allowlist and open sign-ups at the cap:
+It prints how many accounts it deleted; `1` is expected. Then remove the allowlist and open sign-ups at the cap:
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable delete IBRIDGE_ALLOWED_APPLE_IDS --project <project id> --environment production --service ibridge

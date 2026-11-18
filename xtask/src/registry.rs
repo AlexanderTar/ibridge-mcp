@@ -280,10 +280,11 @@ mod tests {
     #[test]
     fn the_repos_server_json_passes_the_registry_schema_and_matches_the_repo() {
         let checked = check(&repo()).expect("server.json is valid");
-        assert_eq!(
-            checked.placeholders,
-            mcpb::triples().count(),
-            "no release exists yet, so every bundle hash is still the placeholder"
+        let all = mcpb::triples().count();
+        assert!(
+            checked.placeholders == 0 || checked.placeholders == all,
+            "{} of {all} bundle hashes are still the placeholder; `registry fill` writes all or none",
+            checked.placeholders
         );
     }
 
@@ -359,8 +360,18 @@ mod tests {
 
     #[test]
     fn release_mode_refuses_a_placeholder() {
+        let dir = copy_of_repo();
+        let path = dir.path().join("server.json");
+        let mut server: Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("json");
+        for package in server["packages"].as_array_mut().expect("packages") {
+            if package.get("fileSha256").is_some() {
+                package["fileSha256"] = Value::String(PLACEHOLDER_SHA256.to_owned());
+            }
+        }
+        fs::write(&path, server.to_string()).expect("write");
         let args = ["check", "--release"].map(str::to_owned);
-        let error = run(&repo(), args.into_iter()).expect_err("placeholders remain");
+        let error = run(dir.path(), args.into_iter()).expect_err("placeholders remain");
         assert!(error.to_string().contains("placeholder"));
     }
 }

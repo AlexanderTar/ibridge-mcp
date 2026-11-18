@@ -104,6 +104,8 @@ pub struct SignedIn {
     pub return_to: ReturnTo,
     /// Apple's access token, for revoking at delete. Never stored.
     pub apple_access: Option<SecretString>,
+    /// The Firebase ID token from this sign-in, for deleting the Firebase user. Never stored.
+    pub firebase_id_token: SecretString,
 }
 
 /// The Apple and Firebase clients and the sign-ins waiting for Apple's callback.
@@ -234,7 +236,33 @@ impl Identity {
             email: user.email,
             return_to: pending.return_to,
             apple_access: Some(tokens.access_token),
+            firebase_id_token: user.id_token,
         })
+    }
+
+    /// Revokes the grant Apple made at a sign-in, so the app no longer appears in the
+    /// person's Apple account.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentityError::Refused`] when Apple rejects the token and
+    /// [`IdentityError::Unreachable`] when it cannot be reached.
+    pub async fn revoke_apple(
+        &self,
+        access_token: &SecretString,
+        wall: std::time::SystemTime,
+    ) -> Result<(), IdentityError> {
+        self.apple.revoke(access_token, wall).await
+    }
+
+    /// Deletes the Firebase user a fresh sign-in's ID token belongs to.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentityError::Refused`] when Firebase refuses and
+    /// [`IdentityError::Unreachable`] when it cannot be reached.
+    pub async fn delete_firebase(&self, id_token: &SecretString) -> Result<(), IdentityError> {
+        self.firebase.delete_account(id_token).await
     }
 }
 

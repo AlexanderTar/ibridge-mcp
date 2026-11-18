@@ -17,7 +17,7 @@ use axum::{Form, Router};
 use serde::Deserialize;
 
 use super::account::{Principal, SESSION_COOKIE, SESSION_SECS};
-use crate::identity::{BINDER_COOKIE, CallbackForm, IdentityError, ReturnTo, SignedIn};
+use crate::identity::{BINDER_COOKIE, CallbackForm, Identity, IdentityError, ReturnTo, SignedIn};
 use crate::oauth::{Peer, Shared};
 use crate::web::{cookie_value, message, see_other, set_cookie, set_cookie_same_site};
 
@@ -70,9 +70,13 @@ async fn start(
                 "This sign-in link is not complete. Go back to the app and start again.",
             );
         }
-        (Some("delete"), _) => ReturnTo::DeleteAccount,
         _ => ReturnTo::Account,
     };
+    begin(identity, return_to)
+}
+
+/// Sends the browser to Apple for a sign-in that ends at `return_to`.
+pub(crate) fn begin(identity: &Identity, return_to: ReturnTo) -> Response {
     match identity.begin(return_to, Instant::now()) {
         Ok((apple_url, binder)) => {
             let mut response = see_other(&apple_url);
@@ -116,6 +120,10 @@ async fn callback(
         .finish(form, binder, Instant::now(), SystemTime::now())
         .await;
     let mut response = match finished {
+        // A fresh sign-in that was asked for to delete the account does that, and nothing else.
+        Ok(signed) if signed.return_to == ReturnTo::DeleteAccount => {
+            super::delete::complete(&shared, &headers, signed).await
+        }
         Ok(signed) => signed_in(&shared, signed).await,
         Err(error) => failed(error),
     };
@@ -132,6 +140,7 @@ async fn signed_in(shared: &Shared, signed: SignedIn) -> Response {
         email,
         return_to,
         apple_access: _,
+        firebase_id_token: _,
     } = signed;
     let user = match shared
         .store
@@ -213,14 +222,12 @@ fn plausible_id(id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
-    use std::sync::{Arc, Mutex, PoisonError};
+    use std::sync::{Arc, PoisonError};
     use std::time::Duration;
 
     use axum::http::{StatusCode, header};
     use sha2::{Digest, Sha256};
     use tracing::Level;
-    use tracing_subscriber::fmt::MakeWriter;
 
     use crate::identity::fakes::{FakeApple, FakeFirebase, identity_config};
     use crate::identity::pending::PendingSignIns;
@@ -231,6 +238,7 @@ mod tests {
     use crate::oauth::test_support::{
         ADA, Harness, PUBLIC, Reply, harness, harness_identity, harness_with_shared,
     };
+    use crate::pages::test_rig::Captured;
     use crate::store::Store;
 
     const IP: &str = "198.51.100.7";
@@ -424,7 +432,7 @@ mod tests {
             .await;
         assert_eq!(page.status, StatusCode::OK, "the session opens /account");
         assert!(
-            page.text.contains("no iCloud address connected yet"),
+            page.text.contains("No iCloud address connected yet"),
             "{}",
             page.text
         );
@@ -643,31 +651,6 @@ mod tests {
             plain.get_path("/signin/apple", IP, None).await.status,
             StatusCode::NOT_FOUND
         );
-    }
-
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
-
-    impl io::Write for Captured {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl MakeWriter<'_> for Captured {
-        type Writer = Self;
-
-        fn make_writer(&self) -> Self::Writer {
-            self.clone()
-        }
     }
 
     #[tokio::test]

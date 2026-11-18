@@ -207,8 +207,17 @@ pub(crate) async fn harness_featured(
 ) -> (Harness, Arc<Shared>) {
     let config = OAuthConfig::new(PUBLIC, access).expect("public url");
     let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
-    let evict: Evict = Arc::new(|_| {});
-    harness_built(config, store, evict, mcp, Some(identity), billing).await
+    let evicted = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&evicted);
+    let evict: Evict = Arc::new(move |apple_id| {
+        log.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(apple_id.clone());
+    });
+    let (mut harness, shared) =
+        harness_built(config, store, evict, mcp, Some(identity), billing).await;
+    harness.evicted = evicted;
+    (harness, shared)
 }
 
 /// A plain harness (no Sign in with Apple) and the shared state its pages use.

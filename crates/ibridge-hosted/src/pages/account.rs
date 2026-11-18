@@ -98,7 +98,7 @@ impl Sessions {
             .cloned()
     }
 
-    fn end(&self, token: &str) {
+    pub(crate) fn end(&self, token: &str) {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -461,6 +461,7 @@ async fn mint_failed(shared: &Shared, session: &Session, error: &StoreError) -> 
 
 async fn delete(
     State(shared): State<Arc<Shared>>,
+    peer: Peer,
     headers: HeaderMap,
     Form(form): Form<Delete>,
 ) -> Response {
@@ -475,6 +476,20 @@ async fn delete(
             Some("Tick the box to confirm that you want everything deleted."),
         )
         .await;
+    }
+    // With Sign in with Apple on, deleting needs a fresh sign-in, which does the deleting.
+    if shared.identity.is_some() {
+        if session.principal.user().is_none() {
+            return expired();
+        }
+        if !shared.lookups.allow(&peer.0, Instant::now()) {
+            return message(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many requests",
+                "Wait a minute, then try again.",
+            );
+        }
+        return super::delete::ask_for_fresh_sign_in(&shared);
     }
     let address = match who(&shared, &session).await {
         Ok(Who {

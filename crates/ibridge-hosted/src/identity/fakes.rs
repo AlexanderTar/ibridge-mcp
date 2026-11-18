@@ -80,6 +80,7 @@ pub fn identity_config(project: &str) -> IdentityConfig {
 struct AppleState {
     tokens: Mutex<Vec<HashMap<String, String>>>,
     revokes: Mutex<Vec<HashMap<String, String>>>,
+    revoke_failure: Mutex<Option<StatusCode>>,
 }
 
 /// A fake `appleid.apple.com`: `/auth/token` and `/auth/revoke`.
@@ -123,6 +124,11 @@ impl FakeApple {
     pub fn revoke_requests(&self) -> Vec<HashMap<String, String>> {
         lock(&self.state.revokes).clone()
     }
+
+    /// Makes `/auth/revoke` answer `status`, still recording what it was sent.
+    pub fn fail_revoke(&self, status: StatusCode) {
+        *lock(&self.state.revoke_failure) = Some(status);
+    }
 }
 
 async fn apple_token(
@@ -153,7 +159,7 @@ async fn apple_revoke(
     Form(form): Form<HashMap<String, String>>,
 ) -> StatusCode {
     lock(&state.revokes).push(form);
-    StatusCode::OK
+    lock(&state.revoke_failure).unwrap_or(StatusCode::OK)
 }
 
 type ClaimsEdit = Box<dyn Fn(&mut Value) + Send + Sync>;
@@ -169,6 +175,7 @@ struct FirebaseState {
     failure: Mutex<Option<(StatusCode, String)>>,
     sign_ins: Mutex<Vec<Value>>,
     deletes: Mutex<Vec<Value>>,
+    delete_failure: Mutex<Option<StatusCode>>,
     key_fetches: AtomicUsize,
     max_age: AtomicU64,
     real_time: AtomicBool,
@@ -210,6 +217,7 @@ impl FakeFirebase {
             failure: Mutex::new(None),
             sign_ins: Mutex::new(Vec::new()),
             deletes: Mutex::new(Vec::new()),
+            delete_failure: Mutex::new(None),
             key_fetches: AtomicUsize::new(0),
             max_age: AtomicU64::new(3600),
             real_time: AtomicBool::new(false),
@@ -254,6 +262,11 @@ impl FakeFirebase {
     /// Makes `signInWithIdp` fail with `status` and Firebase's error `message`.
     pub fn fail_sign_in(&self, status: StatusCode, message: &str) {
         *lock(&self.state.failure) = Some((status, message.to_owned()));
+    }
+
+    /// Makes `accounts:delete` answer `status`, still recording what it was sent.
+    pub fn fail_delete(&self, status: StatusCode) {
+        *lock(&self.state.delete_failure) = Some(status);
     }
 
     /// Sets the `max-age` the key set is served with.
@@ -352,6 +365,13 @@ async fn firebase_delete(
         return refusal;
     }
     lock(&state.deletes).push(body);
+    if let Some(status) = *lock(&state.delete_failure) {
+        return (
+            status,
+            Json(json!({ "error": { "code": status.as_u16(), "message": "FAILED" } })),
+        )
+            .into_response();
+    }
     Json(json!({ "kind": "identitytoolkit#DeleteAccountResponse" })).into_response()
 }
 

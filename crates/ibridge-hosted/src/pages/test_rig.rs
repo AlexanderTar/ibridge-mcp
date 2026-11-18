@@ -2,11 +2,13 @@
 
 //! A signed-in-with-Apple rig for the page tests: the fakes, a store and browsers with sessions.
 
-use std::sync::Arc;
+use std::io;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Instant, SystemTime};
 
 use ibridge_core::AppleId;
 use secrecy::SecretString;
+use tracing_subscriber::fmt::MakeWriter;
 
 use super::account::{Principal, SESSION_COOKIE};
 use crate::billing::fakes::{FAKE_SECRET_KEY, FakeStripe};
@@ -25,9 +27,9 @@ pub(crate) const OWNER: &str = "pending-owner-cookie-a";
 pub(crate) struct Rig {
     pub(crate) harness: Harness,
     pub(crate) shared: Arc<Shared>,
-    _apple: FakeApple,
-    _firebase: FakeFirebase,
-    stripe: Option<FakeStripe>,
+    pub(crate) apple: FakeApple,
+    pub(crate) firebase: FakeFirebase,
+    pub(crate) stripe: Option<FakeStripe>,
 }
 
 /// A browser with a session: the cookies it sends and the token its forms carry.
@@ -96,8 +98,8 @@ impl Setup {
         Rig {
             harness,
             shared,
-            _apple: apple,
-            _firebase: firebase,
+            apple,
+            firebase,
             stripe,
         }
     }
@@ -131,17 +133,7 @@ impl Rig {
     /// A user linked to `address`, by a first connect.
     pub(crate) async fn linked_user(&self, uid: &str, email: &str, address: &str) -> User {
         let user = self.user(uid, Some(email)).await;
-        self.harness
-            .store
-            .seal_under_code(
-                &AppleId::try_from(address).expect("address"),
-                &SecretString::from(ASP_ALL),
-                Scope::ReadWrite,
-                SystemTime::now(),
-                Some(user.id),
-            )
-            .await
-            .expect("link");
+        self.link(&user, address).await;
         self.reload(&user).await
     }
 
@@ -167,6 +159,9 @@ impl Rig {
             .set_subscription(user.id, "sub_page", status, Some(1_900_000_000))
             .await
             .expect("subscription");
+        if let Some(stripe) = &self.stripe {
+            stripe.put_subscription("sub_page", "cus_page", status, 1_900_000_000);
+        }
     }
 
     /// A browser signed in as `user`, holding a pending-request owner cookie as well.
@@ -215,4 +210,159 @@ async fn identity() -> (FakeApple, FakeFirebase, Identity) {
     )
     .expect("identity");
     (apple, firebase, identity)
+}
+
+/// Log output kept in memory, for a test that reads what the server logged.
+#[derive(Clone, Default)]
+pub(crate) struct Captured(pub(crate) Arc<Mutex<Vec<u8>>>);
+
+impl Captured {
+    /// Everything logged so far.
+    pub(crate) fn text(&self) -> String {
+        let bytes = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+impl io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl MakeWriter<'_> for Captured {
+    type Writer = Self;
+
+    fn make_writer(&self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// A sign-in sent to Apple: what the browser holds until Apple calls back.
+pub(crate) struct Started {
+    pub(crate) state: String,
+    /// The binder cookie, as `name=value`.
+    pub(crate) binder: String,
+}
+
+impl Started {
+    /// Reads a redirect to Apple.
+    pub(crate) fn of(reply: &Reply) -> Self {
+        assert_eq!(
+            reply.status,
+            axum::http::StatusCode::SEE_OTHER,
+            "{}",
+            reply.text
+        );
+        let location = reply.location();
+        let state = location
+            .query_pairs()
+            .find(|(name, _)| name == "state")
+            .map(|(_, value)| value.into_owned())
+            .expect("a state");
+        let binder = reply
+            .headers
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .find(|value| value.starts_with("__Host-ibridge_siwa="))
+            .map(|value| value.split(';').next().unwrap_or_default().to_owned())
+            .expect("a binder cookie");
+        Self { state, binder }
+    }
+}
+
+impl Rig {
+    /// Opens `/signin/apple{query}` and reads the redirect to Apple.
+    pub(crate) async fn start_sign_in(&self, query: &str) -> Started {
+        let reply = self
+            .harness
+            .get_path(&format!("/signin/apple{query}"), IP, None)
+            .await;
+        Started::of(&reply)
+    }
+
+    /// Apple's callback for `started`, with `code`, from a browser that also sends `cookie`.
+    pub(crate) async fn callback(
+        &self,
+        started: &Started,
+        code: &str,
+        cookie: Option<&str>,
+    ) -> Reply {
+        let sent = match cookie {
+            Some(cookie) => format!("{cookie}; {}", started.binder),
+            None => started.binder.clone(),
+        };
+        self.harness
+            .post_path(
+                "/signin/apple/callback",
+                IP,
+                Some(&sent),
+                &[("code", code), ("state", &started.state)],
+            )
+            .await
+    }
+
+    /// Signs in with Apple through the real routes, with `code`, and returns the browser.
+    pub(crate) async fn sign_in(&self, code: &str) -> Browser {
+        let started = self.start_sign_in("").await;
+        let done = self.callback(&started, code, None).await;
+        assert_eq!(
+            done.status,
+            axum::http::StatusCode::SEE_OTHER,
+            "{}",
+            done.text
+        );
+        let session = done
+            .headers
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .find(|value| value.starts_with("__Host-ibridge_session="))
+            .map(|value| value.split(';').next().unwrap_or_default().to_owned())
+            .expect("a session cookie");
+        let cookie = format!("{session}; {PENDING_COOKIE}={OWNER}");
+        let page = self.harness.get_path("/account", IP, Some(&cookie)).await;
+        Browser {
+            csrf: page.input("csrf"),
+            cookie,
+        }
+    }
+
+    /// The user the fake Apple and Firebase sign in.
+    pub(crate) async fn signed_in_user(&self) -> User {
+        self.harness
+            .store
+            .user_by_email_or_uid(FakeFirebase::UID)
+            .await
+            .expect("read")
+            .expect("the signed-in user")
+    }
+
+    /// Links `user` to `address` by a first connect.
+    pub(crate) async fn link(&self, user: &User, address: &str) {
+        self.harness
+            .store
+            .seal_under_code(
+                &AppleId::try_from(address).expect("address"),
+                &SecretString::from(ASP_ALL),
+                Scope::ReadWrite,
+                SystemTime::now(),
+                Some(user.id),
+            )
+            .await
+            .expect("link");
+    }
 }

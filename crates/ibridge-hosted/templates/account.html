@@ -71,12 +71,21 @@
 <button type="submit">Create key</button>
 </form>
 <h2>Delete everything</h2>
+{% if profile.is_some() %}
+<p>Deletes your account, your connected apps, your API keys and every encrypted copy of your app-specific password. It ends your subscription at once and removes this service from your Apple account. You will sign in with Apple once more to confirm.</p>
+<form method="post" action="/account/delete">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label class="check" for="confirm"><input id="confirm" name="confirm" type="checkbox" value="delete"><span>Yes, delete my account and everything stored for it.</span></label>
+<button class="secondary" type="submit">Delete my account</button>
+</form>
+{% else %}
 <p>Deletes your connected apps, your API keys and every encrypted copy of your app-specific password. Afterwards, revoke that password at Apple too.</p>
 <form method="post" action="/account/delete">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <label class="check" for="confirm"><input id="confirm" name="confirm" type="checkbox" value="delete"><span>Yes, delete everything stored for {{ apple_id }}.</span></label>
 <button class="secondary" type="submit">Delete everything</button>
 </form>
+{% endif %}
 <form method="post" action="/account/logout">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <button class="secondary" type="submit">Sign out</button>

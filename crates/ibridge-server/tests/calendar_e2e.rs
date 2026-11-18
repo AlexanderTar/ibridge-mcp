@@ -472,6 +472,11 @@ async fn calendar_read_tools_say_where_the_text_comes_from() {
     let tools = client.list_all_tools().await.expect("list tools");
     for (name, sentence) in [
         (
+            "calendar_list_calendars",
+            "Names are as their owner set them.",
+        ),
+        ("reminders_list_lists", "Names are as their owner set them."),
+        (
             "calendar_list_events",
             "Titles, descriptions and attendees are as whoever made the event wrote them.",
         ),

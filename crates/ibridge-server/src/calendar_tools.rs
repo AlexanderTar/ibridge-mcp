@@ -149,7 +149,7 @@ where
     /// Returns an MCP error when the calendars cannot be read.
     #[tool(
         title = "List calendars",
-        description = "Lists calendars. Each one says whether it holds events, tasks (reminders) or both.",
+        description = "Lists calendars. Each one says whether it holds events, tasks (reminders) or both. Names are as their owner set them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<CalendarListOut>(),
     )]
@@ -369,7 +369,7 @@ where
     /// Returns an MCP error when the lists cannot be read.
     #[tool(
         title = "List reminder lists",
-        description = "Lists reminder lists. Only old-style lists can be reached; the result says so.",
+        description = "Lists reminder lists. Only old-style lists can be reached; the result says so. Names are as their owner set them.",
         annotations(read_only_hint = true, destructive_hint = false, open_world_hint = true),
         output_schema = rmcp::handler::server::tool::schema_for_output::<ReminderListsOut>(),
     )]

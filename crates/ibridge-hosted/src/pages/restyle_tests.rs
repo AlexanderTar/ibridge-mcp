@@ -81,6 +81,27 @@ fn assert_styled(name: &str, page: &Reply) {
     assert!(html.contains("<h1 class="), "{name} has a heading");
 }
 
+/// The delete button is the design system's destructive button, and it follows the box:
+/// the stylesheet greys it out until `confirm` is ticked (CSS only, the CSP allows no script),
+/// so the box has to sit in the same form as the button.
+fn assert_delete_is_a_danger_button(html: &str, label: &str) {
+    let form = html
+        .split(r#"<form method="post" action="/account/delete">"#)
+        .nth(1)
+        .and_then(|rest| rest.split("</form>").next())
+        .unwrap_or_else(|| panic!("a delete form: {html}"));
+    assert!(
+        form.contains(r#"name="confirm" type="checkbox""#),
+        "the confirmation box is in the delete form: {form}"
+    );
+    assert!(
+        form.contains(&format!(
+            r#"<button class="btn btn--danger" type="submit">{label}</button>"#
+        )),
+        "{label} is the destructive button: {form}"
+    );
+}
+
 #[tokio::test]
 async fn the_password_sign_in_and_dashboard_use_the_components() {
     let h = harness(Access::MultiTenant).await;
@@ -159,6 +180,7 @@ async fn the_password_sign_in_and_dashboard_use_the_components() {
         "the key form explains the password in plain words: {}",
         dashboard.text
     );
+    assert_delete_is_a_danger_button(&dashboard.text, "Delete everything");
     for wanted in [
         r#"<ul class="grants">"#,
         r#"class="btn btn--secondary""#,
@@ -238,6 +260,7 @@ async fn the_apple_sign_in_and_plan_pages_use_the_components() {
         "subscribing is the primary action: {}",
         dashboard.text
     );
+    assert_delete_is_a_danger_button(&dashboard.text, "Delete my account");
 }
 
 #[tokio::test]

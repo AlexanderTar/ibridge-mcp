@@ -44,6 +44,15 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .panel .btn--lg + .btn--lg { margin-top: var(--space-3); }
 @media (max-width: 560px) { form .btn { width: 100%; } form .btn + .btn { margin-top: var(--space-3); } }
 
+/* ---------- Destructive button ----------
+   Not in components.css; built from the --color-danger tokens. It looks inactive (flat, grey,
+   not clickable) until the confirmation box in the same form is ticked. CSS only, because the
+   CSP allows no script; the server refuses a delete without the box whatever the page shows. */
+.btn--danger { background: var(--color-danger); color: var(--color-on-danger); transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.btn--danger:hover { background: var(--color-danger-hover); }
+form:not(:has(input[name=confirm]:checked)) .btn--danger { background: var(--color-surface-sunken); color: var(--color-text-tertiary); border-color: var(--color-border); cursor: not-allowed; pointer-events: none; }
+.btn--danger:focus-visible { outline: 2px solid var(--color-danger); outline-offset: 2px; }
+
 /* ---------- Alerts ---------- */
 .alert { margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid var(--color-accent); background: linear-gradient(var(--color-accent), var(--color-accent)) left / 4px 100% no-repeat, var(--color-accent-tint); color: var(--color-text); font-weight: var(--weight-semibold); }
 

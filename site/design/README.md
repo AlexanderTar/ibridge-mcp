@@ -21,6 +21,10 @@ Screenshots are in `~/.swarm/screenshots/CHORE-227/design/` (pages at 1440 and 3
 
 Ink `#0F2538`, teal `#0B7A80` and coral `#E0532B`. Teal is the interactive colour (buttons, links). Coral is decorative: the icon, rules and small labels. No option uses white-cloud-on-blue, so nothing reads as Apple's iCloud glyph.
 
+## Destructive colour
+
+`--color-danger`, `--color-danger-hover` and `--color-on-danger` fill a destructive button (the hosted server's "Delete my account"). Light `#B3261E` with white text is 6.5:1; dark `#FF8A80` with `#2A0806` text is 8.1:1. The `.btn--danger` rule itself lives in `crates/ibridge-hosted/assets/server.css`, not in `components.css`.
+
 ## Icon options
 
 Each option ships as `<id>-mark-light.svg` / `-mark-dark.svg` (bare mark, for the logo), `-small-light.svg` / `-small-dark.svg` (the 16 px version), `-tile-light.svg` / `-tile-dark.svg` (rounded square, for the touch icon and app-style uses) and `-favicon.svg` (the 16 px version, switching colours with the browser theme).

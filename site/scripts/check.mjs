@@ -174,8 +174,7 @@ checkPage();
 // Text is the hosted iBridge instance's policy with billing and Sign in with Apple on (crates/ibridge-hosted/templates).
 const CONTACT = "taraymovich@gmail.com";
 const LEGAL = {
-  privacy: ["Privacy policy", "iBridge is unofficial and not affiliated with Apple", "What we store", "Why we cannot decrypt your password from storage",
-    "What risk remains", "Revoke the password at Apple", "How long we keep things", "Who else is involved", "Your choices and contact",
+  privacy: ["Privacy policy", "iBridge is unofficial and not affiliated with Apple", "What we store", "Revoke the password at Apple", "How long we keep things", "Who else is involved", "Your choices and contact",
     "If you sign in with Apple", "Your plan: your Stripe customer and subscription ids", "Google, through Firebase Authentication",
     "Stripe is the seller of record", "end your subscription at Stripe", "We do not store the content of your mail, calendar or contacts", CONTACT],
   terms: ["Terms of use", "iBridge is an unofficial service", "It is not affiliated with Apple or endorsed by Apple", "Your account and Apple's terms",
@@ -183,7 +182,10 @@ const LEGAL = {
     "end of the period you have paid for", "Stripe, which is the seller of record", "A failed payment", "Fair use", "No warranty",
     "Suspension and deletion", "Changes and contact", CONTACT],
 };
-const LEGAL_BANNED = [/reminders?/i, /chatgpt/i, /sealed/i, /read-only/i, /read only/i, /unless you chose/i, /\{\{|\{%/, /operator of this service has not published/i];
+const LEGAL_BANNED = [/reminders?/i, /chatgpt/i, /sealed/i, /read-only/i, /read only/i, /unless you chose/i, /\{\{|\{%/, /operator of this service has not published/i,
+  // User 2026-11-18: no risk or decryption sections, no domain names in the legal text.
+  /risk remains/i, /cannot decrypt your password from storage/i, /whoever controls/i, /moments when we can still see/i,
+  /mcp\.ibridge\.fyi/i, /appleid\.apple\.com/i, /googleapis\.com/i, /api\.stripe\.com/i];
 
 function checkLegal() {
   for (const [name, required] of Object.entries(LEGAL)) {

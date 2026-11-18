@@ -6,7 +6,7 @@
 
 use axum::http::{StatusCode, header};
 
-use super::test_rig::{IP, Rig};
+use super::test_rig::{IP, Rig, Setup};
 use crate::oauth::Access;
 use crate::oauth::test_support::{ADA, ASP_ALL, Harness, Reply, harness};
 
@@ -273,7 +273,7 @@ async fn the_public_pages_spell_the_name_and_link_the_product_site() {
     }
     let landing = h.get_path("/", IP, None).await.text;
     assert!(
-        landing.contains(r#"<a href="https://ibridge.fyi">ibridge.fyi</a>"#),
+        landing.contains(r#"<a href="https://ibridge.fyi" rel="noopener noreferrer" target="_blank">ibridge.fyi</a>"#),
         "the landing page links the product site: {landing}"
     );
     assert!(
@@ -296,4 +296,49 @@ async fn the_public_pages_do_not_offer_a_read_only_choice_on_the_connect_page() 
         "the terms do not say the person chose read-only on the connect page: {terms}"
     );
     assert!(!terms.contains("unless you chose read-only access"));
+}
+
+#[tokio::test]
+async fn links_to_other_sites_open_in_a_new_tab_without_opener() {
+    let rig = Setup::default()
+        .billing()
+        .contact("support@ibridge.example")
+        .build()
+        .await;
+    let mut pages = Vec::new();
+    for path in ["/", "/privacy", "/terms", "/account"] {
+        pages.push((path, rig.get(path, None).await.text));
+    }
+    let authorize = rig
+        .harness
+        .get_authorize(&Harness::authorize_path(&[], &[]), IP)
+        .await;
+    pages.push(("/authorize", authorize.text));
+    let plain = harness(Access::MultiTenant).await;
+    pages.push((
+        "/account (password)",
+        plain.get_path("/account", IP, None).await.text,
+    ));
+    pages.push((
+        "/authorize (password)",
+        plain
+            .get_authorize(&Harness::authorize_path(&[], &[]), IP)
+            .await
+            .text,
+    ));
+    let mut seen = 0;
+    for (path, html) in &pages {
+        for part in html.split("<a ").skip(1) {
+            let tag = part.split('>').next().unwrap_or_default();
+            if tag.contains(r#"href="https://"#) || tag.contains(r#"href="http://"#) {
+                seen += 1;
+                assert!(
+                    tag.contains(r#"rel="noopener noreferrer""#)
+                        && tag.contains(r#"target="_blank""#),
+                    "{path}: an outside link opens in a new tab with rel=noopener noreferrer: <a {tag}>"
+                );
+            }
+        }
+    }
+    assert!(seen >= 4, "the pages link outside at all ({seen})");
 }

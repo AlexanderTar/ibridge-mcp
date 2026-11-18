@@ -13,15 +13,13 @@ use crate::billing::fakes::{FAKE_SECRET_KEY, FakeStripe};
 use crate::billing::{Billing, BillingConfig, TaxMode};
 use crate::identity::Identity;
 use crate::identity::fakes::{FakeApple, FakeFirebase, identity_config};
-use crate::oauth::Shared;
 use crate::oauth::pending::PENDING_COOKIE;
-use crate::oauth::test_support::{
-    ASP_ALL, Harness, PUBLIC, Reply, harness_billing, harness_identity,
-};
+use crate::oauth::test_support::{ASP_ALL, Harness, PUBLIC, Reply, harness_featured};
+use crate::oauth::{Access, Shared};
 use crate::store::{Scope, Store, User};
 
 pub(crate) const IP: &str = "198.51.100.7";
-const OWNER: &str = "pending-owner-cookie-a";
+pub(crate) const OWNER: &str = "pending-owner-cookie-a";
 
 /// A hosted server with Sign in with Apple on, and Stripe on when asked, over fakes.
 pub(crate) struct Rig {
@@ -29,7 +27,7 @@ pub(crate) struct Rig {
     pub(crate) shared: Arc<Shared>,
     _apple: FakeApple,
     _firebase: FakeFirebase,
-    _stripe: Option<FakeStripe>,
+    stripe: Option<FakeStripe>,
 }
 
 /// A browser with a session: the cookies it sends and the token its forms carry.
@@ -48,35 +46,77 @@ fn billing_config() -> BillingConfig {
     }
 }
 
-impl Rig {
-    /// Sign in with Apple on, Stripe off.
-    pub(crate) async fn identity_only() -> Self {
+/// How to build a [`Rig`]: Stripe off, an open service with no cap, unless told otherwise.
+#[derive(Default)]
+pub(crate) struct Setup {
+    billing: bool,
+    cap: Option<usize>,
+    only: Option<Vec<AppleId>>,
+}
+
+impl Setup {
+    /// Turns Stripe on.
+    pub(crate) fn billing(mut self) -> Self {
+        self.billing = true;
+        self
+    }
+
+    /// Takes at most `cap` iCloud accounts.
+    pub(crate) fn cap(mut self, cap: usize) -> Self {
+        self.cap = Some(cap);
+        self
+    }
+
+    /// Lets only these addresses connect: a closed service.
+    pub(crate) fn only(mut self, addresses: &[&str]) -> Self {
+        self.only = Some(
+            addresses
+                .iter()
+                .map(|address| AppleId::try_from(*address).expect("address"))
+                .collect(),
+        );
+        self
+    }
+
+    pub(crate) async fn build(self) -> Rig {
         let (apple, firebase, identity) = identity().await;
-        let store = Store::memory().await.expect("store");
-        let (harness, shared) = harness_identity(identity, store).await;
-        Self {
+        let (stripe, billing) = if self.billing {
+            let stripe = FakeStripe::start().await;
+            let billing = Billing::with_base(&billing_config(), stripe.base()).expect("billing");
+            (Some(stripe), Some(billing))
+        } else {
+            (None, None)
+        };
+        let mut store = Store::memory().await.expect("store");
+        if let Some(cap) = self.cap {
+            store = store.with_signup_cap(cap);
+        }
+        let access = self.only.map_or(Access::MultiTenant, Access::AllowList);
+        let (harness, shared) = harness_featured(access, store, identity, billing).await;
+        Rig {
             harness,
             shared,
             _apple: apple,
             _firebase: firebase,
-            _stripe: None,
+            stripe,
         }
+    }
+}
+
+impl Rig {
+    /// Sign in with Apple on, Stripe off.
+    pub(crate) async fn identity_only() -> Self {
+        Setup::default().build().await
     }
 
     /// Sign in with Apple and Stripe on.
     pub(crate) async fn billing() -> Self {
-        let (apple, firebase, identity) = identity().await;
-        let stripe = FakeStripe::start().await;
-        let billing = Billing::with_base(&billing_config(), stripe.base()).expect("billing");
-        let store = Store::memory().await.expect("store");
-        let (harness, shared) = harness_billing(identity, billing, store).await;
-        Self {
-            harness,
-            shared,
-            _apple: apple,
-            _firebase: firebase,
-            _stripe: Some(stripe),
-        }
+        Setup::default().billing().build().await
+    }
+
+    /// What the Stripe fake was asked, in order; empty when Stripe is off.
+    pub(crate) fn stripe_requests(&self) -> Vec<crate::billing::fakes::Recorded> {
+        self.stripe.as_ref().map_or_default(FakeStripe::requests)
     }
 
     /// A user with the email Apple gave, not yet linked to an iCloud address.

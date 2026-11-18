@@ -68,7 +68,7 @@ impl Principal {
 #[derive(Debug, Clone)]
 pub(crate) struct Session {
     pub(crate) principal: Principal,
-    csrf: String,
+    pub(crate) csrf: String,
     until: Instant,
 }
 
@@ -679,7 +679,7 @@ fn plan_view(user: &User) -> PlanView {
 
 /// The address a new key is for. A user who has linked one can use only that; a user who
 /// has not types one, and it is linked when the key is made.
-fn address_to_use(
+pub(crate) fn address_to_use(
     shared: &Shared,
     linked: Option<AppleId>,
     typed: Option<&str>,

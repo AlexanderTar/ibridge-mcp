@@ -13,6 +13,8 @@ pub(crate) mod pending;
 mod token;
 
 #[cfg(test)]
+mod authorize_apple_tests;
+#[cfg(test)]
 mod signup_tests;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -189,6 +191,11 @@ impl OAuthConfig {
     /// An absolute URL on this server.
     pub(crate) fn url(&self, path: &str) -> String {
         format!("{}{path}", self.issuer())
+    }
+
+    /// Whether only listed addresses may connect: nobody new can join.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.allowed.is_some()
     }
 
     /// False when an allowlist is set and `apple_id` is not on it.

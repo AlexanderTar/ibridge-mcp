@@ -114,13 +114,6 @@ impl PendingAuthorize {
     /// Keeps `params` for `owner` and returns the id to resume it with.
     ///
     /// `None` when the store is full or the system has no randomness.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the /authorize sign-in steps store requests with this"
-        )
-    )]
     pub(crate) fn put(&self, params: Params, owner: &str, now: Instant) -> Option<String> {
         if owner.is_empty() {
             return None;

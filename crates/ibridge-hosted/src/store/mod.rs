@@ -227,6 +227,23 @@ impl Store {
         self
     }
 
+    /// Whether the service would take one more iCloud account: there is no cap, or the
+    /// accounts that exist are fewer than it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Internal`] when the database cannot be read.
+    pub async fn has_signup_room(&self) -> Result<bool, StoreError> {
+        let Some(cap) = self.signup_cap else {
+            return Ok(true);
+        };
+        let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(internal)?;
+        Ok(usize::try_from(accounts).is_ok_and(|accounts| accounts < cap))
+    }
+
     /// Opens an in-memory store and applies the schema.
     ///
     /// # Errors

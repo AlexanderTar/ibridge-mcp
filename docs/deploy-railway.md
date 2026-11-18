@@ -179,7 +179,7 @@ printf '%s' 'ibridge-fyi' | RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/
 pbpaste | RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable set IBRIDGE_FIREBASE_API_KEY --stdin --project <project id> --environment production --service ibridge --skip-deploys   # copy the key first
 ```
 
-The server refuses to start with half of this group. Do not redeploy yet: step 11 sets the Stripe variables, and billing without identity or `IBRIDGE_CONTACT` (step 4) also stops the server. Keep `IBRIDGE_SIGNUPS=closed` and the allowlist. With billing on, a signed-in person who has not connected an allowlisted iCloud address is told the service is private and is not offered a plan, so everyone who tests must connect an address on the list.
+The server refuses to start with half of this group. Do not redeploy yet: step 11 sets the Stripe variables, and billing without identity or `IBRIDGE_CONTACT` (step 4) also stops the server. Keep `IBRIDGE_SIGNUPS=closed` and the allowlist. With billing on, a signed-in person who has not connected an allowlisted iCloud address is told the service is private and is not offered a plan, so everyone who tests must first link an address on the list: on `/account`, create an API key with that address (this links it; the Subscribe button appears afterwards).
 
 ## 11. Sandbox stage (deployed host, sandbox Stripe keys)
 
@@ -210,7 +210,7 @@ Do this before any live key goes in. It proves the real Sign in with Apple, a Ma
  | RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway variable set IBRIDGE_STRIPE_WEBHOOK_SECRET --stdin --project <project id> --environment production --service ibridge --skip-deploys)
 ```
 
-Set the other four the same way, with `--stdin` and from the env file inside a subshell, never printed (the restricted test key, the two price ids, `managed`). Then deploy and check:
+Set the other four the same way, with `--stdin`, never printed: the restricted test key from the Dashboard (`pbpaste | … --stdin`, copy it first; the env file holds only the full key and must not go on the host), and the two price ids and `managed` from the env file inside a subshell. Then deploy and check:
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway up --project <project id> --environment production --service ibridge --detach
@@ -221,7 +221,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://ibridge.fyi/billing/we
 **Checks.** Use a browser, a real Apple ID whose iCloud address is on the allowlist, and Stripe's test card `4242 4242 4242 4242`. Record each result with the sha and the date:
 
 1. `/account` offers Sign in with Apple. Sign in: Apple posts to `/signin/apple/callback` and you land on `/account`.
-2. Connect Claude.ai (`/authorize`): after the sign-in step the first connect links the iCloud address; with no plan you are sent to checkout.
+2. Link the address, then connect. On `/account`, create an API key with your allowlisted iCloud address; this links it and Subscribe appears. Connect Claude.ai (`/authorize`): with no plan you are asked to choose one and sent to checkout. Without a linked address the closed host shows "service is private" and offers no checkout.
 3. Checkout (Managed Payments): pay with the test card. `/billing/return` returns you to `/account` (or resumes `/authorize`), the status is active and `tools/call` works. A completed Managed Payments Checkout has never been captured, so open the sandbox webhook deliveries, find `checkout.session.completed` and confirm the server answered 2xx.
 4. Portal: `/account` opens the customer portal; switch monthly to yearly. The status stays active and a `customer.subscription.updated` delivery arrives.
 5. Cancel in the portal. The status stays active until the period end, then access turns off.
@@ -264,7 +264,7 @@ None of these has been run. Tick each with the sha and the date when done:
 
 - [ ] Real Sign in with Apple on `https://ibridge.fyi` with the Services ID `fyi.ibridge.mcp`.
 - [ ] The live webhook endpoint exists with the pinned `api_version` and the six events, and its first delivery is answered 2xx.
-- [ ] One live Checkout with a user who is **not** comped, US$1.99 on a real card: `/billing/return` shows an active plan and `tools/call` works. Then cancel from the portal and refund the charge in the Dashboard.
+- [ ] One live Checkout with a user who is **not** comped (the host is closed, so first link an allowlisted address on `/account` by creating an API key), US$1.99 on a real card: `/billing/return` shows an active plan and `tools/call` works. Then cancel from the portal and refund the charge in the Dashboard.
 - [ ] Comp the owner and the test user, so they are never charged. Each must have signed in with Apple once, because comp matches a user row. `ibridge admin comp` takes the Apple email (a private relay address is fine) or the Firebase uid:
 
 ```sh

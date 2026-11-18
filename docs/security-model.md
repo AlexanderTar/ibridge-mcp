@@ -10,6 +10,8 @@ The server needs your iCloud app-specific password to log in to iCloud for you. 
 - It never stores a token. It stores a one-way lookup hash, so it can find the right row when a token arrives.
 - There is no master key and no key file. Nothing in the server's settings or storage can decrypt a stored password.
 
+When Sign in with Apple is on (see [Identity and billing](#identity-and-billing)), the database also holds one row per user: the Firebase user id, Apple's user id, the Apple email (a private relay address is fine), a link to the one iCloud account the user connected, and, with billing on, the Stripe customer and subscription ids, the subscription status and its period end, and a complimentary flag. It never holds Apple's or Firebase's tokens or any card detail.
+
 ## Sealing
 
 When you sign in, the server checks the password with iCloud, then seals one copy per token it issues:
@@ -38,6 +40,17 @@ Sealing protects data at rest. It does not stop the running server from seeing t
 - **Single point of trust in TLS.** The public URL is served by the hosting platform's TLS. The platform and anyone who controls the domain can read traffic. Self-hosting on your own domain moves that trust to you.
 - **Rate limiting depends on client addresses.** Sign-in attempts are limited by client address. Behind a platform proxy the operator must set `IBRIDGE_BEHIND_PROXY=true`, so the server reads the forwarded address. Without it, every visitor shares the proxy's budget. With it on and no proxy in front, a client could choose its own address, so it is off by default (see [self-host.md](self-host.md#behind-a-proxy)).
 
+## Identity and billing
+
+Both are optional and off by default. A self-hosted or local server is never gated and needs none of these settings. Partial groups stop the server at startup (see [self-host.md](self-host.md#identity-and-billing-optional)).
+
+- **Sign in with Apple** goes through Firebase. The server redirects the browser to Apple, receives Apple's form post at `/signin/apple/callback`, exchanges the code, and has Firebase turn the Apple identity into a Firebase ID token. It accepts that token only when it is RS256, signed by a key in Google's published set, has audience `ibridge-fyi` (the Firebase project id), the matching Firebase issuer, and is neither expired nor issued in the future. The Apple `client_secret` is an ES256 JWT signed with the Apple key, made per request. Neither the key nor any token is logged or stored.
+- **The callback is bound to the browser that started it.** Apple posts it cross-site, so the binder cookie `__Host-ibridge_siwa` is `SameSite=None`. A callback with no cookie, the wrong cookie, a replayed or expired state (10 minutes) is refused. Pending sign-ins and pending authorize requests are capped in number, and `/signin/apple` is rate limited by client address.
+- **Delete account** needs a fresh Apple sign-in. The asker's user id travels in the pending sign-in's return target, because the cross-site callback carries no session cookie; the Apple account that signs in must be that user's. The server then cancels the Stripe subscription at once, removes the user's rows and sealed copies, ends the user's sessions, revokes the Apple authorization and deletes the Firebase user. Apple and Firebase come last: a failure there is reported, not retried.
+- **Stripe** holds the card and the tax. The server never sees a card number. It sends the customer to Stripe-hosted Checkout and the customer portal, and learns the result from `POST /billing/webhook`. The webhook accepts a request only with a valid `Stripe-Signature` (HMAC-SHA-256 over the raw body with `IBRIDGE_STRIPE_WEBHOOK_SECRET`) whose timestamp is within five minutes, ignores an event id it has seen, and takes the subscription's status and period end from a fresh API read, not from the event body. `/billing/return` accepts only a Checkout Session that belongs to the signed-in user. Every Stripe request pins `Stripe-Version`.
+- **The access gate** is on `tools/call` only. Without an active plan (or the complimentary flag) a call returns an MCP tool error that links to `/account`; `tools/list` and sign-in still work. `past_due` keeps access. When billing is on, a grant that belongs to no user is denied.
+- **Allowlist and billing do not mix for users with no linked address.** A signed-in user who has not connected an iCloud address yet is told the service is private and is not offered a plan, because nobody should pay before the server knows they may join. Comp such a user by uid with `ibridge admin comp`.
+
 ## Threat model
 
 | Threat | What happens |
@@ -49,8 +62,17 @@ Sealing protects data at rest. It does not stop the running server from seeing t
 | Malicious mail, event or contact text | Reaches Claude marked as untrusted content. A model can still be tricked, so use a read-only connection (an API key or a connection created with read-only scope) where you do not need to send mail. |
 | Password guessing at sign-in | Apple's validation decides; the server also rate-limits attempts per address and per iCloud address. |
 | Hostile operator or compromised server code | Can capture passwords at the two moments above. Self-host, or only connect to an instance whose operator you trust. |
+| Sign-in callback replayed or sent from another browser | Refused: the state is single-use, expires in 10 minutes and must match the binder cookie. |
+| Forged Stripe webhook | Refused: bad signature or a timestamp more than five minutes off. A valid event only triggers a re-read from Stripe. |
 | Someone else's account on a shared instance | Each call builds its own session from its own token. An allowlist limits who can sign in on a private instance. |
 
 ## What the server does not do
 
-It does not store mail, calendars or contacts, send analytics, or contact anything except iCloud and, when a client identifies itself by a metadata URL, that URL (a three-second fetch).
+It does not store mail, calendars or contacts, or send analytics. It contacts only these hosts:
+
+- iCloud (the hosts in `AGENTS.md`), for the user's own mail, calendar and contacts.
+- When a client identifies itself by a metadata URL, that URL (a three-second fetch).
+- When Sign in with Apple is on: `appleid.apple.com` (code exchange, revocation), `identitytoolkit.googleapis.com` (Firebase sign-in and user deletion) and `www.googleapis.com` (Google's signing keys for Firebase tokens).
+- When billing is on: `api.stripe.com`.
+
+It sends no credential to any of them except that service's own: the Apple key signs only Apple requests, and the Stripe key goes only to `api.stripe.com`.

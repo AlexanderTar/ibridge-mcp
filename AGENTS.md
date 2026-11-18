@@ -46,6 +46,12 @@ The live test account lives outside the repo, in `~/.config/ibridge/test-account
 
 Credentials go only to these hosts: `imap.mail.me.com`, `smtp.mail.me.com`, `caldav.icloud.com`, `contacts.icloud.com`, `p*-caldav.icloud.com`, `p*-contacts.icloud.com`. A redirect to any other host drops the credentials and fails.
 
+The hosted server also calls, with their own credentials only: when Sign in with Apple is on, `appleid.apple.com`, `identitytoolkit.googleapis.com` and `www.googleapis.com`; when billing is on, `api.stripe.com`. Add no other outbound host without updating `docs/security-model.md`.
+
+## Fakes and the Stripe sandbox test
+
+Tests never reach Apple, Firebase or Stripe: `identity/fakes.rs` (`FakeApple`, `FakeFirebase`) and `billing/fakes.rs` (`FakeStripe`, built from real payloads in `billing/fixtures/` at the pinned `STRIPE_API_VERSION`) run on loopback. The one exception is the ignored `stripe_sandbox_round_trip` test in `billing/stripe.rs`. It talks to the Stripe sandbox, refuses a non-test key, and reads `IBRIDGE_TEST_STRIPE_SECRET_KEY`, `IBRIDGE_TEST_STRIPE_API_VERSION`, `IBRIDGE_TEST_STRIPE_TAX`, `IBRIDGE_TEST_STRIPE_PRICE_MONTHLY` and `IBRIDGE_TEST_STRIPE_PRICE_YEARLY` from `~/.config/ibridge/stripe-sandbox.env` (outside the repo, mode 0600). Run it with `set -a; . ~/.config/ibridge/stripe-sandbox.env; set +a; cargo nextest run -p ibridge-hosted --run-ignored only -E 'test(stripe_sandbox_round_trip)'`. CI never runs it. Raise `STRIPE_API_VERSION` only after re-recording the fixtures and re-running this test.
+
 ## Platform code
 
 All `cfg(target_os)` code lives under a `platform/` module path.

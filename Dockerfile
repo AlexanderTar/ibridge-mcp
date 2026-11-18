@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 # SPDX-License-Identifier: Apache-2.0
 #
-# The hosted ibridge server. Build: docker build -t ibridge:test .
-# Run:   docker run --rm -p 8080:8080 -v ibridge-data:/data ibridge:test \
+# The hosted ibridge server. Build: docker build -t ibridge:src .
+# Run:   docker run --rm -p 8080:8080 -v ibridge-data:/data ibridge:src \
 #          serve --hosted --http 0.0.0.0:8080 --public-url https://ibridge.example --data-dir /data
 # See docs/self-host.md.
 
@@ -33,9 +33,6 @@ COPY --from=builder /src/target/release/ibridge /usr/local/bin/ibridge
 # 65532 is the image's nonroot user. The volume starts out owned by it.
 COPY --from=builder --chown=65532:65532 /data-seed /data
 USER nonroot
-# The official MCP Registry reads this label to check that the image belongs to the
-# server.json entry of the same name. Keep it equal to `name` in server.json.
-LABEL io.modelcontextprotocol.server.name="io.github.AlexanderTar/ibridge"
 # No VOLUME line: Railway refuses Dockerfiles that declare one ("docker VOLUME
 # ... is not supported, use Railway Volumes"). Mount a volume at /data instead.
 EXPOSE 8080

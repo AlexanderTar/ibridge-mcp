@@ -44,7 +44,7 @@ Deploy a named commit, not a branch. Check out the approved sha in a clean workt
 
 ```sh
 git rev-parse HEAD && git status --short   # the sha you approved, and no output
-docker build -t ibridge:test .             # builds before it is uploaded
+docker build -t ibridge:src .             # builds before it is uploaded
 ```
 
 Write the sha in the deploy notes. `/privacy` tells users each deployment names its exact version, so keep a record.

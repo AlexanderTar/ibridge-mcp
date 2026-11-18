@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ibridge icon options</title>
+<style>
+  :root { color-scheme: light; --text:#0F2538; --muted:#4A5B6B; --line:#DCE3E8; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#F6F8F9; color:var(--text); font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding:40px 48px 8px; }
+  h1 { font-size:32px; letter-spacing:-0.02em; margin:0 0 6px; }
+  header p { color:var(--muted); margin:0; max-width:760px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 640px), 1fr)); gap:24px; padding:24px 48px; }
+  section { background:#fff; border:1px solid var(--line); border-radius:20px; padding:24px; }
+  h2 { font-size:20px; margin:0 0 4px; letter-spacing:-0.01em; }
+  section > p { color:var(--muted); margin:0 0 16px; }
+  .panel { border-radius:14px; padding:16px; margin-top:12px; }
+  .panel.light { background:#FFFFFF; border:1px solid var(--line); }
+  .panel.dark { background:#0E1520; color:#EAF2F5; }
+  .label { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; opacity:.7; margin-bottom:8px; }
+  .row { display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap; }
+  figure { margin:0; display:flex; flex-direction:column; align-items:center; gap:6px; }
+  figcaption { font-size:11px; opacity:.65; }
+  .px { image-rendering:pixelated; width:64px; height:64px; }
+  .lockup { flex-direction:row; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px; }
+  .lockup span { font-size:30px; font-weight:650; letter-spacing:-0.03em; }
+  .lockup figcaption { width:100%; text-align:center; }
+  .tab { margin-top:14px; display:inline-flex; align-items:center; gap:8px; font-size:12px; padding:6px 12px; border-radius:8px 8px 0 0; }
+  .light .tab { background:#EEF1F3; }
+  .dark .tab { background:#1B2633; }
+  .big { padding:8px 48px 48px; }
+  .big h2 { margin:24px 0 12px; }
+  .bigrow { display:flex; gap:24px; flex-wrap:wrap; }
+  .bigrow > div { border-radius:24px; padding:24px; }
+  .bigrow > div { flex:0 1 auto; max-width:100%; }
+  .bigrow img { display:block; width:512px; max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ibridge icon options</h1>
+  <p>Six bridge-and-cloud marks. Each is shown as the bare mark (favicon) at 16 and 32&nbsp;px, the 16&nbsp;px render magnified ×4 to judge its pixels, the 180&nbsp;px touch tile, a wordmark lockup and a browser-tab mock, on light and dark. 512&nbsp;px tiles are further down. Teal, coral and ink are the brand colours; no option uses Apple's white-cloud-on-blue look.</p>
+</header>
+<div class="grid">
+  <section id="a-cloud-deck">
+    <h2>A · Cloud Deck</h2>
+    <p>A cloud outline riding on a bridge deck, carried by a single arch below. Line art; the deck is the accent.</p>
+      <div class="panel light">
+        <div class="label">Light</div>
+        <div class="row">
+          <figure><img src="a-cloud-deck-mark-light.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="a-cloud-deck-mark-light.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="a-cloud-deck-mark-light.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="a-cloud-deck-tile-light.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="a-cloud-deck-mark-light.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="a-cloud-deck-mark-light.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+      <div class="panel dark">
+        <div class="label">Dark</div>
+        <div class="row">
+          <figure><img src="a-cloud-deck-mark-dark.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="a-cloud-deck-mark-dark.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="a-cloud-deck-mark-dark.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="a-cloud-deck-tile-dark.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="a-cloud-deck-mark-dark.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="a-cloud-deck-mark-dark.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+  </section>
+  <section id="b-cloud-arch">
+    <h2>B · Cloud Arch</h2>
+    <p>A solid cloud with an arch cut from its base, so the cloud itself stands like a bridge.</p>
+      <div class="panel light">
+        <div class="label">Light</div>
+        <div class="row">
+          <figure><img src="b-cloud-arch-mark-light.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="b-cloud-arch-mark-light.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="b-cloud-arch-mark-light.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="b-cloud-arch-tile-light.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="b-cloud-arch-mark-light.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="b-cloud-arch-mark-light.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+      <div class="panel dark">
+        <div class="label">Dark</div>
+        <div class="row">
+          <figure><img src="b-cloud-arch-mark-dark.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="b-cloud-arch-mark-dark.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="b-cloud-arch-mark-dark.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="b-cloud-arch-tile-dark.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="b-cloud-arch-mark-dark.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="b-cloud-arch-mark-dark.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+  </section>
+  <section id="c-viaduct">
+    <h2>C · Viaduct</h2>
+    <p>Three bridge arches on piers, the middle one raised, so their tops trace a cloud. One line plus a water line.</p>
+      <div class="panel light">
+        <div class="label">Light</div>
+        <div class="row">
+          <figure><img src="c-viaduct-mark-light.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="c-viaduct-mark-light.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="c-viaduct-mark-light.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="c-viaduct-tile-light.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="c-viaduct-mark-light.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="c-viaduct-mark-light.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+      <div class="panel dark">
+        <div class="label">Dark</div>
+        <div class="row">
+          <figure><img src="c-viaduct-mark-dark.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="c-viaduct-mark-dark.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="c-viaduct-mark-dark.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="c-viaduct-tile-dark.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="c-viaduct-mark-dark.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="c-viaduct-mark-dark.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+  </section>
+  <section id="d-i-pylon">
+    <h2>D · i-Pylon</h2>
+    <p>A lowercase i: the stem is a bridge tower, the dot is a cloud, the cables and deck hang from it.</p>
+      <div class="panel light">
+        <div class="label">Light</div>
+        <div class="row">
+          <figure><img src="d-i-pylon-mark-light.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="d-i-pylon-mark-light.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="d-i-pylon-mark-light.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="d-i-pylon-tile-light.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="d-i-pylon-mark-light.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="d-i-pylon-mark-light.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+      <div class="panel dark">
+        <div class="label">Dark</div>
+        <div class="row">
+          <figure><img src="d-i-pylon-mark-dark.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="d-i-pylon-mark-dark.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="d-i-pylon-mark-dark.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="d-i-pylon-tile-dark.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="d-i-pylon-mark-dark.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="d-i-pylon-mark-dark.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+  </section>
+  <section id="e-suspension">
+    <h2>E · Suspension</h2>
+    <p>A two-tower suspension bridge reaching up into a small cloud. The most literal, illustrative option.</p>
+      <div class="panel light">
+        <div class="label">Light</div>
+        <div class="row">
+          <figure><img src="e-suspension-mark-light.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="e-suspension-mark-light.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="e-suspension-mark-light.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="e-suspension-tile-light.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="e-suspension-mark-light.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="e-suspension-mark-light.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+      <div class="panel dark">
+        <div class="label">Dark</div>
+        <div class="row">
+          <figure><img src="e-suspension-mark-dark.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="e-suspension-mark-dark.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="e-suspension-mark-dark.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="e-suspension-tile-dark.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="e-suspension-mark-dark.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="e-suspension-mark-dark.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+  </section>
+  <section id="f-two-shores">
+    <h2>F · Two Shores</h2>
+    <p>Two clouds joined by one arch span: ibridge connects your iCloud data and your assistant.</p>
+      <div class="panel light">
+        <div class="label">Light</div>
+        <div class="row">
+          <figure><img src="f-two-shores-mark-light.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="f-two-shores-mark-light.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="f-two-shores-mark-light.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="f-two-shores-tile-light.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="f-two-shores-mark-light.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="f-two-shores-mark-light.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+      <div class="panel dark">
+        <div class="label">Dark</div>
+        <div class="row">
+          <figure><img src="f-two-shores-mark-dark.svg" width="16" height="16" alt=""><figcaption>16</figcaption></figure>
+          <figure><canvas class="px" data-src="f-two-shores-mark-dark.svg" width="16" height="16"></canvas><figcaption>16 ×4</figcaption></figure>
+          <figure><img src="f-two-shores-mark-dark.svg" width="32" height="32" alt=""><figcaption>32</figcaption></figure>
+          <figure><img src="f-two-shores-tile-dark.svg" width="180" height="180" alt=""><figcaption>180 tile</figcaption></figure>
+          <figure class="lockup"><img src="f-two-shores-mark-dark.svg" width="40" height="40" alt=""><span>ibridge</span><figcaption>lockup</figcaption></figure>
+        </div>
+        <div class="tab"><img src="f-two-shores-mark-dark.svg" width="16" height="16" alt=""><span>ibridge · iCloud for your AI assistant</span></div>
+      </div>
+  </section>
+</div>
+<div class="big">
+  <h2 id="a-cloud-deck-512">A · Cloud Deck at 512&nbsp;px</h2>
+  <div class="bigrow">
+    <div style="background:#fff;border:1px solid #DCE3E8"><img src="a-cloud-deck-tile-light.svg" width="512" height="512" alt="A · Cloud Deck, light tile"></div>
+    <div style="background:#0E1520"><img src="a-cloud-deck-tile-dark.svg" width="512" height="512" alt="A · Cloud Deck, dark tile"></div>
+  </div>
+  <h2 id="b-cloud-arch-512">B · Cloud Arch at 512&nbsp;px</h2>
+  <div class="bigrow">
+    <div style="background:#fff;border:1px solid #DCE3E8"><img src="b-cloud-arch-tile-light.svg" width="512" height="512" alt="B · Cloud Arch, light tile"></div>
+    <div style="background:#0E1520"><img src="b-cloud-arch-tile-dark.svg" width="512" height="512" alt="B · Cloud Arch, dark tile"></div>
+  </div>
+  <h2 id="c-viaduct-512">C · Viaduct at 512&nbsp;px</h2>
+  <div class="bigrow">
+    <div style="background:#fff;border:1px solid #DCE3E8"><img src="c-viaduct-tile-light.svg" width="512" height="512" alt="C · Viaduct, light tile"></div>
+    <div style="background:#0E1520"><img src="c-viaduct-tile-dark.svg" width="512" height="512" alt="C · Viaduct, dark tile"></div>
+  </div>
+  <h2 id="d-i-pylon-512">D · i-Pylon at 512&nbsp;px</h2>
+  <div class="bigrow">
+    <div style="background:#fff;border:1px solid #DCE3E8"><img src="d-i-pylon-tile-light.svg" width="512" height="512" alt="D · i-Pylon, light tile"></div>
+    <div style="background:#0E1520"><img src="d-i-pylon-tile-dark.svg" width="512" height="512" alt="D · i-Pylon, dark tile"></div>
+  </div>
+  <h2 id="e-suspension-512">E · Suspension at 512&nbsp;px</h2>
+  <div class="bigrow">
+    <div style="background:#fff;border:1px solid #DCE3E8"><img src="e-suspension-tile-light.svg" width="512" height="512" alt="E · Suspension, light tile"></div>
+    <div style="background:#0E1520"><img src="e-suspension-tile-dark.svg" width="512" height="512" alt="E · Suspension, dark tile"></div>
+  </div>
+  <h2 id="f-two-shores-512">F · Two Shores at 512&nbsp;px</h2>
+  <div class="bigrow">
+    <div style="background:#fff;border:1px solid #DCE3E8"><img src="f-two-shores-tile-light.svg" width="512" height="512" alt="F · Two Shores, light tile"></div>
+    <div style="background:#0E1520"><img src="f-two-shores-tile-dark.svg" width="512" height="512" alt="F · Two Shores, dark tile"></div>
+  </div>
+</div>
+<script>
+  // Rasterise each mark at a true 16×16, then show it magnified so its pixels can be judged.
+  for (const cv of document.querySelectorAll("canvas.px")) {
+    const img = new Image();
+    img.onload = () => cv.getContext("2d").drawImage(img, 0, 0, 16, 16);
+    img.src = cv.dataset.src;
+  }
+</script>
+</body>
+</html>

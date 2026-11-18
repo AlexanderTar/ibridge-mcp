@@ -1,0 +1,29 @@
+// Copy box: <div class="copy-box"><code>…</code><button type="button">Copy</button></div>
+// Copies the code text, shows "Copied" for 2 s and announces it to screen readers.
+for (const box of document.querySelectorAll(".copy-box")) {
+  const button = box.querySelector("button");
+  const text = box.querySelector("code").textContent.trim();
+  const status = document.createElement("span");
+  status.className = "visually-hidden";
+  status.setAttribute("role", "status");
+  box.append(status);
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      button.textContent = "Copied";
+      button.dataset.copied = "";
+      status.textContent = "Copied to clipboard";
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(box.querySelector("code"));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      status.textContent = "Selected. Press Command-C or Control-C to copy.";
+    }
+    setTimeout(() => {
+      button.textContent = "Copy";
+      delete button.dataset.copied;
+      status.textContent = "";
+    }, 2000);
+  });
+}

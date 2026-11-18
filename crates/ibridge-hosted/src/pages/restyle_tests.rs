@@ -259,3 +259,19 @@ async fn the_public_pages_spell_the_name_and_link_the_product_site() {
         "the connect steps use the steps component: {landing}"
     );
 }
+
+#[tokio::test]
+async fn the_public_pages_do_not_offer_a_read_only_choice_on_the_connect_page() {
+    let h = harness(Access::MultiTenant).await;
+    let landing = h.get_path("/", IP, None).await.text;
+    assert!(
+        !landing.to_lowercase().contains("read-only"),
+        "the landing page no longer tells people to pick read-only access: {landing}"
+    );
+    let terms = h.get_path("/terms", IP, None).await.text;
+    assert!(
+        terms.contains("unless the connection is read-only"),
+        "the terms do not say the person chose read-only on the connect page: {terms}"
+    );
+    assert!(!terms.contains("unless you chose read-only access"));
+}

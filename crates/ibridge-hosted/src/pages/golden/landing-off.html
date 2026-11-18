@@ -10,13 +10,13 @@
 <ol class="steps">
 <li><p class="step-body">In Claude, open Settings, then Connectors, and add a custom connector. Paste the address above.</p></li>
 <li><p class="step-body">Claude opens a sign-in page here. Enter your primary iCloud address and an <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">app-specific password</a>. Never use your main Apple ID password.</p></li>
-<li><p class="step-body">Pick read-only access if you only want the assistant to look. Approve, and you are connected.</p></li>
+<li><p class="step-body">Approve, and you are connected.</p></li>
 </ol>
 <p>In Claude Code, run <code>claude mcp add --transport http ibridge https://ibridge.example/mcp</code>. Other assistants that support MCP sign-in work the same way. For one that cannot sign in, make a personal API key on your account page.</p>
 <h2 class="h3">What to know first</h2>
 <ul>
 <li>Your app-specific password is stored encrypted under a key that only your connected app holds, so we cannot decrypt it from storage. There is still a risk while you sign in and while a request runs. The <a href="/privacy">privacy policy</a> explains both plainly.</li>
-<li>Mail, calendar and contact text can carry instructions meant for the assistant. Use read-only access when you are exploring.</li>
+<li>Mail, calendar and contact text can carry instructions meant for the assistant.</li>
 <li>When you disconnect, revoke the app-specific password at Apple too.</li>
 </ul>
 <p><a href="/account">Your account</a>: see what is connected, revoke an app or key, make an API key, or delete everything. See also the <a href="/privacy">privacy policy</a> and the <a href="/terms">terms of use</a>.</p>

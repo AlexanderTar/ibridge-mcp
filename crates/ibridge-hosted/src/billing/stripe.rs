@@ -175,6 +175,9 @@ impl Stripe {
             TaxMode::Automatic => {
                 form.push(("managed_payments[enabled]", "false"));
                 form.push(("automatic_tax[enabled]", "true"));
+                // Stripe Tax needs an address, and a customer made here has none: let
+                // Checkout save the address it collects (the sandbox refuses without it).
+                form.push(("customer_update[address]", "auto"));
             }
         }
         let session: Hosted = self
@@ -543,6 +546,11 @@ mod tests {
         let sent = &fake.requests_to("POST", "/v1/checkout/sessions")[0];
         assert_eq!(sent.field("automatic_tax[enabled]"), Some("true"));
         assert_eq!(
+            sent.field("customer_update[address]"),
+            Some("auto"),
+            "Stripe Tax needs an address, and a new customer has none: Checkout saves the one it collects"
+        );
+        assert_eq!(
             sent.field("managed_payments[enabled]"),
             Some("false"),
             "Managed Payments is on by default on the account, so automatic mode turns it off"
@@ -665,5 +673,223 @@ mod tests {
                 .expect_err("outage"),
             BillingError::Refused(503)
         );
+    }
+}
+
+/// A round trip against the iBridge Stripe sandbox, run by hand or by the deploy runbook.
+///
+/// It proves only what an API-only test can: the pinned API version is accepted, a customer
+/// can be made, a Checkout Session can be made for each price in the configured tax mode
+/// and read back, a portal session can be made, and a real subscription (made on a test
+/// clock with `pm_card_visa`, outside Checkout) parses, with its period end read from its
+/// item. It does not prove paying through Checkout under Managed Payments, switching plans in
+/// the portal, cancelling a Managed Payments subscription, or webhooks: those are the
+/// deploy runbook's sandbox stage.
+#[cfg(test)]
+mod sandbox {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use http::Method;
+    use secrecy::SecretString;
+    use serde_json::Value;
+
+    use super::{STRIPE_API_VERSION, Stripe};
+    use crate::billing::{BillingConfig, Plan, TaxMode};
+    use crate::store::{User, UserId};
+
+    fn setting(name: &str) -> String {
+        std::env::var(name).unwrap_or_else(|_| {
+            panic!("{name} is not set; load ~/.config/ibridge/stripe-sandbox.env first")
+        })
+    }
+
+    async fn raw(stripe: &Stripe, method: Method, path: &str, form: &[(&str, &str)]) -> Value {
+        stripe
+            .call(method.clone(), path, form, None)
+            .await
+            .unwrap_or_else(|error| panic!("{method} {path}: {error}"))
+    }
+
+    /// The Checkout Session id in a hosted page URL, `https://checkout.stripe.com/c/pay/<id>#...`.
+    fn session_id(url: &str) -> &str {
+        let tail = url.rsplit("/pay/").next().unwrap_or_default();
+        tail.split(['#', '?']).next().unwrap_or_default()
+    }
+
+    /// The settings the test reads, refusing anything but a test-mode key.
+    fn config() -> BillingConfig {
+        let key = setting("IBRIDGE_TEST_STRIPE_SECRET_KEY");
+        assert!(
+            key.starts_with("sk_test_") || key.starts_with("rk_test_"),
+            "the sandbox round trip only runs with a test-mode key"
+        );
+        assert_eq!(
+            setting("IBRIDGE_TEST_STRIPE_API_VERSION"),
+            STRIPE_API_VERSION,
+            "the sandbox env file and the pinned version agree"
+        );
+        let tax = match setting("IBRIDGE_TEST_STRIPE_TAX").as_str() {
+            "managed" => TaxMode::Managed,
+            "automatic" => TaxMode::Automatic,
+            other => panic!("IBRIDGE_TEST_STRIPE_TAX is {other:?}, not managed or automatic"),
+        };
+        BillingConfig {
+            secret_key: SecretString::from(key),
+            webhook_secret: SecretString::from("whsec_unused_by_this_test"),
+            price_monthly: setting("IBRIDGE_TEST_STRIPE_PRICE_MONTHLY"),
+            price_yearly: setting("IBRIDGE_TEST_STRIPE_PRICE_YEARLY"),
+            tax,
+        }
+    }
+
+    fn unix_now() -> i64 {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_secs();
+        i64::try_from(secs).expect("a time that fits")
+    }
+
+    /// A Checkout Session for each price in the configured tax mode, read back.
+    async fn check_checkout(stripe: &Stripe, user: &User, customer: &str) {
+        for plan in [Plan::Monthly, Plan::Yearly] {
+            let page = stripe
+                .checkout(
+                    user,
+                    plan,
+                    "https://ibridge.fyi/billing/return?session_id={CHECKOUT_SESSION_ID}",
+                    "https://ibridge.fyi/account",
+                )
+                .await
+                .unwrap_or_else(|error| panic!("checkout {plan:?}: {error}"));
+            assert!(page.starts_with("https://checkout.stripe.com/"), "{plan:?}");
+            let session = stripe
+                .checkout_session(session_id(&page))
+                .await
+                .expect("the session reads back");
+            assert_eq!(session.customer.as_deref(), Some(customer));
+            assert_eq!(
+                session.client_reference_id.as_deref(),
+                Some(user.id.get().to_string().as_str())
+            );
+            assert_eq!(session.subscription, None, "nobody has paid");
+        }
+    }
+
+    /// A real subscription, made outside Checkout on a test clock with a test card, then
+    /// parsed and cancelled. A test clock takes its customers with it when deleted.
+    async fn check_subscription(stripe: &Stripe, monthly_price: &str) {
+        let now = unix_now();
+        let id_of = |reply: &Value| reply["id"].as_str().expect("an id").to_owned();
+        let clock = id_of(
+            &raw(
+                stripe,
+                Method::POST,
+                "/v1/test_helpers/test_clocks",
+                &[
+                    ("frozen_time", &now.to_string()),
+                    ("name", "ibridge round trip"),
+                ],
+            )
+            .await,
+        );
+        let customer = id_of(
+            &raw(
+                stripe,
+                Method::POST,
+                "/v1/customers",
+                &[
+                    ("test_clock", &clock),
+                    ("payment_method", "pm_card_visa"),
+                    ("invoice_settings[default_payment_method]", "pm_card_visa"),
+                ],
+            )
+            .await,
+        );
+        let made = id_of(
+            &raw(
+                stripe,
+                Method::POST,
+                "/v1/subscriptions",
+                &[("customer", &customer), ("items[0][price]", monthly_price)],
+            )
+            .await,
+        );
+
+        let subscription = stripe.subscription(&made).await.expect("subscription");
+        assert_eq!(subscription.id, made);
+        assert_eq!(subscription.customer, customer);
+        assert_eq!(subscription.status, "active");
+        let period_end = subscription
+            .period_end
+            .expect("the item carries the period end");
+        assert!(
+            period_end > now && period_end < now + 32 * 24 * 60 * 60,
+            "a monthly period ends within a month: {period_end}"
+        );
+
+        // Cancelling now is what account deletion does.
+        stripe.cancel_now(&made).await.expect("cancel now");
+        assert_eq!(
+            stripe
+                .subscription(&made)
+                .await
+                .expect("subscription")
+                .status,
+            "canceled"
+        );
+        raw(
+            stripe,
+            Method::DELETE,
+            &format!("/v1/test_helpers/test_clocks/{clock}"),
+            &[],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "talks to the Stripe sandbox; run with the env from ~/.config/ibridge/stripe-sandbox.env"]
+    async fn stripe_sandbox_round_trip() {
+        let config = config();
+        let stripe = Stripe::new(&config).expect("a client for api.stripe.com");
+        let now = unix_now();
+        let mut user = User {
+            id: UserId::from_raw(now),
+            firebase_uid: format!("sandbox-{now}"),
+            apple_sub: "sandbox".to_owned(),
+            email: Some(format!("sandbox-round-trip-{now}@example.com")),
+            account: None,
+            stripe_customer: None,
+            stripe_subscription: None,
+            status: None,
+            period_end: None,
+            complimentary: false,
+        };
+
+        // A customer, made once for the user.
+        let customer = stripe.ensure_customer(&user).await.expect("customer");
+        assert!(customer.starts_with("cus_"), "{customer}");
+        user.stripe_customer = Some(customer.clone());
+
+        check_checkout(&stripe, &user, &customer).await;
+
+        // A portal session (the sandbox has a default portal configuration).
+        let portal = stripe
+            .portal(&customer, "https://ibridge.fyi/account")
+            .await
+            .expect("portal");
+        assert!(
+            portal.starts_with("https://billing.stripe.com/"),
+            "{portal}"
+        );
+
+        check_subscription(&stripe, &config.price_monthly).await;
+        raw(
+            &stripe,
+            Method::DELETE,
+            &format!("/v1/customers/{customer}"),
+            &[],
+        )
+        .await;
     }
 }

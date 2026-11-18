@@ -78,7 +78,7 @@ enum Command {
 
 #[cfg(feature = "hosted")]
 #[derive(Debug, Subcommand)]
-enum AdminCommand {
+pub(crate) enum AdminCommand {
     /// Blocks an account: its tokens, API keys and sign-in stop working. Nothing is deleted.
     Suspend {
         /// The account's iCloud address, in any letter case.
@@ -88,6 +88,16 @@ enum AdminCommand {
     Delete {
         /// The account's iCloud address, in any letter case.
         apple_id: String,
+    },
+    /// Gives a user the plan for free, so the owner and test users are never charged.
+    Comp {
+        /// The user's Apple email (a private relay address is fine) or Firebase uid.
+        user: String,
+    },
+    /// Takes a user's free access away. A subscription they pay for still counts.
+    Uncomp {
+        /// The user's Apple email or Firebase uid.
+        user: String,
     },
 }
 
@@ -132,17 +142,7 @@ pub(crate) async fn run() -> anyhow::Result<()> {
             DaemonAction::Status => crate::daemon::run_status(),
         },
         #[cfg(feature = "hosted")]
-        Command::Admin { data_dir, action } => {
-            let (action, apple_id) = match action {
-                AdminCommand::Suspend { apple_id } => {
-                    (ibridge_hosted::AdminAction::Suspend, apple_id)
-                }
-                AdminCommand::Delete { apple_id } => {
-                    (ibridge_hosted::AdminAction::Delete, apple_id)
-                }
-            };
-            crate::hosted::admin(&data_dir, action, &apple_id).await
-        }
+        Command::Admin { data_dir, action } => crate::hosted::admin(&data_dir, action).await,
         Command::Serve {
             stdio,
             #[cfg(feature = "http")]
@@ -231,6 +231,30 @@ mod tests {
         assert!(
             Cli::try_parse_from(["ibridge", "admin", "suspend"]).is_err(),
             "an address is required"
+        );
+    }
+
+    #[test]
+    fn admin_comp_takes_email_or_uid() {
+        for target in ["ada@privaterelay.appleid.com", "firebase-uid-123"] {
+            for (word, comp) in [("comp", true), ("uncomp", false)] {
+                let cli =
+                    Cli::try_parse_from(["ibridge", "admin", word, target, "--data-dir", "/tmp/x"])
+                        .expect("parses");
+                let Command::Admin { data_dir, action } = cli.command else {
+                    panic!("not the admin command");
+                };
+                assert_eq!(data_dir, std::path::Path::new("/tmp/x"));
+                match action {
+                    AdminCommand::Comp { user } if comp => assert_eq!(user, target),
+                    AdminCommand::Uncomp { user } if !comp => assert_eq!(user, target),
+                    other => panic!("{word} {target} parsed as {other:?}"),
+                }
+            }
+        }
+        assert!(
+            Cli::try_parse_from(["ibridge", "admin", "comp"]).is_err(),
+            "a user is required"
         );
     }
 }

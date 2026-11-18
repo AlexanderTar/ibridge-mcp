@@ -256,6 +256,14 @@ async fn handle(
             axum::Json(object).into_response()
         }
         ("POST", ["v1", "checkout", "sessions"]) => {
+            // The sandbox refuses Stripe Tax for a customer with no address unless Checkout
+            // may save the address it collects: "Automatic tax calculation in Checkout
+            // requires a valid address on the Customer ...". The fake's customers have none.
+            if form.get("automatic_tax[enabled]").map(String::as_str) == Some("true")
+                && form.get("customer_update[address]").map(String::as_str) != Some("auto")
+            {
+                return stripe_error(StatusCode::BAD_REQUEST, "invalid_request_error");
+            }
             let managed = form.get("managed_payments[enabled]").map(String::as_str) == Some("true");
             let mut object = fixture(if managed {
                 SESSION_MANAGED

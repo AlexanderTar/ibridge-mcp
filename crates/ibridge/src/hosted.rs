@@ -66,27 +66,56 @@ pub(crate) async fn run(options: HostedOptions) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Suspends or deletes the account `apple_id` names, in the database under `data_dir`.
+/// Runs an operator command against the database under `data_dir`.
 ///
 /// # Errors
 ///
-/// Returns an error when the address is not an iCloud address, no account has it, or the
+/// Returns an error when an address is not an iCloud address, nothing matches, or the
 /// database cannot be opened or updated.
 pub(crate) async fn admin(
     data_dir: &std::path::Path,
-    action: ibridge_hosted::AdminAction,
-    apple_id: &str,
+    command: crate::cli::AdminCommand,
 ) -> anyhow::Result<()> {
-    let address = AppleId::try_from(apple_id.trim()).context("not an iCloud address")?;
-    let matched = ibridge_hosted::admin(data_dir, action, &address).await?;
-    anyhow::ensure!(matched > 0, "no account has the address {address}");
-    let text = match action {
-        ibridge_hosted::AdminAction::Suspend => format!(
-            "Suspended {matched} account(s) for {address}. The running server refuses their tokens from the next call and closes their idle sessions within minutes."
-        ),
-        _ => format!(
-            "Deleted {matched} account(s) for {address}, with every sealed copy of their password."
-        ),
+    use crate::cli::AdminCommand;
+    use ibridge_hosted::AdminAction;
+
+    let text = match &command {
+        AdminCommand::Suspend { apple_id } | AdminCommand::Delete { apple_id } => {
+            let address = AppleId::try_from(apple_id.trim()).context("not an iCloud address")?;
+            let suspend = matches!(command, AdminCommand::Suspend { .. });
+            let action = if suspend {
+                AdminAction::Suspend(&address)
+            } else {
+                AdminAction::Delete(&address)
+            };
+            let matched = ibridge_hosted::admin(data_dir, action).await?;
+            anyhow::ensure!(matched > 0, "no account has the address {address}");
+            if suspend {
+                format!(
+                    "Suspended {matched} account(s) for {address}. The running server refuses their tokens from the next call and closes their idle sessions within minutes."
+                )
+            } else {
+                format!(
+                    "Deleted {matched} account(s) for {address}, with every sealed copy of their password."
+                )
+            }
+        }
+        AdminCommand::Comp { user } | AdminCommand::Uncomp { user } => {
+            let user = user.trim();
+            let comp = matches!(command, AdminCommand::Comp { .. });
+            let action = if comp {
+                AdminAction::Comp(user)
+            } else {
+                AdminAction::Uncomp(user)
+            };
+            let matched = ibridge_hosted::admin(data_dir, action).await?;
+            anyhow::ensure!(matched > 0, "no user has the email or uid {user}");
+            if comp {
+                format!("{user} now has the plan for free.")
+            } else {
+                format!("{user} no longer has free access.")
+            }
+        }
     };
     writeln!(std::io::stdout().lock(), "{text}")?;
     Ok(())

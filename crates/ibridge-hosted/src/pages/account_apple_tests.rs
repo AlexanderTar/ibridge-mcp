@@ -472,3 +472,77 @@ async fn account_page_shows_when_the_paid_period_ends() {
     let page = rig.get("/account", Some(&rig.browser(&other))).await;
     assert!(!page.text.contains("period ends"), "{}", page.text);
 }
+
+#[tokio::test]
+async fn mint_key_for_a_new_address_needs_a_plan_when_billing_is_on() {
+    let rig = Setup::default().billing().cap(1).build().await;
+    let user = rig.user("uid-1", Some("ada@example.com")).await;
+    let browser = rig.browser(&user);
+    let key = [("name", "laptop"), ("apple_id", ADA), ("password", ASP_ALL)];
+
+    let refused = rig.post("/account/keys", &browser, &key).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    assert!(
+        !refused.text.contains("API key: laptop") && !refused.text.contains("ibr_"),
+        "no key is shown: {}",
+        refused.text
+    );
+    assert!(rig.reload(&user).await.account.is_none(), "nothing linked");
+    assert_eq!(count(&rig, "SELECT COUNT(*) FROM accounts").await, 0);
+    assert_eq!(count(&rig, "SELECT COUNT(*) FROM grants").await, 0);
+    assert!(
+        rig.harness.store.has_signup_room().await.expect("room"),
+        "the refused key took no sign-up slot"
+    );
+
+    // A plan, or free access, opens it. The slot is then taken.
+    rig.subscribe(&user, "active").await;
+    let made = rig.post("/account/keys", &browser, &key).await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.text);
+    assert_eq!(count(&rig, "SELECT COUNT(*) FROM accounts").await, 1);
+}
+
+#[tokio::test]
+async fn a_comped_user_can_link_an_address_with_a_key_before_any_plan() {
+    // The runbook's closed-launch owner path: comp first (`ibridge admin comp`), then the key.
+    let rig = Setup::default().billing().only(&[ADA]).build().await;
+    let user = rig.user("uid-1", Some("ada@example.com")).await;
+    let browser = rig.browser(&user);
+    rig.harness
+        .store
+        .set_complimentary(user.id, true)
+        .await
+        .expect("comp");
+    let made = rig
+        .post(
+            "/account/keys",
+            &browser,
+            &[("name", "laptop"), ("apple_id", ADA), ("password", ASP_ALL)],
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.text);
+    assert_eq!(
+        rig.reload(&user)
+            .await
+            .account
+            .as_ref()
+            .map(ibridge_core::AppleId::as_str),
+        Some(ADA)
+    );
+}
+
+#[tokio::test]
+async fn a_linked_user_without_a_plan_can_still_make_a_key_for_their_address() {
+    // No new address is linked, so no slot is taken and no plan is needed.
+    let rig = Rig::billing().await;
+    let user = rig.linked_user("uid-1", "ada@example.com", ADA).await;
+    let browser = rig.browser(&user);
+    let made = rig
+        .post(
+            "/account/keys",
+            &browser,
+            &[("name", "laptop"), ("password", ASP_ALL)],
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.text);
+}

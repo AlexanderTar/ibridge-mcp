@@ -364,6 +364,23 @@ async fn mint(
         Ok(who) => who,
         Err(page) => return *page,
     };
+    // A key for a new address links it and takes a sign-up slot, so with billing on it needs
+    // access first, as /authorize does. A key for the already linked address takes no slot.
+    if shared.billing.is_some()
+        && who.address.is_none()
+        && who
+            .user
+            .as_ref()
+            .is_some_and(|user| access(user) == Access::Denied)
+    {
+        return dashboard(
+            &shared,
+            &session,
+            StatusCode::FORBIDDEN,
+            Some("Choose a plan before you connect an iCloud address."),
+        )
+        .await;
+    }
     let address = match address_to_use(&shared, who.address, form.apple_id.as_deref()) {
         Ok(address) => address,
         Err(refusal) => {

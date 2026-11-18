@@ -60,3 +60,8 @@ body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100
 .grants li + li { margin-top: 0; }
 .grants .hint { display: block; margin: 0; }
 .grants form .btn { margin-top: var(--space-3); }
+
+/* ---------- Connect steps (landing) ---------- */
+.panel .steps { padding: 0; margin: var(--space-4) 0; }
+.panel .steps > li + li { margin-top: 0; }
+.steps .step-body { margin: 0; padding-top: 8px; color: var(--color-text); font-size: var(--text-body); }

@@ -222,3 +222,41 @@ async fn the_apple_sign_in_and_plan_pages_use_the_components() {
         dashboard.text
     );
 }
+
+#[tokio::test]
+async fn the_public_pages_spell_the_name_and_link_the_product_site() {
+    let h = harness(Access::MultiTenant).await;
+    for (path, title) in [
+        ("/", "<title>iBridge: iCloud for AI assistants</title>"),
+        ("/privacy", "<title>Privacy policy</title>"),
+        ("/terms", "<title>Terms of use</title>"),
+    ] {
+        let page = h.get_path(path, IP, None).await;
+        assert_eq!(page.status, StatusCode::OK, "{path}");
+        assert!(page.text.contains(title), "{path} title: {}", page.text);
+        // The name is spelled iBridge wherever a person reads it. Lowercase stays in the
+        // `ibridge` command and in addresses such as https://ibridge.example/mcp.
+        let text = visible_text(&page.text)
+            .replace("claude mcp add --transport http ibridge", "")
+            .replace("ibridge.example", "")
+            .replace("ibridge.fyi", "");
+        assert!(
+            !text.contains("ibridge"),
+            "{path} spells the name wrong: {text}"
+        );
+        assert!(text.contains("iBridge"), "{path} names the product");
+        assert!(
+            page.text.contains(r#"<h1 class="h1">"#) && page.text.contains(r#"<h2 class="h3">"#),
+            "{path} uses the design system's type roles"
+        );
+    }
+    let landing = h.get_path("/", IP, None).await.text;
+    assert!(
+        landing.contains(r#"<a href="https://ibridge.fyi">ibridge.fyi</a>"#),
+        "the landing page links the product site: {landing}"
+    );
+    assert!(
+        landing.contains(r#"<ol class="steps">"#),
+        "the connect steps use the steps component: {landing}"
+    );
+}

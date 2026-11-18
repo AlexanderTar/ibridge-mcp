@@ -400,3 +400,46 @@ async fn e2e_initialize_reports_ibridge_and_crate_version() {
         "server version is the crate version"
     );
 }
+
+/// The model-visible text of a result: every text block, in order.
+fn text_blocks(result: &CallToolResult) -> Vec<String> {
+    result
+        .content
+        .iter()
+        .filter_map(|block| block.as_text().map(|text| text.text.clone()))
+        .collect()
+}
+
+/// Claude reads the text content, not `structuredContent`: it must name the sender, the subject
+/// and the body, and end with the same JSON the structured content holds.
+#[tokio::test]
+async fn mail_text_content_carries_the_sender_subject_and_body() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let found = call(&client, "mail_search", serde_json::json!({})).await;
+    let found_text = text_blocks(&found).join("\n");
+    for wanted in ["bob@example.com", "Picnic"] {
+        assert!(
+            found_text.contains(wanted),
+            "{wanted} in search: {found_text}"
+        );
+    }
+    let id = encode(&message_id());
+    let fetched = call(&client, "mail_get_message", serde_json::json!({ "id": id })).await;
+    let fetched_text = text_blocks(&fetched).join("\n");
+    for wanted in ["bob@example.com", "Picnic", "Bring napkins."] {
+        assert!(
+            fetched_text.contains(wanted),
+            "{wanted} in message: {fetched_text}"
+        );
+    }
+    for result in [&found, &fetched] {
+        let blocks = text_blocks(result);
+        let json: serde_json::Value =
+            serde_json::from_str(blocks.last().expect("a text block")).expect("the JSON block");
+        assert_eq!(Some(&json), result.structured_content.as_ref());
+    }
+}

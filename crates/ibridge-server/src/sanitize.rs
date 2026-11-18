@@ -18,7 +18,7 @@ const fn is_hidden(c: char) -> bool {
 
 /// Returns `text` without hidden characters. Ordinary text, newlines and tabs are kept.
 #[must_use]
-pub fn strip_hidden(text: &str) -> String {
+pub(crate) fn strip_hidden(text: &str) -> String {
     text.chars().filter(|c| !is_hidden(*c)).collect()
 }
 

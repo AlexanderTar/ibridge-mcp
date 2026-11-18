@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use ibridge_core::AppleId;
 
+use crate::identity::IdentityConfig;
 use crate::limits::Guards;
 use crate::oauth::{Access, ConfigError, OAuthConfig};
 
@@ -54,6 +55,8 @@ pub struct HostedConfig {
     pub signup_cap: Option<usize>,
     /// Call, size and time limits.
     pub guards: Guards,
+    /// Sign in with Apple and Firebase, when their settings are present.
+    pub identity: Option<IdentityConfig>,
 }
 
 /// Why the hosted server refuses to start.
@@ -84,6 +87,9 @@ pub enum StartError {
     /// The public URL cannot be an OAuth issuer.
     #[error(transparent)]
     PublicUrl(#[from] ConfigError),
+    /// The Sign in with Apple and Firebase settings are incomplete or unusable.
+    #[error(transparent)]
+    Identity(ConfigError),
 }
 
 impl HostedConfig {
@@ -134,12 +140,14 @@ impl HostedConfig {
             }
             oauth = oauth.contact(contact);
         }
+        let identity = IdentityConfig::from_env(&env).map_err(StartError::Identity)?;
         Ok(Self {
             addr,
             data_dir,
             oauth,
             signup_cap,
             guards: Guards::default(),
+            identity,
         })
     }
 }
@@ -182,6 +190,11 @@ mod tests {
     use super::{
         ALLOWED_APPLE_IDS, BEHIND_PROXY, CONTACT, HostedConfig, HostedOptions, StartError,
     };
+    use crate::identity::{
+        APPLE_KEY_ID, APPLE_PRIVATE_KEY, APPLE_SERVICES_ID, APPLE_TEAM_ID, FIREBASE_API_KEY,
+        FIREBASE_PROJECT_ID,
+    };
+    use crate::oauth::ConfigError;
 
     #[derive(Clone, Copy)]
     enum Mode {
@@ -372,5 +385,51 @@ mod tests {
             !config.oauth.is_behind_proxy(),
             "nobody opts in by accident"
         );
+    }
+
+    #[test]
+    fn absent_identity_settings_leave_hosted_mode_unchanged() {
+        let config = resolve(Mode::Public, &[]).expect("starts");
+        assert!(config.identity.is_none(), "no settings, no Apple sign-in");
+    }
+
+    #[test]
+    fn partial_identity_settings_fail_startup_naming_the_missing_ones() {
+        let error = resolve(
+            Mode::Public,
+            &[
+                (APPLE_SERVICES_ID, "fyi.ibridge.signin"),
+                (FIREBASE_API_KEY, "secret-value"),
+            ],
+        )
+        .expect_err("a partial group does not start");
+        let StartError::Identity(ConfigError::IdentityIncomplete { missing }) = &error else {
+            panic!("expected an incomplete identity group, got {error:?}");
+        };
+        assert!(missing.contains(&APPLE_TEAM_ID), "{missing:?}");
+        let text = error.to_string();
+        assert!(
+            text.contains(APPLE_TEAM_ID) && !text.contains("secret-value"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_full_identity_group_is_carried_into_the_config() {
+        let pem = crate::identity::jwt::test_key::es256_pem();
+        let config = resolve(
+            Mode::Public,
+            &[
+                (APPLE_SERVICES_ID, "fyi.ibridge.signin"),
+                (APPLE_TEAM_ID, "TEAM123456"),
+                (APPLE_KEY_ID, "KEY1234567"),
+                (APPLE_PRIVATE_KEY, pem.as_str()),
+                (FIREBASE_PROJECT_ID, "ibridge-fyi"),
+                (FIREBASE_API_KEY, "key"),
+            ],
+        )
+        .expect("starts");
+        let identity = config.identity.expect("identity is on");
+        assert_eq!(identity.firebase_project_id, "ibridge-fyi");
     }
 }

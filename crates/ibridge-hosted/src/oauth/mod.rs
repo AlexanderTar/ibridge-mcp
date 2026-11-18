@@ -64,6 +64,18 @@ pub enum ConfigError {
     /// Not a URL, not https, or it carries a path, query or fragment.
     #[error("the public URL must be an https origin such as https://ibridge.fyi")]
     PublicUrl,
+    /// Some of the Sign in with Apple and Firebase settings are set, but not all.
+    #[error(
+        "set all of the Apple and Firebase sign-in settings or none of them; missing: {}",
+        missing.join(", ")
+    )]
+    IdentityIncomplete {
+        /// The names of the settings that are not set.
+        missing: Vec<&'static str>,
+    },
+    /// The Apple private key is not a P-256 key in PEM form.
+    #[error("the Apple private key must be a P-256 key in PEM form")]
+    IdentityKey,
 }
 
 impl OAuthConfig {

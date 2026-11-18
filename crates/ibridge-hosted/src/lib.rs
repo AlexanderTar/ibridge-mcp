@@ -10,6 +10,7 @@ mod config;
 mod e2e;
 mod health;
 mod icloud;
+pub mod identity;
 #[cfg(test)]
 mod integration;
 mod limits;

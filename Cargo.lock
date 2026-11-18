@@ -1955,6 +1955,7 @@ dependencies = [
  "ibridge-mail",
  "ibridge-server",
  "ibridge-testkit",
+ "ring",
  "rmcp",
  "secrecy",
  "serde",

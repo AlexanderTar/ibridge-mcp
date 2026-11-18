@@ -155,7 +155,10 @@ async fn the_root_favicons_are_a_square_tile_in_every_size() {
         "a full-bleed rect: {svg}"
     );
     for forbidden in ["rx=", "@media", "<style", "stroke=\"#D5E3E6\""] {
-        assert!(!svg.contains(forbidden), "no {forbidden} in the tile: {svg}");
+        assert!(
+            !svg.contains(forbidden),
+            "no {forbidden} in the tile: {svg}"
+        );
     }
 
     let png = h.get_path(FAVICON_PNG, IP, None).await.bytes;

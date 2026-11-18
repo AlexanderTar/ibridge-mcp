@@ -14,8 +14,8 @@ use ibridge_server::http::{base_config, mcp_service};
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
-    Icon, ListToolsResult, PaginatedRequestParams, ServerConfig,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData, Icon,
+    ListToolsResult, PaginatedRequestParams, ServerConfig,
 };
 use rmcp::service::RequestContext;
 

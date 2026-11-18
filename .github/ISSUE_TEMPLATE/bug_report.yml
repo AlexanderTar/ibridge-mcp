@@ -1,0 +1,38 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include an app-specific password, a token or message contents. For a security problem, use the private advisory link on the issue chooser instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: iBridge version
+      description: The output of `ibridge --version`, or "hosted connector".
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and MCP client
+      placeholder: macOS 15, Claude Code
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output of `ibridge doctor` or logs
+      render: text

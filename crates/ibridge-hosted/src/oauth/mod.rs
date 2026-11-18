@@ -31,6 +31,7 @@ use axum::http::request::Parts;
 use ibridge_core::AppleId;
 use url::Url;
 
+use crate::billing::BillingConfig;
 use crate::identity::{Identity, IdentityConfig};
 use crate::limits::{Limiter, SignInLimits};
 use crate::store::{Store, StoreError};
@@ -58,6 +59,7 @@ pub struct OAuthConfig {
     behind_proxy: bool,
     contact: Option<String>,
     identity: Option<IdentityConfig>,
+    billing: Option<BillingConfig>,
 }
 
 /// The public URL cannot be used as an OAuth issuer.
@@ -79,6 +81,18 @@ pub enum ConfigError {
     /// The Apple private key is not a P-256 key in PEM form.
     #[error("the Apple private key must be a P-256 key in PEM form")]
     IdentityKey,
+    /// Some of the Stripe settings are set, but not all four required ones.
+    #[error(
+        "set all of the Stripe billing settings or none of them; missing: {}",
+        missing.join(", ")
+    )]
+    BillingIncomplete {
+        /// The names of the settings that are not set.
+        missing: Vec<&'static str>,
+    },
+    /// `IBRIDGE_STRIPE_TAX` is neither `managed` nor `automatic`.
+    #[error("IBRIDGE_STRIPE_TAX must be managed or automatic")]
+    BadStripeTax,
 }
 
 impl OAuthConfig {
@@ -114,6 +128,7 @@ impl OAuthConfig {
             behind_proxy: false,
             contact: None,
             identity: None,
+            billing: None,
         })
     }
 
@@ -142,6 +157,13 @@ impl OAuthConfig {
     #[must_use]
     pub fn identity(mut self, identity: IdentityConfig) -> Self {
         self.identity = Some(identity);
+        self
+    }
+
+    /// Turns on paid plans through Stripe. Billing needs Sign in with Apple as well.
+    #[must_use]
+    pub fn billing(mut self, billing: BillingConfig) -> Self {
+        self.billing = Some(billing);
         self
     }
 

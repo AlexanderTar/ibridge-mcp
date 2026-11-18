@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use ibridge_core::AppleId;
 
+use crate::billing::BillingConfig;
 use crate::identity::IdentityConfig;
 use crate::limits::Guards;
 use crate::oauth::{Access, ConfigError, OAuthConfig};
@@ -57,6 +58,8 @@ pub struct HostedConfig {
     pub guards: Guards,
     /// Sign in with Apple and Firebase, when their settings are present.
     pub identity: Option<IdentityConfig>,
+    /// Stripe plans, when their settings are present.
+    pub billing: Option<BillingConfig>,
 }
 
 /// Why the hosted server refuses to start.
@@ -90,6 +93,15 @@ pub enum StartError {
     /// The Sign in with Apple and Firebase settings are incomplete or unusable.
     #[error(transparent)]
     Identity(ConfigError),
+    /// The Stripe settings are incomplete or unusable.
+    #[error(transparent)]
+    Billing(ConfigError),
+    /// Stripe billing is set but Sign in with Apple is not: a plan needs a user to belong to.
+    #[error("Stripe billing needs the Apple and Firebase sign-in settings too")]
+    BillingNeedsIdentity,
+    /// Stripe billing is set but `IBRIDGE_CONTACT` is not: the terms must name a contact.
+    #[error("Stripe billing needs {CONTACT}, the address the subscription terms give")]
+    BillingNeedsContact,
 }
 
 impl HostedConfig {
@@ -141,6 +153,15 @@ impl HostedConfig {
             oauth = oauth.contact(contact);
         }
         let identity = IdentityConfig::from_env(&env).map_err(StartError::Identity)?;
+        let billing = BillingConfig::from_env(&env).map_err(StartError::Billing)?;
+        if billing.is_some() {
+            if identity.is_none() {
+                return Err(StartError::BillingNeedsIdentity);
+            }
+            if oauth.contact_address().is_none() {
+                return Err(StartError::BillingNeedsContact);
+            }
+        }
         Ok(Self {
             addr,
             data_dir,
@@ -148,6 +169,7 @@ impl HostedConfig {
             signup_cap,
             guards: Guards::default(),
             identity,
+            billing,
         })
     }
 }
@@ -189,6 +211,9 @@ mod tests {
 
     use super::{
         ALLOWED_APPLE_IDS, BEHIND_PROXY, CONTACT, HostedConfig, HostedOptions, StartError,
+    };
+    use crate::billing::{
+        STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
     };
     use crate::identity::{
         APPLE_KEY_ID, APPLE_PRIVATE_KEY, APPLE_SERVICES_ID, APPLE_TEAM_ID, FIREBASE_API_KEY,
@@ -431,5 +456,93 @@ mod tests {
         .expect("starts");
         let identity = config.identity.expect("identity is on");
         assert_eq!(identity.firebase_project_id, "ibridge-fyi");
+    }
+
+    fn identity_vars(pem: &str) -> Vec<(&'static str, String)> {
+        vec![
+            (APPLE_SERVICES_ID, "fyi.ibridge.signin".to_owned()),
+            (APPLE_TEAM_ID, "TEAM123456".to_owned()),
+            (APPLE_KEY_ID, "KEY1234567".to_owned()),
+            (APPLE_PRIVATE_KEY, pem.to_owned()),
+            (FIREBASE_PROJECT_ID, "ibridge-fyi".to_owned()),
+            (FIREBASE_API_KEY, "key".to_owned()),
+        ]
+    }
+
+    fn stripe_vars() -> Vec<(&'static str, String)> {
+        vec![
+            (STRIPE_SECRET_KEY, "sk_test_x".to_owned()),
+            (STRIPE_WEBHOOK_SECRET, "whsec_x".to_owned()),
+            (STRIPE_PRICE_MONTHLY, "price_month".to_owned()),
+            (STRIPE_PRICE_YEARLY, "price_year".to_owned()),
+        ]
+    }
+
+    fn resolve_owned(vars: Vec<(&'static str, String)>) -> Result<HostedConfig, StartError> {
+        let vars: HashMap<String, String> = vars
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect();
+        HostedConfig::resolve(options(Mode::Public), |name| vars.get(name).cloned())
+    }
+
+    #[test]
+    fn absent_billing_settings_leave_hosted_mode_unchanged() {
+        let config = resolve(Mode::Public, &[]).expect("starts");
+        assert!(config.billing.is_none(), "no settings, nobody is gated");
+    }
+
+    #[test]
+    fn billing_partial_settings_fail_startup_naming_the_missing_ones() {
+        let mut vars = identity_vars(&crate::identity::jwt::test_key::es256_pem());
+        vars.push((CONTACT, "privacy@ibridge.example".to_owned()));
+        vars.push((STRIPE_SECRET_KEY, "sk_test_secret-value".to_owned()));
+        let error = resolve_owned(vars).expect_err("a partial group does not start");
+        let StartError::Billing(ConfigError::BillingIncomplete { missing }) = &error else {
+            panic!("expected an incomplete billing group, got {error:?}");
+        };
+        assert!(missing.contains(&STRIPE_WEBHOOK_SECRET), "{missing:?}");
+        assert!(!error.to_string().contains("secret-value"), "{error}");
+    }
+
+    #[test]
+    fn billing_without_identity_is_error() {
+        let mut vars = stripe_vars();
+        vars.push((CONTACT, "privacy@ibridge.example".to_owned()));
+        let error = resolve_owned(vars).expect_err("billing needs identity");
+        assert!(
+            matches!(error, StartError::BillingNeedsIdentity),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("Apple"), "{error}");
+    }
+
+    #[test]
+    fn billing_without_contact_is_error() {
+        let mut vars = identity_vars(&crate::identity::jwt::test_key::es256_pem());
+        vars.extend(stripe_vars());
+        let error = resolve_owned(vars.clone()).expect_err("billing needs a contact");
+        assert!(
+            matches!(error, StartError::BillingNeedsContact),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains(CONTACT), "{error}");
+        vars.push((CONTACT, "   ".to_owned()));
+        let error = resolve_owned(vars).expect_err("a blank contact is none");
+        assert!(
+            matches!(error, StartError::BillingNeedsContact),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn billing_with_identity_and_contact_is_carried_into_the_config() {
+        let mut vars = identity_vars(&crate::identity::jwt::test_key::es256_pem());
+        vars.extend(stripe_vars());
+        vars.push((CONTACT, "privacy@ibridge.example".to_owned()));
+        let config = resolve_owned(vars).expect("starts");
+        let billing = config.billing.expect("billing is on");
+        assert_eq!(billing.price_monthly, "price_month");
+        assert!(config.identity.is_some());
     }
 }

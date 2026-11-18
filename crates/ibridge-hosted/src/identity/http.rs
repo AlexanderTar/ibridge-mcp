@@ -116,7 +116,8 @@ impl Http {
         self.send(request).await
     }
 
-    async fn send(&self, request: Request<Full<Bytes>>) -> Result<Reply, IdentityError> {
+    /// Sends a request the caller built, with the same deadline and size limit as every call.
+    pub(crate) async fn send(&self, request: Request<Full<Bytes>>) -> Result<Reply, IdentityError> {
         tokio::time::timeout(CALL_TIMEOUT, async {
             let response = self
                 .client

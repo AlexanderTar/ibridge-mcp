@@ -1,0 +1,113 @@
+{
+  "id": "cs_test_a0666aZNxjIGrvqvAftKw4cgCw25DOmkPR1E1YAf4Mcfu3d0HJ7AK5dZ7x",
+  "object": "checkout.session",
+  "adaptive_pricing": {
+    "enabled": true
+  },
+  "after_expiration": null,
+  "allow_promotion_codes": null,
+  "allowed_payment_method_types": null,
+  "amount_subtotal": 199,
+  "amount_total": 199,
+  "automatic_tax": {
+    "address_collection_precision": null,
+    "enabled": true,
+    "liability": {
+      "type": "stripe"
+    },
+    "provider": "stripe",
+    "status": "requires_location_inputs"
+  },
+  "billing_address_collection": null,
+  "branding_settings": {
+    "background_color": "#ffffff",
+    "border_style": "rounded",
+    "button_color": "#0074d4",
+    "display_name": "iBridge sandbox",
+    "font_family": "default",
+    "icon": null,
+    "logo": null
+  },
+  "cancel_url": null,
+  "client_reference_id": null,
+  "client_secret": null,
+  "collected_information": null,
+  "consent": null,
+  "consent_collection": null,
+  "created": 1794992820,
+  "currency": "usd",
+  "currency_conversion": null,
+  "custom_fields": [],
+  "custom_text": {
+    "after_submit": null,
+    "shipping_address": null,
+    "submit": null,
+    "terms_of_service_acceptance": null
+  },
+  "customer": null,
+  "customer_account": null,
+  "customer_creation": "always",
+  "customer_details": null,
+  "customer_email": null,
+  "discounts": [],
+  "expires_at": 1795079220,
+  "integration_identifier": null,
+  "invoice": null,
+  "invoice_creation": null,
+  "livemode": false,
+  "locale": null,
+  "managed_payments": {
+    "enabled": true
+  },
+  "marketing_attributions": null,
+  "metadata": {},
+  "mode": "subscription",
+  "origin_context": null,
+  "payment_intent": null,
+  "payment_link": null,
+  "payment_method_collection": "always",
+  "payment_method_configuration_details": null,
+  "payment_method_options": {
+    "card": {
+      "request_three_d_secure": "automatic"
+    }
+  },
+  "payment_method_types": [
+    "card",
+    "cashapp"
+  ],
+  "payment_status": "unpaid",
+  "permissions": null,
+  "phone_number_collection": {
+    "enabled": false
+  },
+  "recovered_from": null,
+  "saved_payment_method_options": {
+    "allow_redisplay_filters": [
+      "always"
+    ],
+    "payment_method_remove": "disabled",
+    "payment_method_save": null
+  },
+  "setup_intent": null,
+  "shipping_address_collection": null,
+  "shipping_cost": null,
+  "shipping_options": [],
+  "status": "open",
+  "submit_type": null,
+  "subscription": null,
+  "success_url": "https://ibridge.fyi/billing/return?session_id={CHECKOUT_SESSION_ID}",
+  "tax_id_collection": {
+    "enabled": true,
+    "required": "never"
+  },
+  "total_details": {
+    "amount_discount": 0,
+    "amount_shipping": 0,
+    "amount_tax": 0
+  },
+  "ui_mode": "hosted_page",
+  "url": "https://checkout.stripe.com/c/pay/cs_test_a0666aZNxjIGrvqvAftKw4cgCw25DOmkPR1E1YAf4Mcfu3d0HJ7AK5dZ7x#fidnandhYHdWcXxpYCc%2FJ2FgY2RwaXEnKSdicyc%2FNSkndnF3bHVgRGZmanBrcSc%2FJ2RmZnFaNFBmd3NBTjVqdUZgVUxIMycpJ2R1bE5gfCc%2FJ3VuWnFgdnFaMDRUfGAxcEIxa1c1SUJofHZPZ1xvRkhoXVJQSm9oTTNLd389VUpyQ308RFFDfXBObElOSmAzQ3JiTGlCRHRMN1BxYW9NcXVgVWRuVVc8SGQ0ZFVCbWkzaDE1NWI1Vn9%2FNn9wJyknY3dqaFZgd3Ngdyc%2FcXdwYCknZ2RmbmJ3anBrYUZqaWp3Jz8nJmNjY2NjYycpJ2lkfGpwcVF8dWAnPyd2bGtiaWBabHFgaCd4JSUl",
+  "wallet_options": null
+}
+

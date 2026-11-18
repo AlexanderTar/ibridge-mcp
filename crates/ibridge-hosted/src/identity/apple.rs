@@ -183,7 +183,7 @@ impl AppleClient {
 }
 
 /// Lowercase hex, which is how Apple and Firebase compare a nonce's hash.
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes
         .iter()
         .flat_map(|byte| [byte >> 4, byte & 0xf])

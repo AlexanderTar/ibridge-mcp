@@ -1,0 +1,39 @@
+{
+  "id": "cus_VeNbiflBa3F0jq",
+  "object": "customer",
+  "address": {
+    "city": null,
+    "country": "US",
+    "line1": null,
+    "line2": null,
+    "postal_code": "94103",
+    "state": null
+  },
+  "balance": 0,
+  "created": 1794992869,
+  "currency": null,
+  "customer_account": null,
+  "default_source": null,
+  "delinquent": false,
+  "description": null,
+  "discount": null,
+  "email": "fixture@ibridge.fyi",
+  "invoice_prefix": "URNI0WAD",
+  "invoice_settings": {
+    "custom_fields": null,
+    "default_payment_method": null,
+    "footer": null,
+    "rendering_options": null
+  },
+  "livemode": false,
+  "metadata": {
+    "ibridge_user": "1"
+  },
+  "name": "ibridge fixture",
+  "phone": null,
+  "preferred_locales": [],
+  "shipping": null,
+  "tax_exempt": "none",
+  "test_clock": "clock_1Ud4qHK0opCePIM6Jr8rMqxw"
+}
+

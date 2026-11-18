@@ -5,6 +5,7 @@
 mod admin;
 mod app;
 mod backup;
+pub mod billing;
 mod config;
 #[cfg(test)]
 mod e2e;

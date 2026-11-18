@@ -6,7 +6,7 @@ pub mod apple;
 #[cfg(any(test, feature = "testing"))]
 pub mod fakes;
 pub mod firebase;
-mod http;
+pub(crate) mod http;
 pub mod jwt;
 pub(crate) mod pending;
 

@@ -32,3 +32,22 @@ CREATE TABLE IF NOT EXISTS seals (
 CREATE INDEX IF NOT EXISTS seals_by_grant ON seals (grant_id);
 
 CREATE INDEX IF NOT EXISTS seals_by_expiry ON seals (expires_at);
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT NOT NULL UNIQUE,
+    apple_sub TEXT NOT NULL,
+    email TEXT,
+    account_id INTEGER UNIQUE REFERENCES accounts (id),
+    stripe_customer TEXT UNIQUE,
+    stripe_subscription TEXT,
+    status TEXT,
+    period_end INTEGER,
+    complimentary INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stripe_events (
+    id TEXT PRIMARY KEY,
+    seen_at INTEGER NOT NULL
+);

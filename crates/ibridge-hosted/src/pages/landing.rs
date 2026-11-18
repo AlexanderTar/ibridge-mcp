@@ -15,6 +15,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::get;
 
+use crate::billing::{PRICE_TEXT, TaxMode};
 use crate::oauth::Shared;
 use crate::web::html;
 
@@ -30,6 +31,10 @@ pub(crate) fn routes(shared: &Arc<Shared>) -> Router {
 #[template(path = "landing.html")]
 struct Landing {
     connector: String,
+    /// Sign in with Apple is the login.
+    identity: bool,
+    /// The price, when billing is on.
+    price: Option<&'static str>,
 }
 
 #[derive(Template)]
@@ -38,6 +43,12 @@ struct Privacy<'a> {
     issuer: String,
     contact: Option<&'a str>,
     contact_link: Option<String>,
+    /// Apple and Google (Firebase) take part in sign-in.
+    identity: bool,
+    /// Stripe takes part in payment.
+    billing: bool,
+    /// Stripe is the seller of record.
+    stripe_sells: bool,
 }
 
 #[derive(Template)]
@@ -46,6 +57,11 @@ struct Terms<'a> {
     issuer: String,
     contact: Option<&'a str>,
     contact_link: Option<String>,
+    /// Billing is on, so there are subscription terms.
+    billing: bool,
+    /// Stripe is the seller of record.
+    stripe_sells: bool,
+    price: &'static str,
 }
 
 /// A `mailto:` link when `contact` is a bare email address, and no link for anything else.
@@ -57,11 +73,22 @@ fn mailto(contact: &str) -> Option<String> {
     bare.then(|| format!("mailto:{contact}"))
 }
 
+/// Whether Stripe is the seller of record: under Managed Payments it is, and under Stripe Tax
+/// the operator is, so the terms must not say it is.
+fn stripe_sells(shared: &Shared) -> bool {
+    shared
+        .billing
+        .as_ref()
+        .is_some_and(|billing| billing.tax == TaxMode::Managed)
+}
+
 async fn landing(State(shared): State<Arc<Shared>>) -> Response {
     html(
         StatusCode::OK,
         Landing {
             connector: shared.config.url("/mcp"),
+            identity: shared.identity.is_some(),
+            price: shared.billing.as_ref().map(|_| PRICE_TEXT),
         }
         .render(),
     )
@@ -75,6 +102,9 @@ async fn privacy(State(shared): State<Arc<Shared>>) -> Response {
             issuer: shared.config.issuer(),
             contact,
             contact_link: contact.and_then(mailto),
+            identity: shared.identity.is_some(),
+            billing: shared.billing.is_some(),
+            stripe_sells: stripe_sells(&shared),
         }
         .render(),
     )
@@ -88,6 +118,9 @@ async fn terms(State(shared): State<Arc<Shared>>) -> Response {
             issuer: shared.config.issuer(),
             contact,
             contact_link: contact.and_then(mailto),
+            billing: shared.billing.is_some(),
+            stripe_sells: stripe_sells(&shared),
+            price: PRICE_TEXT,
         }
         .render(),
     )

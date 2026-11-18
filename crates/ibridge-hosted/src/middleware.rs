@@ -18,6 +18,7 @@ use axum::response::{IntoResponse as _, Response};
 use ibridge_auth::Credentials;
 use ibridge_core::AppleId;
 
+use crate::billing::{self, Access};
 use crate::store::{GrantId, Scope, Services, Store, StoreError};
 
 /// Who is calling and what the call may do, with the password open for this call only.
@@ -30,9 +31,16 @@ pub struct CallAuth {
     scope: Scope,
     services: Services,
     credentials: Arc<Credentials>,
+    access: Access,
 }
 
 impl CallAuth {
+    /// Whether the caller's plan lets them use the tools. Always allowed when billing is off.
+    #[must_use]
+    pub fn access(&self) -> Access {
+        self.access
+    }
+
     /// What the sign-in behind this grant found out about each service.
     #[must_use]
     pub fn services(&self) -> &Services {
@@ -70,6 +78,7 @@ impl fmt::Debug for CallAuth {
             .debug_struct("CallAuth")
             .field("grant", &self.grant)
             .field("scope", &self.scope)
+            .field("access", &self.access)
             .field("apple_id", self.apple_id())
             .finish_non_exhaustive()
     }
@@ -78,15 +87,28 @@ impl fmt::Debug for CallAuth {
 struct Gate {
     store: Store,
     metadata_url: String,
+    gating: Gating,
+}
+
+/// Whether a call needs the caller's user to have a plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Gating {
+    /// Nobody is gated: billing is not set up.
+    Off,
+    /// Each call carries whether its grant's user has a plan.
+    PlanRequired,
 }
 
 /// Puts `mcp` behind the token check.
 ///
 /// `metadata_url` is the protected resource metadata a client is pointed at.
-pub(crate) fn protect(mcp: Router, store: Store, metadata_url: String) -> Router {
+///
+/// With [`Gating::PlanRequired`], each call's [`CallAuth`] says whether the grant's user has a plan.
+pub(crate) fn protect(mcp: Router, store: Store, metadata_url: String, gating: Gating) -> Router {
     let gate = Arc::new(Gate {
         store,
         metadata_url,
+        gating,
     });
     mcp.route_layer(middleware::from_fn_with_state(gate, authenticate))
 }
@@ -98,11 +120,15 @@ async fn authenticate(State(gate): State<Arc<Gate>>, mut request: Request, next:
     // Opened afresh for every call: the store keeps only ciphertext, and so does this layer.
     match gate.store.open_for_call(token, SystemTime::now()).await {
         Ok(opened) => {
+            let Some(access) = plan_of(&gate, opened.grant_id).await else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            };
             request.extensions_mut().insert(CallAuth {
                 grant: opened.grant_id,
                 scope: opened.scope,
                 services: opened.services,
                 credentials: Arc::new(Credentials::new(opened.apple_id, opened.secret)),
+                access,
             });
             // The token is a key. Nothing downstream, including the MCP service that
             // copies request headers into its context, gets to hold or print it.
@@ -116,6 +142,23 @@ async fn authenticate(State(gate): State<Arc<Gate>>, mut request: Request, next:
             | StoreError::Suspended,
         ) => challenge(&gate, Some("invalid_token")),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// What the grant's plan allows, or `None` when it cannot be read. With gating off
+/// everything is allowed. With it on, a grant whose account is linked to no user has no
+/// plan, so it is denied.
+async fn plan_of(gate: &Gate, grant: GrantId) -> Option<Access> {
+    if gate.gating == Gating::Off {
+        return Some(Access::Allowed);
+    }
+    match gate.store.user_for_grant(grant).await {
+        Ok(Some(user)) => Some(billing::access(&user)),
+        Ok(None) => Some(Access::Denied),
+        Err(error) => {
+            tracing::error!(%error, "could not read the plan of a grant");
+            None
+        }
     }
 }
 
@@ -163,7 +206,7 @@ mod tests {
     use serde_json::{Value, json};
     use tower::ServiceExt as _;
 
-    use super::{CallAuth, protect};
+    use super::{CallAuth, Gating, protect};
     use crate::oauth::{Access, OAuthConfig};
     use crate::server::{ScopedServers, ServerSource, mcp_router};
     use crate::store::{IssuedTokens, Scope, Store, ValidatedCredentials};
@@ -179,7 +222,7 @@ mod tests {
     async fn tokens(store: &Store, scope: Scope) -> IssuedTokens {
         let now = SystemTime::now();
         let code = store
-            .seal_under_code(&ada(), &SecretString::from(ASP), scope, now)
+            .seal_under_code(&ada(), &SecretString::from(ASP), scope, now, None)
             .await
             .expect("seal");
         store
@@ -207,7 +250,7 @@ mod tests {
                 .await
                 .expect("validated");
         let key = store
-            .mint_api_key(&validated, "test key", scope, SystemTime::now())
+            .mint_api_key(&validated, "test key", scope, SystemTime::now(), None)
             .await
             .expect("key");
         key.key.expose_secret().to_owned()
@@ -243,7 +286,10 @@ mod tests {
     fn probe_app(store: &Store) -> (Router, Log) {
         let log = Log::default();
         let inner = Router::new().route("/mcp", any(probe).with_state(Arc::clone(&log)));
-        (protect(inner, store.clone(), METADATA.to_owned()), log)
+        (
+            protect(inner, store.clone(), METADATA.to_owned(), Gating::Off),
+            log,
+        )
     }
 
     async fn call(app: &Router, bearer: Option<&str>) -> axum::response::Response {
@@ -450,6 +496,7 @@ mod tests {
             mcp_router(Arc::new(Fixed(servers)), info, &config),
             store.clone(),
             METADATA.to_owned(),
+            Gating::Off,
         )
     }
 

@@ -31,6 +31,7 @@ ibridge-dav.workspace = true
 ibridge-mail.workspace = true
 ibridge-server.workspace = true
 ibridge-testkit = { workspace = true, optional = true }
+ring.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }

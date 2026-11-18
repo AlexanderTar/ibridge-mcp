@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! What an operator does to an account: suspend it, or delete it.
+//! What an operator does to an account or a user: suspend or delete an account, or give a
+//! user the plan for free.
 
 use std::path::{Path, PathBuf};
 
@@ -9,14 +10,19 @@ use ibridge_core::AppleId;
 use crate::serve::DATABASE_FILE;
 use crate::store::{Store, StoreError};
 
-/// What an operator can do to an account.
+/// What an operator can do, and to whom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum AdminAction {
-    /// Block the account's tokens, keys and sign-in. Nothing is deleted.
-    Suspend,
-    /// Delete the account and everything sealed for it.
-    Delete,
+pub enum AdminAction<'a> {
+    /// Block the iCloud account's tokens, keys and sign-in. Nothing is deleted.
+    Suspend(&'a AppleId),
+    /// Delete the iCloud account and everything sealed for it.
+    Delete(&'a AppleId),
+    /// Give the user with this Apple email or Firebase uid access without payment. It works
+    /// before the user has linked an iCloud address.
+    Comp(&'a str),
+    /// Take that free access away again. The user's own subscription, if any, still counts.
+    Uncomp(&'a str),
 }
 
 /// Why an admin command did not run.
@@ -37,17 +43,13 @@ pub enum AdminError {
 /// sessions. The server refuses the account's tokens from the next call, which is what
 /// blocks it; the idle sessions it still holds close within minutes.
 ///
-/// Returns how many accounts matched.
+/// Returns how many accounts (or, for comp and uncomp, users) matched.
 ///
 /// # Errors
 ///
 /// Returns [`AdminError::NoDatabase`] when `data_dir` holds no database (one is never created
 /// here), and [`AdminError::Store`] when it cannot be opened or updated.
-pub async fn admin(
-    data_dir: &Path,
-    action: AdminAction,
-    address: &AppleId,
-) -> Result<usize, AdminError> {
+pub async fn admin(data_dir: &Path, action: AdminAction<'_>) -> Result<usize, AdminError> {
     let path = data_dir.join(DATABASE_FILE);
     if !path.is_file() {
         return Err(AdminError::NoDatabase(path));
@@ -55,10 +57,31 @@ pub async fn admin(
     let store = Store::open(&path).await?;
     let nothing = |_: &AppleId| {};
     let matched = match action {
-        AdminAction::Suspend => suspend(&store, address, &nothing).await?,
-        AdminAction::Delete => delete(&store, address, &nothing).await?,
+        AdminAction::Suspend(address) => suspend(&store, address, &nothing).await?,
+        AdminAction::Delete(address) => delete(&store, address, &nothing).await?,
+        AdminAction::Comp(key) => comp(&store, key, true).await?,
+        AdminAction::Uncomp(key) => comp(&store, key, false).await?,
     };
     Ok(matched)
+}
+
+/// Sets or clears the free-access flag of the user `key` names (an email or a Firebase uid).
+///
+/// Returns how many users matched: 0 or 1.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Internal`] when the database cannot be read or updated.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "the one flag the comp and uncomp commands set"
+)]
+pub(crate) async fn comp(store: &Store, key: &str, on: bool) -> Result<usize, StoreError> {
+    let Some(user) = store.user_by_email_or_uid(key.trim()).await? else {
+        return Ok(0);
+    };
+    store.set_complimentary(user.id, on).await?;
+    Ok(1)
 }
 
 /// Suspends every account spelled like `address`, then calls `evict` for each.
@@ -129,6 +152,7 @@ mod tests {
                 &SecretString::from(ASP_ALL),
                 Scope::ReadWrite,
                 now,
+                None,
             )
             .await
             .expect("seal");
@@ -183,7 +207,13 @@ mod tests {
             "it cannot refresh its way back in"
         );
         let again = store
-            .seal_under_code(&apple(ADA), &SecretString::from(ASP_ALL), Scope::Read, now)
+            .seal_under_code(
+                &apple(ADA),
+                &SecretString::from(ASP_ALL),
+                Scope::Read,
+                now,
+                None,
+            )
             .await;
         assert!(
             matches!(again, Err(StoreError::Suspended)),
@@ -326,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn admin_command_changes_the_database_in_the_data_dir() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let missing = admin(dir.path(), AdminAction::Suspend, &apple(ADA)).await;
+        let missing = admin(dir.path(), AdminAction::Suspend(&apple(ADA))).await;
         assert!(
             matches!(missing, Err(AdminError::NoDatabase(_))),
             "{missing:?}"
@@ -341,7 +371,7 @@ mod tests {
             .expect("store");
         let ada = tokens(&store, ADA).await;
         assert_eq!(
-            admin(dir.path(), AdminAction::Suspend, &apple(ADA))
+            admin(dir.path(), AdminAction::Suspend(&apple(ADA)))
                 .await
                 .expect("suspend"),
             1
@@ -351,12 +381,118 @@ mod tests {
             .await;
         assert!(matches!(opened, Err(StoreError::Suspended)), "{opened:?}");
         assert_eq!(
-            admin(dir.path(), AdminAction::Delete, &apple(ADA))
+            admin(dir.path(), AdminAction::Delete(&apple(ADA)))
                 .await
                 .expect("delete"),
             1
         );
         assert_eq!(count(&store, "SELECT COUNT(*) FROM accounts").await, 0);
+    }
+
+    /// A database file in `dir` holding one user, who has not linked an iCloud address.
+    async fn comp_rig() -> (tempfile::TempDir, Store, crate::store::User) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Store::open(&dir.path().join(crate::serve::DATABASE_FILE))
+            .await
+            .expect("store");
+        let user = store
+            .upsert_user("uid-ada", "sub-ada", Some("Ada@privaterelay.appleid.com"))
+            .await
+            .expect("user");
+        assert!(user.account.is_none(), "no iCloud address is linked");
+        (dir, store, user)
+    }
+
+    async fn comped(store: &Store, user: &crate::store::User) -> bool {
+        store
+            .user(user.id)
+            .await
+            .expect("read")
+            .expect("user")
+            .complimentary
+    }
+
+    #[tokio::test]
+    async fn admin_comp_by_email_sets_flag() {
+        let (dir, store, user) = comp_rig().await;
+        let matched = admin(
+            dir.path(),
+            AdminAction::Comp("ada@PRIVATERELAY.appleid.com"),
+        )
+        .await
+        .expect("comp");
+        assert_eq!(matched, 1, "the email matches in any letter case");
+        assert!(comped(&store, &user).await);
+    }
+
+    #[tokio::test]
+    async fn admin_comp_by_uid_sets_flag() {
+        let (dir, store, user) = comp_rig().await;
+        let other = store
+            .upsert_user("uid-bea", "sub-bea", None)
+            .await
+            .expect("user");
+        assert_eq!(
+            admin(dir.path(), AdminAction::Comp("uid-ada"))
+                .await
+                .expect("comp"),
+            1
+        );
+        assert!(comped(&store, &user).await);
+        assert!(!comped(&store, &other).await, "only the named user");
+    }
+
+    #[tokio::test]
+    async fn admin_comp_user_without_linked_address() {
+        let (dir, store, user) = comp_rig().await;
+        admin(dir.path(), AdminAction::Comp("uid-ada"))
+            .await
+            .expect("comp");
+        let stored = store.user(user.id).await.expect("read").expect("user");
+        assert!(stored.account.is_none(), "still no iCloud address");
+        assert_eq!(
+            crate::billing::access(&stored),
+            crate::billing::Access::Allowed,
+            "free access does not need a linked address or a subscription"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_uncomp_clears_flag() {
+        let (dir, store, user) = comp_rig().await;
+        store.set_complimentary(user.id, true).await.expect("comp");
+        store
+            .set_subscription(user.id, "sub_1", "active", Some(1))
+            .await
+            .expect("set");
+        assert_eq!(
+            admin(dir.path(), AdminAction::Uncomp("uid-ada"))
+                .await
+                .expect("uncomp"),
+            1
+        );
+        let stored = store.user(user.id).await.expect("read").expect("user");
+        assert!(!stored.complimentary);
+        assert_eq!(
+            stored.status.as_deref(),
+            Some("active"),
+            "a paid plan is left alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_comp_unknown_user_matches_nothing() {
+        let (dir, store, user) = comp_rig().await;
+        for key in ["nobody@example.com", "uid-nobody", ""] {
+            assert_eq!(
+                admin(dir.path(), AdminAction::Comp(key))
+                    .await
+                    .expect("comp"),
+                0,
+                "{key:?}"
+            );
+        }
+        assert!(!comped(&store, &user).await);
     }
 
     /// A harness whose `/mcp` runs over a real account cache.

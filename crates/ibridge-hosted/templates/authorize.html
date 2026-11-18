@@ -2,8 +2,21 @@
 {% block title %}Connect iCloud to {{ client_name }}{% endblock %}
 {% block body %}
 <h1>Connect iCloud to {{ client_name }}</h1>
-<p><strong>{{ client_name }}</strong> is asking to use your iCloud Mail, Calendar, Reminders and Contacts. After you sign in, your browser goes back to <strong>{{ redirect_host }}</strong>.</p>
+<p><strong>{{ client_name }}</strong> is asking to use your iCloud Mail, Calendar, Reminders and Contacts. {% if signed_in %}Once it is connected, your browser goes back to{% else %}After you sign in, your browser goes back to{% endif %} <strong>{{ redirect_host }}</strong>.</p>
 {% if let Some(message) = error %}<p class="error" role="alert">{{ message }}</p>{% endif %}
+{% if let Some(pending) = sign_in %}
+<p>Sign in with Apple to continue. We never see your Apple password.</p>
+<a class="button" href="/signin/apple?next=authorize&amp;pending={{ pending }}">Sign in with Apple</a>
+{% else %}
+{% if let Some(plan) = plan %}
+<p>{{ client_name }} needs a plan to reach your iCloud: {{ price }}. Taxes are handled by Stripe at checkout, and one plan covers one iCloud account.</p>
+<form method="post" action="/billing/checkout">
+<input type="hidden" name="csrf" value="{{ plan.csrf }}">
+<input type="hidden" name="pending" value="{{ plan.pending }}">
+<button type="submit" name="plan" value="monthly">Subscribe monthly</button>
+<button type="submit" name="plan" value="yearly">Subscribe yearly</button>
+</form>
+{% else %}
 <form method="post" action="/authorize" autocomplete="off">
 <input type="hidden" name="response_type" value="code">
 <input type="hidden" name="client_id" value="{{ client_id }}">
@@ -14,12 +27,19 @@
 {% if let Some(scope) = scope %}<input type="hidden" name="scope" value="{{ scope }}">{% endif %}
 {% if let Some(resource) = resource %}<input type="hidden" name="resource" value="{{ resource }}">{% endif %}
 <input type="hidden" name="csrf" value="{{ csrf }}">
+{% if let Some(linked) = linked %}
+<p>Connecting <strong>{{ linked }}</strong>, the iCloud address linked to your account.</p>
+<input type="hidden" name="apple_id" value="{{ linked }}">
+{% else %}
 <label for="apple_id">Your primary iCloud address</label>
 <input id="apple_id" name="apple_id" type="email" inputmode="email" autocomplete="username" required maxlength="254" value="{{ apple_id }}">
+{% endif %}
 <label for="password">App-specific password</label>
 <input id="password" name="password" type="password" autocomplete="off" required maxlength="64">
-<p class="hint">Never use your main Apple ID password here. <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">Create an app-specific password</a> in your Apple Account, then paste it above. Use your iCloud address (@icloud.com, @me.com or @mac.com), which may differ from your Apple ID email.</p>
+<p class="hint">Never use your main Apple ID password here. <a href="https://support.apple.com/102654" rel="noopener noreferrer" target="_blank">Create an app-specific password</a> in your Apple Account, then paste it above. {% if linked.is_none() %}Use your iCloud address (@icloud.com, @me.com or @mac.com), which may differ from your Apple ID email.{% endif %}</p>
 <label class="check" for="read_only"><input id="read_only" name="read_only" type="checkbox"{% if read_only %} checked{% endif %}><span>Read-only access. {{ client_name }} can read but cannot send, move, change or delete anything.</span></label>
 <button type="submit">Connect</button>
 </form>
+{% endif %}
+{% endif %}
 {% endblock %}

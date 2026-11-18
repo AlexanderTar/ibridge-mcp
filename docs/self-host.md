@@ -40,10 +40,45 @@ docker run --rm --name ibridge -p 8080:8080 -v ibridge-data:/data \
 
 The server refuses to start with neither an allowlist nor `--multi-tenant`.
 
+### Identity and billing (optional)
+
+Both groups are off by default. A self-hosted or local server needs none of them and is never gated: with the groups unset, `/account` keeps its app-password login and every tool call works. Each group is all-or-nothing: setting some of a group's variables and not the rest stops the server at startup and names the missing ones.
+
+**Sign in with Apple** (all six, or none):
+
+| Setting | What it is |
+|---|---|
+| `IBRIDGE_APPLE_SERVICES_ID` | The Services ID (the Apple web client id). The public instance uses `fyi.ibridge.mcp`. Its return URL must be `<public url>/signin/apple/callback`. |
+| `IBRIDGE_APPLE_TEAM_ID` | The Apple developer team id (the public instance: `44CQ69ZSP6`). |
+| `IBRIDGE_APPLE_KEY_ID` | The id of the Sign in with Apple key (the public instance: `2QKR8GY5WS`). |
+| `IBRIDGE_APPLE_PRIVATE_KEY` | The `.p8` key, a P-256 key in PEM form. A secret. |
+| `IBRIDGE_FIREBASE_PROJECT_ID` | The Firebase project, with its Apple provider enabled (the public instance: `ibridge-fyi`). It is the audience the server requires in Firebase ID tokens. |
+| `IBRIDGE_FIREBASE_API_KEY` | The project's web API key. |
+
+With the group set, `/account` and `/authorize` sign people in with Apple, each user links exactly one iCloud address, and an app-specific password is still needed to connect it.
+
+**Stripe billing** (the first four, or none; it also needs the identity group and `IBRIDGE_CONTACT`, or the server stops at startup):
+
+| Setting | What it is |
+|---|---|
+| `IBRIDGE_STRIPE_SECRET_KEY` | The Stripe secret or restricted key. A secret. |
+| `IBRIDGE_STRIPE_WEBHOOK_SECRET` | The signing secret (`whsec_…`) of the webhook endpoint for `<public url>/billing/webhook`. A secret. |
+| `IBRIDGE_STRIPE_PRICE_MONTHLY` | The monthly price id (US$1.99). |
+| `IBRIDGE_STRIPE_PRICE_YEARLY` | The yearly price id (US$19.99). |
+| `IBRIDGE_STRIPE_TAX` | `managed` (default: Stripe's Managed Payments sells and files tax) or `automatic` (Stripe Tax: you register and file; Checkout also sends `customer_update[address]=auto`). Anything else stops the server. Setting only this variable also stops it. |
+
+The webhook endpoint must use the API version the server pins (`STRIPE_API_VERSION`, in `crates/ibridge-hosted/src/billing/stripe.rs`) and send `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` and `invoice.payment_failed`. Without the billing group `/billing/webhook` answers 404.
+
+Billing is for the multi-tenant service. With an allowlist and billing both on, a signed-in user with no linked address is not offered a plan and is told the service is private, so this combination does not support billing for such users. Give them a free plan with `ibridge admin comp` instead.
+
+The server contacts `appleid.apple.com`, `identitytoolkit.googleapis.com` and `www.googleapis.com` when identity is on, and `api.stripe.com` when billing is on, and nothing else beyond iCloud.
+
 ## Allowlist or multi-tenant
 
 - **Allowlist (self-host).** Set `IBRIDGE_ALLOWED_APPLE_IDS` and leave `--multi-tenant` off. Only those addresses can sign in, so the database holds as many accounts as you list. An allowlist restricts sign-in even when `--multi-tenant` is also set.
 - **Multi-tenant (public service).** Pass `--multi-tenant` with no allowlist. Anyone with an iCloud address and an app-specific password can sign in, up to `IBRIDGE_SIGNUP_CAP` accounts. That makes you the operator of a service that holds strangers' sealed passwords, with a privacy policy and terms to match. [deploy-railway.md](deploy-railway.md) is the runbook for the public instance.
+
+Paid plans are for the multi-tenant service; see [Identity and billing](#identity-and-billing-optional).
 
 Each person creates an app-specific password at account.apple.com under Sign-In and Security, and types it on the server's sign-in page. The server stores it sealed under a key made from the token the client holds.
 
@@ -63,6 +98,13 @@ Run the admin commands on the host, against the same data directory:
 ```sh
 docker exec ibridge ibridge admin suspend you@icloud.com
 docker exec ibridge ibridge admin delete you@icloud.com
+```
+
+Billing users have two more commands, which take the user's Apple email (a private relay address is fine) or Firebase uid, so they also work for a user with no linked address:
+
+```sh
+docker exec ibridge ibridge admin comp you@icloud.com     # the plan for free: the owner, test users
+docker exec ibridge ibridge admin uncomp you@icloud.com   # a paid subscription still counts
 ```
 
 `suspend` blocks the account's tokens, API keys and sign-in and deletes nothing. `delete` removes the account and every sealed copy of its password. `--data-dir` defaults to `/data`. The command runs in its own process and cannot reach the running server's pooled mail sessions. It does not need to: the server checks the database on every call, so the account's tokens and keys are refused from the next call and no pool is reached. Sessions the server already holds for that account sit idle and close within five minutes. Revoke the app-specific password at Apple as well: deleting the account here does not do that.
@@ -117,7 +159,7 @@ PORT=8080
 RAILWAY_RUN_UID=0
 ```
 
-Set the start command to `ibridge serve --hosted --http 0.0.0.0:8080 --public-url https://<your domain> --data-dir /data`, the health check path to `/readyz`, and generate a domain. `RAILWAY_RUN_UID=0` is there because Railway mounts volumes as root. If the container fails with the command repeated (for example `ibridge ibridge serve`), Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from it, so it starts with `serve`. Step 5 of the runbook below says the same. `docs/deploy-railway.md` has the full runbook the public instance follows, including the account checks.
+Set the start command to `ibridge serve --hosted --http 0.0.0.0:8080 --public-url https://<your domain> --data-dir /data`, the health check path to `/readyz`, and generate a domain. `RAILWAY_RUN_UID=0` is there because Railway mounts volumes as root. If the container fails with the command repeated (for example `ibridge ibridge serve`), Railway is appending the start command to the image's entrypoint: remove the leading `ibridge` from it, so it starts with `serve`. Step 5 of the runbook below says the same. `docs/deploy-railway.md` has the full runbook the public instance follows, including the account checks, the identity and billing variables and the Stripe setup.
 
 ## Behind a proxy
 

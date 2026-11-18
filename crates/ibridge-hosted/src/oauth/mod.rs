@@ -2,15 +2,18 @@
 
 //! OAuth 2.1 authorization server for the hosted MCP endpoint.
 
-mod authorize;
+pub(crate) mod authorize;
 mod check;
 mod cimd;
 mod client;
 mod codes;
 mod dcr;
 mod metadata;
+pub(crate) mod pending;
 mod token;
 
+#[cfg(test)]
+mod authorize_apple_tests;
 #[cfg(test)]
 mod signup_tests;
 #[cfg(test)]
@@ -30,6 +33,8 @@ use axum::http::request::Parts;
 use ibridge_core::AppleId;
 use url::Url;
 
+use crate::billing::{Billing, BillingConfig};
+use crate::identity::{Identity, IdentityConfig};
 use crate::limits::{Limiter, SignInLimits};
 use crate::store::{Store, StoreError};
 
@@ -55,6 +60,8 @@ pub struct OAuthConfig {
     allowed: Option<HashSet<String>>,
     behind_proxy: bool,
     contact: Option<String>,
+    identity: Option<IdentityConfig>,
+    billing: Option<BillingConfig>,
 }
 
 /// The public URL cannot be used as an OAuth issuer.
@@ -64,6 +71,30 @@ pub enum ConfigError {
     /// Not a URL, not https, or it carries a path, query or fragment.
     #[error("the public URL must be an https origin such as https://ibridge.fyi")]
     PublicUrl,
+    /// Some of the Sign in with Apple and Firebase settings are set, but not all.
+    #[error(
+        "set all of the Apple and Firebase sign-in settings or none of them; missing: {}",
+        missing.join(", ")
+    )]
+    IdentityIncomplete {
+        /// The names of the settings that are not set.
+        missing: Vec<&'static str>,
+    },
+    /// The Apple private key is not a P-256 key in PEM form.
+    #[error("the Apple private key must be a P-256 key in PEM form")]
+    IdentityKey,
+    /// Some of the Stripe settings are set, but not all four required ones.
+    #[error(
+        "set all of the Stripe billing settings or none of them; missing: {}",
+        missing.join(", ")
+    )]
+    BillingIncomplete {
+        /// The names of the settings that are not set.
+        missing: Vec<&'static str>,
+    },
+    /// `IBRIDGE_STRIPE_TAX` is neither `managed` nor `automatic`.
+    #[error("IBRIDGE_STRIPE_TAX must be managed or automatic")]
+    BadStripeTax,
 }
 
 impl OAuthConfig {
@@ -98,6 +129,8 @@ impl OAuthConfig {
             allowed,
             behind_proxy: false,
             contact: None,
+            identity: None,
+            billing: None,
         })
     }
 
@@ -119,6 +152,20 @@ impl OAuthConfig {
     #[must_use]
     pub fn contact(mut self, contact: impl Into<String>) -> Self {
         self.contact = Some(contact.into());
+        self
+    }
+
+    /// Turns on Sign in with Apple through Firebase.
+    #[must_use]
+    pub fn identity(mut self, identity: IdentityConfig) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    /// Turns on paid plans through Stripe. Billing needs Sign in with Apple as well.
+    #[must_use]
+    pub fn billing(mut self, billing: BillingConfig) -> Self {
+        self.billing = Some(billing);
         self
     }
 
@@ -144,6 +191,11 @@ impl OAuthConfig {
     /// An absolute URL on this server.
     pub(crate) fn url(&self, path: &str) -> String {
         format!("{}{path}", self.issuer())
+    }
+
+    /// Whether only listed addresses may connect: nobody new can join.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.allowed.is_some()
     }
 
     /// False when an allowlist is set and `apple_id` is not on it.
@@ -224,6 +276,12 @@ pub(crate) struct Shared {
     pub(crate) codes: codes::PendingCodes,
     pub(crate) sessions: crate::pages::account::Sessions,
     pub(crate) evict: Evict,
+    /// Sign in with Apple, when its settings are present.
+    pub(crate) identity: Option<Identity>,
+    /// `/authorize` requests waiting for a sign-in or a payment.
+    pub(crate) pending_authorize: pending::PendingAuthorize,
+    /// Stripe, when its settings are present.
+    pub(crate) billing: Option<Billing>,
 }
 
 impl Shared {
@@ -264,18 +322,40 @@ pub async fn router(
     mcp: Router,
 ) -> Result<Router, StoreError> {
     let transport = cimd::HttpsTransport::new().map_err(|_| StoreError::Rejected)?;
-    router_with(
+    let identity = config
+        .identity
+        .as_ref()
+        .map(|identity| Identity::new(identity, &config.issuer()))
+        .transpose()
+        .map_err(|_| StoreError::Rejected)?;
+    let billing = config
+        .billing
+        .as_ref()
+        .map(Billing::new)
+        .transpose()
+        .map_err(|_| StoreError::Rejected)?;
+    let (router, _) = router_with(
         config,
         store,
         Arc::new(cimd::CimdFetcher::new(transport)),
         Arc::new(checker),
         evict,
         mcp,
+        Features { identity, billing },
     )
-    .await
+    .await?;
+    Ok(router)
+}
+
+/// The optional halves of the server: each is on only when its settings are present.
+#[derive(Debug, Default)]
+pub(crate) struct Features {
+    pub(crate) identity: Option<Identity>,
+    pub(crate) billing: Option<Billing>,
 }
 
 /// [`router`] with the client lookup replaced, so tests can name clients without a network.
+/// Also returns the shared state, so a test can reach the stores the pages use.
 pub(crate) async fn router_with(
     config: OAuthConfig,
     store: &Store,
@@ -283,7 +363,9 @@ pub(crate) async fn router_with(
     checker: Arc<dyn SignInCheck>,
     evict: Evict,
     mcp: Router,
-) -> Result<Router, StoreError> {
+    features: Features,
+) -> Result<(Router, Arc<Shared>), StoreError> {
+    let Features { identity, billing } = features;
     let metadata_url = config.url(metadata::PRM_MCP_PATH);
     let registry = dcr::ClientRegistry::open(store).await?;
     let shared = Arc::new(Shared {
@@ -299,16 +381,32 @@ pub(crate) async fn router_with(
         codes: codes::PendingCodes::default(),
         sessions: crate::pages::account::Sessions::default(),
         evict,
+        identity,
+        pending_authorize: pending::PendingAuthorize::new(pending::MAX_PENDING),
+        billing,
     });
-    Ok(Router::new()
-        .merge(crate::middleware::protect(mcp, store.clone(), metadata_url))
+    let gating = if shared.billing.is_some() {
+        crate::middleware::Gating::PlanRequired
+    } else {
+        crate::middleware::Gating::Off
+    };
+    let router = Router::new()
+        .merge(crate::middleware::protect(
+            mcp,
+            store.clone(),
+            metadata_url,
+            gating,
+        ))
         .merge(metadata::routes(&shared))
         .merge(dcr::routes(&shared))
         .merge(authorize::routes(&shared))
         .merge(token::routes(&shared))
         .merge(crate::pages::account::routes(&shared))
+        .merge(crate::pages::signin::routes(&shared))
+        .merge(crate::billing::routes::routes(&shared))
         .merge(crate::pages::landing::routes(&shared))
-        .layer(tracing_layer()))
+        .layer(tracing_layer());
+    Ok((router, shared))
 }
 
 /// Request logging that records the method, the path and the outcome, and nothing else.

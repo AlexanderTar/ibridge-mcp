@@ -14,11 +14,12 @@ use ibridge_server::http::{base_config, mcp_service};
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, ErrorData, ListToolsResult, PaginatedRequestParams,
-    ServerConfig,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
+    ListToolsResult, PaginatedRequestParams, ServerConfig,
 };
 use rmcp::service::RequestContext;
 
+use crate::billing::Access;
 use crate::middleware::CallAuth;
 use crate::oauth::OAuthConfig;
 use crate::store::Scope;
@@ -61,7 +62,7 @@ pub fn mcp_router<P: ServerSource>(
     info: ServerConfig,
     config: &OAuthConfig,
 ) -> Router {
-    let handler = HostedHandler::new(source, info);
+    let handler = HostedHandler::new(source, info).with_account_url(config.url("/account"));
     let service = mcp_service(
         move || handler.clone(),
         base_config().with_allowed_hosts([config.host()]),
@@ -86,6 +87,7 @@ type Picked<S> = (Arc<ScopedServers<S>>, Scope);
 pub struct HostedHandler<P> {
     source: Arc<P>,
     info: ServerConfig,
+    account_url: Option<String>,
 }
 
 impl<P> Clone for HostedHandler<P> {
@@ -93,6 +95,7 @@ impl<P> Clone for HostedHandler<P> {
         Self {
             source: Arc::clone(&self.source),
             info: self.info.clone(),
+            account_url: self.account_url.clone(),
         }
     }
 }
@@ -101,7 +104,29 @@ impl<P: ServerSource> HostedHandler<P> {
     /// Builds the handler. `info` is what `initialize` reports for every account.
     #[must_use]
     pub fn new(source: Arc<P>, info: ServerConfig) -> Self {
-        Self { source, info }
+        Self {
+            source,
+            info,
+            account_url: None,
+        }
+    }
+
+    /// The account page a caller without a plan is pointed to.
+    #[must_use]
+    pub fn with_account_url(mut self, url: String) -> Self {
+        self.account_url = Some(url);
+        self
+    }
+
+    /// The tool error a caller without a plan gets, in place of the tool's answer.
+    fn no_plan(&self) -> CallToolResponse {
+        let text = match &self.account_url {
+            Some(url) => format!(
+                "Your ibridge subscription is not active. Subscribe or manage your plan at {url}, then try again."
+            ),
+            None => "Your ibridge subscription is not active.".to_owned(),
+        };
+        CallToolResponse::Complete(CallToolResult::error(vec![ContentBlock::text(text)]))
     }
 
     fn server_for(
@@ -132,6 +157,10 @@ impl<P: ServerSource> ServerHandler for HostedHandler<P> {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        // `initialize`, discovery and `tools/list` need no plan; a call to a tool does.
+        if call_auth(&context)?.access() == Access::Denied {
+            return Ok(self.no_plan());
+        }
         let (servers, scope) = self.server_for(&context)?;
         servers.for_scope(scope).call_tool(request, context).await
     }

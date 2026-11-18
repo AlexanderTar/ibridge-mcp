@@ -10,8 +10,8 @@ use ibridge_core::AppleId;
 use sqlx::Row;
 
 use super::{
-    GrantId, KIND_API_KEY, PURPOSE_CODE, PURPOSE_CODE_SPENT, Scope, Store, StoreError, begin,
-    grant_bytes, internal, revoke, settle,
+    GrantId, KIND_API_KEY, PURPOSE_CODE, PURPOSE_CODE_SPENT, Scope, Store, StoreError, WriteTx,
+    begin, grant_bytes, internal, revoke, settle,
 };
 
 /// What kind of connection a grant is.
@@ -175,32 +175,17 @@ impl Store {
     pub async fn delete_accounts_of(&self, address: &AppleId) -> Result<Vec<AppleId>, StoreError> {
         let mut tx = begin(self.pool()).await?;
         let result = async {
-            let rows = sqlx::query("SELECT id, apple_id FROM accounts WHERE lower(apple_id) = lower(?)")
-                .bind(address.as_str())
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(internal)?;
+            let rows =
+                sqlx::query("SELECT id, apple_id FROM accounts WHERE lower(apple_id) = lower(?)")
+                    .bind(address.as_str())
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(internal)?;
             let mut deleted = Vec::with_capacity(rows.len());
             for row in &rows {
                 let id: i64 = row.try_get("id").map_err(internal)?;
                 let apple_id: String = row.try_get("apple_id").map_err(internal)?;
-                sqlx::query(
-                    "DELETE FROM seals WHERE grant_id IN (SELECT id FROM grants WHERE account_id = ?)",
-                )
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .map_err(internal)?;
-                sqlx::query("DELETE FROM grants WHERE account_id = ?")
-                    .bind(id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(internal)?;
-                sqlx::query("DELETE FROM accounts WHERE id = ?")
-                    .bind(id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(internal)?;
+                delete_account_in(&mut tx, id).await?;
                 deleted.push(AppleId::try_from(apple_id.as_str()).map_err(internal)?);
             }
             Ok(deleted)
@@ -208,4 +193,30 @@ impl Store {
         .await;
         settle(tx, result).await
     }
+}
+
+/// Deletes one account with its grants and seals. A user linked to it keeps its row and
+/// loses the link, so the foreign key does not stop the delete.
+pub(super) async fn delete_account_in(tx: &mut WriteTx, id: i64) -> Result<(), StoreError> {
+    sqlx::query("UPDATE users SET account_id = NULL WHERE account_id = ?")
+        .bind(id)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    sqlx::query("DELETE FROM seals WHERE grant_id IN (SELECT id FROM grants WHERE account_id = ?)")
+        .bind(id)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    sqlx::query("DELETE FROM grants WHERE account_id = ?")
+        .bind(id)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    sqlx::query("DELETE FROM accounts WHERE id = ?")
+        .bind(id)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    Ok(())
 }

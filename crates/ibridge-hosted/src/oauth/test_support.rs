@@ -18,7 +18,9 @@ use url::Url;
 use super::check::{Combined, SignInCheck, validated_by};
 use super::cimd::{BoxFuture, CimdError, ClientSource};
 use super::client::ClientInfo;
-use super::{Access, Evict, OAuthConfig, router_with};
+use super::{Access, Evict, Features, OAuthConfig, Shared, router_with};
+use crate::billing::Billing;
+use crate::identity::Identity;
 use crate::store::{Store, StoreError, ValidatedCredentials};
 
 pub(crate) const PUBLIC: &str = "https://ibridge.example";
@@ -171,6 +173,68 @@ pub(crate) async fn harness_configured(
     evict: Evict,
     mcp: Router,
 ) -> Harness {
+    harness_built(config, store, evict, mcp, None, None).await.0
+}
+
+/// [`harness_configured`] with Sign in with Apple on, over `identity`.
+///
+/// Also returns the shared state, so a test can reach the stores the pages use.
+pub(crate) async fn harness_identity(identity: Identity, store: Store) -> (Harness, Arc<Shared>) {
+    let config = OAuthConfig::new(PUBLIC, Access::MultiTenant).expect("public url");
+    let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
+    let evict: Evict = Arc::new(|_| {});
+    harness_built(config, store, evict, mcp, Some(identity), None).await
+}
+
+/// [`harness_identity`] with Stripe on as well, over `billing`.
+pub(crate) async fn harness_billing(
+    identity: Identity,
+    billing: Billing,
+    store: Store,
+) -> (Harness, Arc<Shared>) {
+    let config = OAuthConfig::new(PUBLIC, Access::MultiTenant).expect("public url");
+    let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
+    let evict: Evict = Arc::new(|_| {});
+    harness_built(config, store, evict, mcp, Some(identity), Some(billing)).await
+}
+
+/// A harness serving with `config`, with Sign in with Apple on, and Stripe when `billing` is given.
+pub(crate) async fn harness_featured(
+    config: OAuthConfig,
+    store: Store,
+    identity: Identity,
+    billing: Option<Billing>,
+) -> (Harness, Arc<Shared>) {
+    let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
+    let evicted = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&evicted);
+    let evict: Evict = Arc::new(move |apple_id| {
+        log.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(apple_id.clone());
+    });
+    let (mut harness, shared) =
+        harness_built(config, store, evict, mcp, Some(identity), billing).await;
+    harness.evicted = evicted;
+    (harness, shared)
+}
+
+/// A plain harness (no Sign in with Apple) and the shared state its pages use.
+pub(crate) async fn harness_with_shared() -> (Harness, Arc<Shared>) {
+    let config = OAuthConfig::new(PUBLIC, Access::MultiTenant).expect("public url");
+    let mcp = Router::new().route("/mcp", axum::routing::any(|| async { StatusCode::OK }));
+    let store = Store::memory().await.expect("store");
+    harness_built(config, store, Arc::new(|_| {}), mcp, None, None).await
+}
+
+async fn harness_built(
+    config: OAuthConfig,
+    store: Store,
+    evict: Evict,
+    mcp: Router,
+    identity: Option<Identity>,
+    billing: Option<Billing>,
+) -> (Harness, Arc<Shared>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let inner = validated_by(|credentials: &Credentials| {
         credentials.with_secret(|password| Combined {
@@ -190,23 +254,25 @@ pub(crate) async fn harness_configured(
         calls: Arc::clone(&calls),
         inner: Box::new(inner),
     };
-    let app = router_with(
+    let (app, shared) = router_with(
         config,
         &store,
         Arc::new(FakeClients),
         Arc::new(checker),
         evict,
         mcp,
+        Features { identity, billing },
     )
     .await
     .expect("router");
-    Harness {
+    let harness = Harness {
         app,
         store,
         checks: calls,
         evicted: Arc::new(Mutex::new(Vec::new())),
         proxy: None,
-    }
+    };
+    (harness, shared)
 }
 
 /// One response, read to the end.

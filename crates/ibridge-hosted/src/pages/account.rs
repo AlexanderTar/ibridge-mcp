@@ -25,16 +25,17 @@ use ibridge_core::AppleId;
 use secrecy::SecretString;
 use serde::Deserialize;
 
+use crate::billing::{Access, PRICE_TEXT, Room, access, room_for};
 use crate::oauth::{Peer, Shared, address_key};
-use crate::store::{GrantId, GrantKind, GrantSummary, Scope, StoreError};
+use crate::store::{GrantId, GrantKind, GrantSummary, Scope, StoreError, User, UserId};
 use crate::web::{
-    GENERIC_FAILURE, cookie_value, csrf_matches, harden, html, message, random_token, set_cookie,
-    tokens_match,
+    GENERIC_FAILURE, cookie_value, csrf_matches, harden, html, message, notice, random_token,
+    set_cookie, tokens_match,
 };
 
-const SESSION_COOKIE: &str = "__Host-ibridge_session";
+pub(crate) const SESSION_COOKIE: &str = "__Host-ibridge_session";
 const CSRF_COOKIE: &str = "__Host-ibridge_account_csrf";
-const SESSION_SECS: u32 = 30 * 60;
+pub(crate) const SESSION_SECS: u32 = 30 * 60;
 const MAX_FORM: usize = 8 * 1024;
 const MAX_NAME: usize = 64;
 const EXPIRED: &str = "This page expired. Go to the account page and sign in again.";
@@ -44,23 +45,43 @@ const TROUBLE: &str = "Something went wrong on our side. Try again in a moment."
 #[derive(Debug, Default)]
 pub(crate) struct Sessions(Mutex<HashMap<String, Session>>);
 
+/// Who a session belongs to.
 #[derive(Debug, Clone)]
-struct Session {
-    apple_id: AppleId,
-    csrf: String,
+pub(crate) enum Principal {
+    /// Someone who proved an iCloud address with its app-specific password.
+    Password(AppleId),
+    /// A Sign in with Apple user. The iCloud address linked to them is read from the store
+    /// when it is needed, because a first connect can link one after sign-in.
+    User(UserId),
+}
+
+impl Principal {
+    /// The Sign in with Apple user, which a key or a connection links to its address.
+    pub(crate) fn user(&self) -> Option<UserId> {
+        match self {
+            Self::Password(_) => None,
+            Self::User(id) => Some(*id),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Session {
+    pub(crate) principal: Principal,
+    pub(crate) csrf: String,
     until: Instant,
 }
 
 impl Sessions {
-    /// Starts a session for `apple_id`. Returns its cookie token and its form token.
-    fn start(&self, apple_id: AppleId, now: Instant) -> Option<(String, String)> {
+    /// Starts a session for `principal`. Returns its cookie token and its form token.
+    pub(crate) fn start(&self, principal: Principal, now: Instant) -> Option<(String, String)> {
         let (token, csrf) = (random_token()?, random_token()?);
         let mut sessions = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         sessions.retain(|_, session| session.until > now);
         sessions.insert(
             token.clone(),
             Session {
-                apple_id,
+                principal,
                 csrf: csrf.clone(),
                 until: now + Duration::from_secs(u64::from(SESSION_SECS)),
             },
@@ -77,11 +98,19 @@ impl Sessions {
             .cloned()
     }
 
-    fn end(&self, token: &str) {
+    pub(crate) fn end(&self, token: &str) {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(token);
+    }
+
+    /// Ends every session of `user`, wherever it was started.
+    pub(crate) fn end_all_for(&self, user: UserId) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, session| session.principal.user() != Some(user));
     }
 }
 
@@ -100,6 +129,8 @@ pub(crate) fn routes(shared: &Arc<Shared>) -> Router {
 #[derive(Template)]
 #[template(path = "account_login.html")]
 struct LoginPage<'a> {
+    /// Sign in with Apple is the login; otherwise an address and app-specific password are.
+    identity: bool,
     csrf: &'a str,
     apple_id: &'a str,
     error: Option<&'a str>,
@@ -113,6 +144,25 @@ struct GrantRow {
     revoked: bool,
 }
 
+/// What the page says about a Sign in with Apple user.
+struct Profile {
+    email: String,
+    /// The linked iCloud address, if there is one.
+    linked: Option<String>,
+    /// Present when billing is on.
+    plan: Option<PlanView>,
+}
+
+struct PlanView {
+    status: String,
+    /// Offer the two plans: there is no access yet.
+    subscribe: bool,
+    /// Why no plan is offered when the service would not take this user.
+    refused: Option<&'static str>,
+    /// Offer the Customer Portal: there is a paid plan to manage.
+    manage: bool,
+}
+
 #[derive(Template)]
 #[template(path = "account.html")]
 struct AccountPage<'a> {
@@ -120,6 +170,13 @@ struct AccountPage<'a> {
     csrf: &'a str,
     grants: Vec<GrantRow>,
     error: Option<&'a str>,
+    /// `None` for a session that signed in with an app-specific password.
+    profile: Option<Profile>,
+    /// The key form asks for an address: this user has not linked one.
+    ask_address: bool,
+    /// Stripe is on, so a plan and a subscription exist.
+    billing: bool,
+    price: &'static str,
 }
 
 #[derive(Template)]
@@ -148,6 +205,8 @@ struct Revoke {
 struct Mint {
     csrf: String,
     name: String,
+    /// Only a user with no linked address types one.
+    apple_id: Option<String>,
     password: String,
     read_only: Option<String>,
 }
@@ -166,6 +225,9 @@ struct Token {
 async fn show(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     if let Some((_, session)) = session_of(&shared, &headers) {
         return dashboard(&shared, &session, StatusCode::OK, None).await;
+    }
+    if shared.identity.is_some() {
+        return apple_login_page();
     }
     let Some(token) = random_token() else {
         tracing::error!("random source failed while making a sign-in token");
@@ -186,6 +248,10 @@ async fn login(
     headers: HeaderMap,
     Form(form): Form<Login>,
 ) -> Response {
+    // With Sign in with Apple on it is the only login: a password signs nobody in.
+    if shared.identity.is_some() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if !csrf_matches(&headers, CSRF_COOKIE, &form.csrf) {
         return message(StatusCode::FORBIDDEN, "This page expired", EXPIRED);
     }
@@ -221,7 +287,10 @@ async fn login(
         }
         return again();
     }
-    let Some((token, _)) = shared.sessions.start(apple_id, Instant::now()) else {
+    let Some((token, _)) = shared
+        .sessions
+        .start(Principal::Password(apple_id), Instant::now())
+    else {
         tracing::error!("random source failed while starting a session");
         return message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -258,8 +327,16 @@ async fn revoke(
         return expired();
     };
     // A malformed id, or one that is not this person's, changes nothing and says nothing.
+    let address = match who(&shared, &session).await {
+        Ok(Who {
+            address: Some(address),
+            ..
+        }) => address,
+        Ok(_) => return to_account(),
+        Err(page) => return *page,
+    };
     if let Some(grant) = GrantId::from_hex(&form.grant) {
-        match shared.store.revoke_grant_of(&session.apple_id, grant).await {
+        match shared.store.revoke_grant_of(&address, grant).await {
             Ok(accounts) => accounts.iter().for_each(|account| (shared.evict)(account)),
             Err(error) => {
                 tracing::error!(%error, "could not revoke a grant");
@@ -283,12 +360,38 @@ async fn mint(
     let Some((_, session)) = checked_session(&shared, &headers, &form.csrf) else {
         return expired();
     };
+    let who = match who(&shared, &session).await {
+        Ok(who) => who,
+        Err(page) => return *page,
+    };
+    // A key for a new address links it and takes a sign-up slot, so with billing on it needs
+    // access first, as /authorize does. A key for the already linked address takes no slot.
+    if shared.billing.is_some()
+        && who.address.is_none()
+        && who
+            .user
+            .as_ref()
+            .is_some_and(|user| access(user) == Access::Denied)
+    {
+        return dashboard(
+            &shared,
+            &session,
+            StatusCode::FORBIDDEN,
+            Some("Choose a plan before you connect an iCloud address."),
+        )
+        .await;
+    }
+    let address = match address_to_use(&shared, who.address, form.apple_id.as_deref()) {
+        Ok(address) => address,
+        Err(refusal) => {
+            return dashboard(&shared, &session, StatusCode::BAD_REQUEST, Some(&refusal)).await;
+        }
+    };
     // Checking the password asks iCloud, so it spends the same budget as signing in.
-    if !shared.limits.allow(
-        &peer.0,
-        Some(&address_key(&session.apple_id)),
-        Instant::now(),
-    ) {
+    if !shared
+        .limits
+        .allow(&peer.0, Some(&address_key(&address)), Instant::now())
+    {
         return message(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many attempts",
@@ -305,7 +408,7 @@ async fn mint(
         )
         .await;
     }
-    let credentials = Credentials::new(session.apple_id.clone(), SecretString::from(form.password));
+    let credentials = Credentials::new(address, SecretString::from(form.password));
     let validated = match shared.checker.check(credentials).await {
         Ok(validated) => validated,
         Err(error) => {
@@ -328,7 +431,13 @@ async fn mint(
     };
     match shared
         .store
-        .mint_api_key(&validated, name, scope, SystemTime::now())
+        .mint_api_key(
+            &validated,
+            name,
+            scope,
+            SystemTime::now(),
+            session.principal.user(),
+        )
         .await
     {
         Ok(key) => {
@@ -342,33 +451,46 @@ async fn mint(
                 .render(),
             )
         }
-        Err(StoreError::SignupsFull) => message(
+        Err(error) => mint_failed(&shared, &session, &error).await,
+    }
+}
+
+/// The page for a key that could not be made.
+async fn mint_failed(shared: &Shared, session: &Session, error: &StoreError) -> Response {
+    match error {
+        StoreError::SignupsFull => message(
             StatusCode::SERVICE_UNAVAILABLE,
             "Sign-ups are full",
             "This service is not taking new accounts right now. Try again later.",
         ),
-        Err(StoreError::Suspended) => {
+        StoreError::Suspended => {
             dashboard(
-                &shared,
-                &session,
+                shared,
+                session,
                 StatusCode::FORBIDDEN,
                 Some("This account is suspended, so it cannot make new keys."),
             )
             .await
         }
-        Err(error) => {
-            tracing::error!(%error, "could not mint a key");
-            message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Something went wrong",
-                TROUBLE,
+        StoreError::LinkedToOther { .. } | StoreError::AddressTaken => {
+            dashboard(
+                shared,
+                session,
+                StatusCode::BAD_REQUEST,
+                Some(&link_refusal(error)),
             )
+            .await
+        }
+        _ => {
+            tracing::error!(%error, "could not mint a key");
+            trouble()
         }
     }
 }
 
 async fn delete(
     State(shared): State<Arc<Shared>>,
+    peer: Peer,
     headers: HeaderMap,
     Form(form): Form<Delete>,
 ) -> Response {
@@ -384,7 +506,37 @@ async fn delete(
         )
         .await;
     }
-    match shared.store.delete_accounts_of(&session.apple_id).await {
+    // With Sign in with Apple on, deleting needs a fresh sign-in, which does the deleting.
+    if shared.identity.is_some() {
+        let Some(user) = session.principal.user() else {
+            return expired();
+        };
+        if !shared.lookups.allow(&peer.0, Instant::now()) {
+            return message(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many requests",
+                "Wait a minute, then try again.",
+            );
+        }
+        return super::delete::ask_for_fresh_sign_in(&shared, user);
+    }
+    let address = match who(&shared, &session).await {
+        Ok(Who {
+            address: Some(address),
+            ..
+        }) => address,
+        Ok(_) => {
+            return dashboard(
+                &shared,
+                &session,
+                StatusCode::BAD_REQUEST,
+                Some("There is no iCloud address connected to delete."),
+            )
+            .await;
+        }
+        Err(page) => return *page,
+    };
+    match shared.store.delete_accounts_of(&address).await {
         Ok(accounts) => accounts.iter().for_each(|account| (shared.evict)(account)),
         Err(error) => {
             tracing::error!(%error, "could not delete an account");
@@ -396,7 +548,7 @@ async fn delete(
         }
     }
     shared.sessions.end(&token);
-    let mut response = message(
+    let mut response = notice(
         StatusCode::OK,
         "Account deleted",
         "Everything stored for this account is deleted: the encrypted copies of your app-specific password, your connected apps and your API keys. They stop working now. To finish, revoke the app-specific password at Apple (Sign-In and Security, then App-Specific Passwords in your Apple Account), so nothing we held can still be used.",
@@ -406,14 +558,14 @@ async fn delete(
 }
 
 /// The signed-in session of this request, with its cookie token.
-fn session_of(shared: &Shared, headers: &HeaderMap) -> Option<(String, Session)> {
+pub(crate) fn session_of(shared: &Shared, headers: &HeaderMap) -> Option<(String, Session)> {
     let token = cookie_value(headers, SESSION_COOKIE)?;
     let session = shared.sessions.get(token, Instant::now())?;
     Some((token.to_owned(), session))
 }
 
 /// The session, when the form's token is the one the session was given.
-fn checked_session(
+pub(crate) fn checked_session(
     shared: &Shared,
     headers: &HeaderMap,
     from_form: &str,
@@ -434,10 +586,25 @@ fn to_account() -> Response {
     response
 }
 
+/// The sign-in page when Sign in with Apple is the login: one button, no form.
+fn apple_login_page() -> Response {
+    html(
+        StatusCode::OK,
+        LoginPage {
+            identity: true,
+            csrf: "",
+            apple_id: "",
+            error: None,
+        }
+        .render(),
+    )
+}
+
 fn login_page(csrf: &str, apple_id: &str, error: Option<&str>, status: StatusCode) -> Response {
     html(
         status,
         LoginPage {
+            identity: false,
             csrf,
             apple_id,
             error,
@@ -452,27 +619,163 @@ async fn dashboard(
     status: StatusCode,
     error: Option<&str>,
 ) -> Response {
-    let grants = match shared.store.grants_of(&session.apple_id).await {
-        Ok(grants) => grants,
-        Err(error) => {
-            tracing::error!(%error, "could not list grants");
-            return message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Something went wrong",
-                TROUBLE,
-            );
-        }
+    let Who { address, user } = match who(shared, session).await {
+        Ok(who) => who,
+        Err(page) => return *page,
     };
+    let grants = match &address {
+        Some(address) => match shared.store.grants_of(address).await {
+            Ok(grants) => grants,
+            Err(error) => {
+                tracing::error!(%error, "could not list grants");
+                return trouble();
+            }
+        },
+        None => Vec::new(),
+    };
+    let room = match &user {
+        Some(user) if shared.billing.is_some() => match room_for(shared, user).await {
+            Ok(room) => room,
+            Err(error) => {
+                tracing::error!(%error, "could not count accounts");
+                return trouble();
+            }
+        },
+        _ => Room::Open,
+    };
+    let profile = user.as_ref().map(|user| profile(shared, user, room));
     html(
         status,
         AccountPage {
-            apple_id: session.apple_id.as_str(),
+            apple_id: address
+                .as_ref()
+                .map_or("no iCloud address connected yet", AppleId::as_str),
             csrf: &session.csrf,
             grants: grants.iter().map(row).collect(),
             error,
+            ask_address: profile.is_some() && address.is_none(),
+            billing: shared.billing.is_some(),
+            profile,
+            price: PRICE_TEXT,
         }
         .render(),
     )
+}
+
+/// Who a session acts for, read fresh from the store.
+struct Who {
+    /// The iCloud address connected to this session, if any. A first connect can link one
+    /// after sign-in, so a Sign in with Apple user's is read now, not kept in the session.
+    address: Option<AppleId>,
+    /// The Sign in with Apple user, when the session is one.
+    user: Option<User>,
+}
+
+async fn who(shared: &Shared, session: &Session) -> Result<Who, Box<Response>> {
+    match &session.principal {
+        Principal::Password(address) => Ok(Who {
+            address: Some(address.clone()),
+            user: None,
+        }),
+        Principal::User(id) => match shared.store.user(*id).await {
+            Ok(Some(user)) => Ok(Who {
+                address: user.account.clone(),
+                user: Some(user),
+            }),
+            Ok(None) => Err(Box::new(expired())),
+            Err(error) => {
+                tracing::error!(%error, "could not read a signed-in user");
+                Err(Box::new(trouble()))
+            }
+        },
+    }
+}
+
+fn trouble() -> Response {
+    message(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Something went wrong",
+        TROUBLE,
+    )
+}
+
+fn profile(shared: &Shared, user: &User, room: Room) -> Profile {
+    Profile {
+        email: user
+            .email
+            .clone()
+            .unwrap_or_else(|| "none shared by Apple".to_owned()),
+        linked: user
+            .account
+            .as_ref()
+            .map(|address| address.as_str().to_owned()),
+        plan: shared.billing.is_some().then(|| plan_view(user, room)),
+    }
+}
+
+fn plan_view(user: &User, room: Room) -> PlanView {
+    let allowed = access(user) == Access::Allowed;
+    let status = if user.complimentary {
+        "Complimentary"
+    } else {
+        match user.status.as_deref() {
+            Some("active") => "Active",
+            Some("past_due") => "Payment overdue",
+            Some(_) => "Not active",
+            None => "No plan",
+        }
+    };
+    let status = match (user.status.as_deref(), user.period_end) {
+        (Some("active"), Some(end)) if !user.complimentary => {
+            format!("{status}, current period ends {}", day(end))
+        }
+        _ => status.to_owned(),
+    };
+    PlanView {
+        status,
+        subscribe: !allowed && room == Room::Open,
+        refused: room.refusal().map(|(_, text)| text).filter(|_| !allowed),
+        manage: allowed && user.stripe_customer.is_some(),
+    }
+}
+
+/// The address a new key is for. A user who has linked one can use only that, if it may
+/// still sign in; a user who has not types one, and it is linked when the key is made.
+pub(crate) fn address_to_use(
+    shared: &Shared,
+    linked: Option<AppleId>,
+    typed: Option<&str>,
+) -> Result<AppleId, String> {
+    let typed = typed.map(str::trim).filter(|typed| !typed.is_empty());
+    match (linked, typed) {
+        (Some(linked), Some(typed))
+            if AppleId::try_from(typed)
+                .map_or(true, |typed| address_key(&typed) != address_key(&linked)) =>
+        {
+            Err(link_refusal(&StoreError::LinkedToOther { linked }))
+        }
+        // The allowlist applies to a linked address too, as it does at /authorize: an
+        // operator who closes the service stops new keys for addresses that fell off it.
+        (Some(linked), _) if shared.config.may_sign_in(&linked) => Ok(linked),
+        (Some(_), _) => Err(GENERIC_FAILURE.to_owned()),
+        (None, Some(typed)) => AppleId::try_from(typed)
+            .ok()
+            .filter(|address| shared.config.may_sign_in(address))
+            .ok_or_else(|| GENERIC_FAILURE.to_owned()),
+        (None, None) => Err("Type the iCloud address you want to connect.".to_owned()),
+    }
+}
+
+/// What a refused link says. A different linked address is named, because the person
+/// owns it; an address that belongs to someone else is not explained.
+pub(crate) fn link_refusal(error: &StoreError) -> String {
+    match error {
+        StoreError::LinkedToOther { linked } => format!(
+            "This account is linked to {}. Connect that address, or delete your account and start again with another.",
+            linked.as_str()
+        ),
+        _ => "That iCloud address cannot be connected to this account.".to_owned(),
+    }
 }
 
 fn row(grant: &GrantSummary) -> GrantRow {
@@ -543,7 +846,13 @@ mod tests {
     async fn oauth_grant(store: &Store, id: &str, asp: &str) -> IssuedTokens {
         let now = SystemTime::now();
         let code = store
-            .seal_under_code(&apple(id), &SecretString::from(asp), Scope::ReadWrite, now)
+            .seal_under_code(
+                &apple(id),
+                &SecretString::from(asp),
+                Scope::ReadWrite,
+                now,
+                None,
+            )
             .await
             .expect("seal");
         store
@@ -559,7 +868,7 @@ mod tests {
             .await
             .expect("accepted");
         store
-            .mint_api_key(&validated, name, scope, SystemTime::now())
+            .mint_api_key(&validated, name, scope, SystemTime::now(), None)
             .await
             .expect("mint")
     }

@@ -19,15 +19,31 @@ pub(crate) const GENERIC_FAILURE: &str =
 struct MessagePage<'a> {
     heading: &'a str,
     message: &'a str,
+    /// Shown as a problem; otherwise as plain news.
+    alert: bool,
 }
 
-/// A page that says `text` under `heading`.
+/// A page that says `text` under `heading`, as a problem.
 pub(crate) fn message(status: StatusCode, heading: &str, text: &str) -> Response {
     html(
         status,
         MessagePage {
             heading,
             message: text,
+            alert: true,
+        }
+        .render(),
+    )
+}
+
+/// A page that says `text` under `heading`, for something that went right.
+pub(crate) fn notice(status: StatusCode, heading: &str, text: &str) -> Response {
+    html(
+        status,
+        MessagePage {
+            heading,
+            message: text,
+            alert: false,
         }
         .render(),
     )
@@ -73,14 +89,27 @@ pub(crate) fn random_token() -> Option<String> {
     Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random))
 }
 
-/// Sets a `__Host-` cookie (`Secure`, `Path=/`, no `Domain`). `max_age` 0 deletes it.
+/// Sets a `__Host-` cookie (`Secure`, `Path=/`, no `Domain`, `SameSite=Lax`). `max_age` 0 deletes it.
 pub(crate) fn set_cookie(response: &mut Response, name: &str, value: &str, max_age: u32) {
+    set_cookie_same_site(response, name, value, max_age, "Lax");
+}
+
+/// [`set_cookie`] with the `SameSite` value named: `None` is for the one cookie that must
+/// ride a cross-site POST, which is Apple's callback.
+pub(crate) fn set_cookie_same_site(
+    response: &mut Response,
+    name: &str,
+    value: &str,
+    max_age: u32,
+    same_site: &str,
+) {
     debug_assert!(
         name.starts_with("__Host-"),
         "{name} needs the __Host- prefix"
     );
-    let cookie =
-        format!("{name}={value}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax");
+    let cookie = format!(
+        "{name}={value}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite={same_site}"
+    );
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
@@ -104,4 +133,14 @@ pub(crate) fn tokens_match(left: &str, right: &str) -> bool {
 /// Double-submit check: the form's token must equal the cookie `name` carries.
 pub(crate) fn csrf_matches(headers: &HeaderMap, cookie: &str, from_form: &str) -> bool {
     cookie_value(headers, cookie).is_some_and(|value| tokens_match(value, from_form))
+}
+
+/// A 303 to `location`, never cached.
+pub(crate) fn see_other(location: &str) -> Response {
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    if let Ok(value) = HeaderValue::from_str(location) {
+        response.headers_mut().insert(header::LOCATION, value);
+    }
+    harden(&mut response);
+    response
 }

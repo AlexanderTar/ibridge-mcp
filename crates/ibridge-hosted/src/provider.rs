@@ -428,7 +428,7 @@ mod tests {
     use tower::ServiceExt as _;
 
     use super::{AccountCache, Backend, Providers};
-    use crate::middleware::protect;
+    use crate::middleware::{Gating, protect};
     use crate::oauth::{Access, OAuthConfig};
     use crate::server::mcp_router;
     use crate::store::{Scope, Store};
@@ -662,6 +662,7 @@ mod tests {
             mcp_router(Arc::clone(&cache), info, &config),
             store.clone(),
             METADATA.to_owned(),
+            Gating::Off,
         );
         Rig {
             store,
@@ -678,7 +679,7 @@ mod tests {
         let now = SystemTime::now();
         let apple = AppleId::try_from(apple_id).expect("apple id");
         let code = store
-            .seal_under_code(&apple, &SecretString::from(asp), scope, now)
+            .seal_under_code(&apple, &SecretString::from(asp), scope, now, None)
             .await
             .expect("seal");
         let issued = store

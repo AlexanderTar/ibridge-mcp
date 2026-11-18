@@ -57,6 +57,10 @@ To keep one server running in the background on macOS or Linux, `ibridge daemon 
 
 Download `ibridge-<target>.mcpb` for your platform from the releases page and open it. Claude Desktop asks for your Apple ID and the app-specific password, keeps the password out of the config file and passes it to the server as an environment variable.
 
+## Hosted service
+
+The hosted service at [ibridge.fyi](https://ibridge.fyi) is for Claude.ai and other remote MCP clients. Sign in with Apple, then connect your iCloud address with an app-specific password. It costs US$1.99 per month or US$19.99 per year. Running it locally or [self-hosting](docs/self-host.md) is free and never gated.
+
 ## Security
 
 Credentials are only ever sent to Apple's iCloud hosts. Mail, event and contact text reaches Claude marked as untrusted content. See [SECURITY.md](SECURITY.md) to report a problem. The hosted server's sealing, its limits and its threat model are in [docs/security-model.md](docs/security-model.md), and running your own copy is in [docs/self-host.md](docs/self-host.md).

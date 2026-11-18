@@ -82,7 +82,7 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "wrong schema");
         assert!(body.contains("migrations"), "names the check: {body}");
 
-        sqlx::query("PRAGMA user_version = 3")
+        sqlx::query("PRAGMA user_version = 4")
             .execute(store.pool())
             .await
             .expect("restore version");

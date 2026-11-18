@@ -19,26 +19,35 @@ use url::Url;
 
 use super::client::ClientInfo;
 use super::codes::PendingCode;
+use super::pending::PENDING_COOKIE;
 use super::{Peer, Shared, address_key};
-use crate::store::Scope;
-use crate::web::{GENERIC_FAILURE, csrf_matches, harden, html, message, random_token, set_cookie};
+use crate::billing::{Access, FULL, PRICE_TEXT, access, room_for};
+use crate::pages::account::{address_to_use, link_refusal, session_of};
+use crate::store::{Scope, StoreError, User};
+use crate::web::{
+    GENERIC_FAILURE, cookie_value, csrf_matches, harden, html, message, random_token, set_cookie,
+};
 
 const CSRF_COOKIE: &str = "__Host-ibridge_csrf";
 const CSRF_LIFETIME_SECS: u32 = 30 * 60;
 const MAX_FORM: usize = 8 * 1024;
 const MAX_STATE: usize = 512;
 const MAX_SCOPE: usize = 256;
+/// A stored request waits as long as the store keeps it.
+const PENDING_SECS: u32 = 60 * 60;
+const TROUBLE: &str = "Something went wrong on our side. Try signing in again in a moment.";
 
 pub(super) fn routes(shared: &Arc<Shared>) -> Router {
     Router::new()
         .route("/authorize", get(show).post(submit))
+        .route("/authorize/resume", get(resume))
         .layer(DefaultBodyLimit::max(MAX_FORM))
         .with_state(Arc::clone(shared))
 }
 
 /// The authorization request, from the query string or the posted form.
-#[derive(Deserialize)]
-struct Params {
+#[derive(Clone, Deserialize)]
+pub(crate) struct Params {
     response_type: Option<String>,
     client_id: Option<String>,
     redirect_uri: Option<String>,
@@ -99,11 +108,39 @@ struct AuthorizePage<'a> {
     apple_id: &'a str,
     read_only: bool,
     error: Option<&'a str>,
+    /// Step 1: the stored request's id, to come back to after Sign in with Apple.
+    sign_in: Option<&'a str>,
+    /// Step 2: the plans to choose from.
+    plan: Option<PlanStep<'a>>,
+    /// Step 3: the iCloud address already linked to this user, who connects it again.
+    linked: Option<&'a str>,
+    /// The person already signed in with Apple.
+    signed_in: bool,
+    price: &'static str,
+}
+
+/// What the plan step posts to `/billing/checkout`.
+struct PlanStep<'a> {
+    /// The signed-in session's own token, which checkout checks.
+    csrf: &'a str,
+    /// The stored request's id.
+    pending: &'a str,
+}
+
+/// How far a person has got through connecting.
+enum Step {
+    /// Sign in with Apple is off, or the person is signed in with a plan: the password step.
+    Connect(Option<User>),
+    /// Not signed in with Apple yet.
+    SignIn,
+    /// Signed in, with no plan, and the service would take them: pick one.
+    Plan { csrf: String },
 }
 
 async fn show(
     State(shared): State<Arc<Shared>>,
     peer: Peer,
+    headers: HeaderMap,
     Query(params): Query<Params>,
 ) -> Response {
     if !shared.lookups.allow(&peer.0, Instant::now()) {
@@ -113,29 +150,198 @@ async fn show(
             GENERIC_FAILURE,
         );
     }
-    match validate(&shared, &params).await {
-        Err(refusal) => refuse(&shared, refusal),
-        Ok(valid) => {
+    form_for(&shared, &headers, &params, None).await
+}
+
+/// The query of `/authorize/resume`: the id a stored request was kept under.
+#[derive(Deserialize)]
+struct Resume {
+    pending: String,
+}
+
+/// Shows a stored `/authorize` request again, to the browser that stored it and nobody else.
+async fn resume(
+    State(shared): State<Arc<Shared>>,
+    peer: Peer,
+    headers: HeaderMap,
+    Query(query): Query<Resume>,
+) -> Response {
+    if !shared.lookups.allow(&peer.0, Instant::now()) {
+        return message(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many requests",
+            GENERIC_FAILURE,
+        );
+    }
+    let stored = cookie_value(&headers, PENDING_COOKIE).and_then(|owner| {
+        shared
+            .pending_authorize
+            .get(&query.pending, owner, Instant::now())
+    });
+    match stored {
+        Some(params) => form_for(&shared, &headers, &params, Some(&query.pending)).await,
+        None => message(
+            StatusCode::BAD_REQUEST,
+            "This page expired",
+            "This sign-in page expired. Go back to the app and start the sign-in again.",
+        ),
+    }
+}
+
+/// Validates the request and renders the step the person is at.
+///
+/// `resumed` is the id of a stored request this page came back from, when it did.
+async fn form_for(
+    shared: &Shared,
+    headers: &HeaderMap,
+    params: &Params,
+    resumed: Option<&str>,
+) -> Response {
+    let valid = match validate(shared, params).await {
+        Ok(valid) => valid,
+        Err(refusal) => return refuse(shared, refusal),
+    };
+    let step = match step_of(shared, headers).await {
+        Ok(step) => step,
+        Err(page) => return *page,
+    };
+    match step {
+        Step::Connect(user) => {
             let Some(token) = random_token() else {
                 tracing::error!("random source failed while making a sign-in token");
                 return message(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Something went wrong",
-                    "Something went wrong on our side. Try signing in again in a moment.",
+                    TROUBLE,
                 );
             };
-            let read_only = !valid.wants_write;
+            let signed_in = user.is_some();
+            let linked = user.and_then(|user| user.account);
             let fill = Fill {
                 csrf: &token,
                 apple_id: "",
-                read_only,
+                read_only: !valid.wants_write,
                 error: None,
+                linked: linked.as_ref(),
+                signed_in,
             };
             let mut response = form_page(&valid, &fill, StatusCode::OK);
             set_csrf_cookie(&mut response, &token, CSRF_LIFETIME_SECS);
             response
         }
+        Step::SignIn | Step::Plan { .. } => {
+            let (id, new_owner) = match keep(shared, headers, params, resumed) {
+                Ok(kept) => kept,
+                Err(page) => return *page,
+            };
+            let (sign_in, plan) = match &step {
+                Step::Plan { csrf } => (None, Some(PlanStep { csrf, pending: &id })),
+                _ => (Some(id.as_str()), None),
+            };
+            let fill = Fill {
+                csrf: "",
+                apple_id: "",
+                read_only: false,
+                error: None,
+                linked: None,
+                signed_in: plan.is_some(),
+            };
+            let mut response = render(&valid, &fill, sign_in, plan, StatusCode::OK);
+            if let Some(owner) = new_owner {
+                set_cookie(&mut response, PENDING_COOKIE, &owner, PENDING_SECS);
+            }
+            response
+        }
     }
+}
+
+/// Where this person is: not signed in, signed in and in need of a plan, or ready to connect.
+async fn step_of(shared: &Shared, headers: &HeaderMap) -> Result<Step, Box<Response>> {
+    if shared.identity.is_none() {
+        return Ok(Step::Connect(None));
+    }
+    let Some((_, session)) = session_of(shared, headers) else {
+        return Ok(Step::SignIn);
+    };
+    let Some(user) = signed_in_user(shared, session.principal.user()).await? else {
+        return Ok(Step::SignIn);
+    };
+    if shared.billing.is_none() || access(&user) == Access::Allowed {
+        return Ok(Step::Connect(Some(user)));
+    }
+    // Nobody pays for a service they cannot join: this is checked before checkout is offered.
+    let room = room_for(shared, &user).await.map_err(|error| {
+        tracing::error!(%error, "could not count accounts");
+        Box::new(message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong",
+            TROUBLE,
+        ))
+    })?;
+    match room.refusal() {
+        None => Ok(Step::Plan { csrf: session.csrf }),
+        Some((title, text)) => Err(Box::new(message(
+            StatusCode::SERVICE_UNAVAILABLE,
+            title,
+            text,
+        ))),
+    }
+}
+
+async fn signed_in_user(
+    shared: &Shared,
+    id: Option<crate::store::UserId>,
+) -> Result<Option<User>, Box<Response>> {
+    let Some(id) = id else {
+        return Ok(None);
+    };
+    shared.store.user(id).await.map_err(|error| {
+        tracing::error!(%error, "could not read a signed-in user");
+        Box::new(message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong",
+            TROUBLE,
+        ))
+    })
+}
+
+/// Stores the request so it survives Sign in with Apple and Stripe, owned by this browser.
+///
+/// Returns its id, and the owner value to set as a cookie when the browser had none.
+fn keep(
+    shared: &Shared,
+    headers: &HeaderMap,
+    params: &Params,
+    resumed: Option<&str>,
+) -> Result<(String, Option<String>), Box<Response>> {
+    let too_many = || {
+        Box::new(message(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many sign-ins",
+            "Many people are signing in right now. Wait a minute, then try again.",
+        ))
+    };
+    let (owner, new_owner) = if let Some(owner) = cookie_value(headers, PENDING_COOKIE) {
+        (owner.to_owned(), None)
+    } else {
+        let owner = random_token().ok_or_else(|| {
+            Box::new(message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Something went wrong",
+                TROUBLE,
+            ))
+        })?;
+        (owner.clone(), Some(owner))
+    };
+    // A request this browser already stored keeps its id.
+    if let (Some(id), None) = (resumed, &new_owner) {
+        return Ok((id.to_owned(), None));
+    }
+    let id = shared
+        .pending_authorize
+        .put(params.clone(), &owner, Instant::now())
+        .ok_or_else(too_many)?;
+    Ok((id, new_owner))
 }
 
 async fn submit(
@@ -151,8 +357,18 @@ async fn submit(
             "This sign-in page expired. Go back to the app and start the sign-in again.",
         );
     }
-    let apple_id = AppleId::try_from(form.apple_id.trim()).ok();
-    let address = apple_id.as_ref().map(address_key);
+    // With Sign in with Apple on, the person must be signed in, and have a plan if billing
+    // is on, before anything is asked of iCloud: posting straight to this page skips no step.
+    let user = match connect_user(&shared, &headers).await {
+        Ok(user) => user,
+        Err(page) => return *page,
+    };
+    // Which address the person is connecting. A linked user can connect only that one.
+    let chosen = match &user {
+        Some(user) => address_to_use(&shared, user.account.clone(), Some(&form.apple_id)),
+        None => AppleId::try_from(form.apple_id.trim()).map_err(|_| GENERIC_FAILURE.to_owned()),
+    };
+    let address = chosen.as_ref().ok().map(address_key);
     if !shared
         .limits
         .allow(&peer.0, address.as_deref(), Instant::now())
@@ -168,12 +384,15 @@ async fn submit(
         Err(refusal) => return refuse(&shared, refusal),
     };
     let read_only = form.read_only.is_some();
-    let again = |status| {
+    let linked = user.as_ref().and_then(|user| user.account.as_ref());
+    let again = |status, error: &str| {
         let fill = Fill {
             csrf: &form.csrf,
             apple_id: form.apple_id.trim(),
             read_only,
-            error: Some(GENERIC_FAILURE),
+            error: Some(error),
+            linked,
+            signed_in: user.is_some(),
         };
         form_page(&valid, &fill, status)
     };
@@ -181,16 +400,18 @@ async fn submit(
     // waits for the live iCloud check, so response time shows which addresses are allowed.
     // Accepted for self-host, where the sign-in page is reached by the owner's own
     // clients; a fixed minimum response time for refusals is the upgrade.
-    let Some(apple_id) = apple_id.filter(|id| shared.config.may_sign_in(id)) else {
-        return again(StatusCode::BAD_REQUEST);
+    let apple_id = match chosen {
+        Ok(apple_id) if shared.config.may_sign_in(&apple_id) => apple_id,
+        Ok(_) => return again(StatusCode::BAD_REQUEST, GENERIC_FAILURE),
+        Err(refusal) => return again(StatusCode::BAD_REQUEST, &refusal),
     };
     let credentials = Credentials::new(apple_id, SecretString::from(form.password));
     let validated = match shared.checker.check(credentials).await {
         Ok(validated) => validated,
-        Err(crate::store::StoreError::Rejected) => return again(StatusCode::BAD_REQUEST),
+        Err(StoreError::Rejected) => return again(StatusCode::BAD_REQUEST, GENERIC_FAILURE),
         Err(error) => {
             tracing::error!(%error, "sign-in check failed");
-            return again(StatusCode::BAD_REQUEST);
+            return again(StatusCode::BAD_REQUEST, GENERIC_FAILURE);
         }
     };
     // A client that asked for read alone never gets write, whatever the box says.
@@ -201,27 +422,16 @@ async fn submit(
     };
     let issued = match shared
         .store
-        .seal_validated_under_code(&validated, scope, SystemTime::now())
+        .seal_validated_under_code(
+            &validated,
+            scope,
+            SystemTime::now(),
+            user.as_ref().map(|user| user.id),
+        )
         .await
     {
         Ok(issued) => issued,
-        // The page does not say why, so it cannot be used to learn which accounts are suspended.
-        Err(crate::store::StoreError::Suspended) => return again(StatusCode::BAD_REQUEST),
-        Err(crate::store::StoreError::SignupsFull) => {
-            return message(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Sign-ups are full",
-                "This service is not taking new accounts right now. Try again later.",
-            );
-        }
-        Err(error) => {
-            tracing::error!(%error, "could not seal the sign-in");
-            return message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Something went wrong",
-                "Something went wrong on our side. Try signing in again in a moment.",
-            );
-        }
+        Err(error) => return seal_refused(&error, again),
     };
     // A registration someone signed in through is kept; unused ones are swept.
     if let Err(error) = shared.registry.mark_used(&valid.client.id).await {
@@ -245,6 +455,52 @@ async fn submit(
     );
     set_csrf_cookie(&mut response, "", 0);
     response
+}
+
+/// The page for a sign-in the store would not seal.
+fn seal_refused(error: &StoreError, again: impl Fn(StatusCode, &str) -> Response) -> Response {
+    match error {
+        // The page does not say why, so it cannot be used to learn which accounts are suspended.
+        StoreError::Suspended => again(StatusCode::BAD_REQUEST, GENERIC_FAILURE),
+        StoreError::LinkedToOther { .. } | StoreError::AddressTaken => {
+            again(StatusCode::BAD_REQUEST, &link_refusal(error))
+        }
+        StoreError::SignupsFull => message(StatusCode::SERVICE_UNAVAILABLE, FULL.0, FULL.1),
+        _ => {
+            tracing::error!(%error, "could not seal the sign-in");
+            message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Something went wrong",
+                TROUBLE,
+            )
+        }
+    }
+}
+
+/// The Sign in with Apple user a connection is for: `None` when Sign in with Apple is off,
+/// and the page to answer with when it is on and the person is not ready to connect.
+async fn connect_user(shared: &Shared, headers: &HeaderMap) -> Result<Option<User>, Box<Response>> {
+    if shared.identity.is_none() {
+        return Ok(None);
+    }
+    let session = session_of(shared, headers).map(|(_, session)| session);
+    let Some(user) =
+        signed_in_user(shared, session.and_then(|session| session.principal.user())).await?
+    else {
+        return Err(Box::new(message(
+            StatusCode::FORBIDDEN,
+            "Sign in first",
+            "Sign in with Apple before you connect. Go back to the app and start again.",
+        )));
+    };
+    if shared.billing.is_some() && access(&user) == Access::Denied {
+        return Err(Box::new(message(
+            StatusCode::FORBIDDEN,
+            "Choose a plan first",
+            "Choose a plan before you connect. Go back to the app and start again.",
+        )));
+    }
+    Ok(Some(user))
 }
 
 /// Checks everything about the request except the person signing in.
@@ -395,9 +651,24 @@ struct Fill<'a> {
     apple_id: &'a str,
     read_only: bool,
     error: Option<&'a str>,
+    /// The address linked to the signed-in user, who connects that one.
+    linked: Option<&'a AppleId>,
+    /// The person already signed in with Apple, so the page does not say to sign in.
+    signed_in: bool,
 }
 
+/// The password step.
 fn form_page(valid: &Valid, fill: &Fill<'_>, status: StatusCode) -> Response {
+    render(valid, fill, None, None, status)
+}
+
+fn render(
+    valid: &Valid,
+    fill: &Fill<'_>,
+    sign_in: Option<&str>,
+    plan: Option<PlanStep<'_>>,
+    status: StatusCode,
+) -> Response {
     let host = redirect_host(&valid.redirect_uri);
     let page = AuthorizePage {
         client_name: &valid.client.name,
@@ -412,6 +683,11 @@ fn form_page(valid: &Valid, fill: &Fill<'_>, status: StatusCode) -> Response {
         apple_id: fill.apple_id,
         read_only: fill.read_only,
         error: fill.error,
+        sign_in,
+        plan,
+        linked: fill.linked.map(AppleId::as_str),
+        signed_in: fill.signed_in,
+        price: PRICE_TEXT,
     };
     html(status, page.render())
 }
@@ -1077,5 +1353,130 @@ mod tests {
             StatusCode::SEE_OTHER,
             "multi-tenant lets anyone try"
         );
+    }
+
+    const OWNER: &str = "__Host-ibridge_pending=owner-cookie-value";
+    const EXPIRED_TEXT: &str = "This page expired";
+
+    fn stored_params() -> super::Params {
+        let query = Harness::authorize_path(&[], &[]);
+        let query = query.split_once('?').expect("a query").1;
+        serde_json::from_value(
+            url::form_urlencoded::parse(query.as_bytes())
+                .map(|(name, value)| {
+                    (
+                        name.into_owned(),
+                        serde_json::Value::String(value.into_owned()),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into(),
+        )
+        .expect("params")
+    }
+
+    #[tokio::test]
+    async fn authorize_resume_renders_stored_request() {
+        let (h, shared) = crate::oauth::test_support::harness_with_shared().await;
+        let id = shared
+            .pending_authorize
+            .put(
+                stored_params(),
+                "owner-cookie-value",
+                std::time::Instant::now(),
+            )
+            .expect("stored");
+        let reply = h
+            .get_path(&format!("/authorize/resume?pending={id}"), IP, Some(OWNER))
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+        assert!(
+            reply.text.contains("Claude Test"),
+            "the stored client is shown"
+        );
+        assert_eq!(
+            reply.input("code_challenge"),
+            crate::oauth::test_support::CHALLENGE,
+            "the page carries the stored request"
+        );
+        assert!(
+            reply
+                .headers
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .any(|value| value
+                    .to_str()
+                    .is_ok_and(|text| text.starts_with("__Host-ibridge_csrf="))),
+            "it sets the form's CSRF cookie like /authorize does"
+        );
+        let again = h
+            .get_path(&format!("/authorize/resume?pending={id}"), IP, Some(OWNER))
+            .await;
+        assert_eq!(
+            again.status,
+            StatusCode::OK,
+            "resuming twice works until the request expires"
+        );
+    }
+
+    #[tokio::test]
+    async fn authorize_resume_refuses_another_owner() {
+        let (h, shared) = crate::oauth::test_support::harness_with_shared().await;
+        let id = shared
+            .pending_authorize
+            .put(
+                stored_params(),
+                "owner-cookie-value",
+                std::time::Instant::now(),
+            )
+            .expect("stored");
+        for cookie in [
+            Some("__Host-ibridge_pending=someone-else"),
+            Some("__Host-ibridge_pending="),
+            None,
+        ] {
+            let reply = h
+                .get_path(&format!("/authorize/resume?pending={id}"), IP, cookie)
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::BAD_REQUEST,
+                "{cookie:?}: {}",
+                reply.text
+            );
+            assert!(
+                reply.text.contains(EXPIRED_TEXT),
+                "{cookie:?}: {}",
+                reply.text
+            );
+            assert!(
+                !reply.text.contains("Claude Test"),
+                "nothing of the request leaks"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn authorize_resume_unknown_or_expired_shows_expired_page() {
+        let (h, shared) = crate::oauth::test_support::harness_with_shared().await;
+        let two_hours_ago = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_hours(2))
+            .expect("the clock has run for two hours");
+        let old = shared
+            .pending_authorize
+            .put(stored_params(), "owner-cookie-value", two_hours_ago)
+            .expect("stored");
+        for id in [old.as_str(), "unknown-id"] {
+            let reply = h
+                .get_path(&format!("/authorize/resume?pending={id}"), IP, Some(OWNER))
+                .await;
+            assert_eq!(
+                reply.status,
+                StatusCode::BAD_REQUEST,
+                "{id}: {}",
+                reply.text
+            );
+            assert!(reply.text.contains(EXPIRED_TEXT), "{id}: {}", reply.text);
+        }
     }
 }

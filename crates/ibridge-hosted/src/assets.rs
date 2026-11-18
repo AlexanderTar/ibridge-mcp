@@ -40,6 +40,13 @@ const APPLE_LOGO_CSS: &str = "
 .btn-apple::before { content: \"\"; flex: none; width: 56px; height: 56px; margin: -6px -6px -6px -14px; background: var(--apple-logo) center / 56px 56px no-repeat; }
 ";
 const FAVICON: &str = include_str!("../assets/design/b-cloud-arch-favicon.svg");
+/// The icon at the server root: a full-bleed square with solid colours. Claude's connector
+/// list ignores the transparent, colour-scheme-aware `FAVICON`, so the root files are a tile.
+const ROOT_FAVICON: &str = include_str!("../assets/favicon.svg");
+/// `favicon.svg` at 32 × 32.
+const ROOT_FAVICON_PNG: &[u8] = include_bytes!("../assets/favicon-32.png");
+/// `favicon.svg` at 16, 32 and 48 px, for the clients that ask for `/favicon.ico`.
+const ROOT_FAVICON_ICO: &[u8] = include_bytes!("../assets/favicon.ico");
 const MARK_LIGHT: &str = include_str!("../assets/design/b-cloud-arch-mark-light.svg");
 const MARK_DARK: &str = include_str!("../assets/design/b-cloud-arch-mark-dark.svg");
 /// `b-cloud-arch-tile-light.svg` at 180 × 180, because iOS ignores an SVG touch icon.
@@ -84,6 +91,22 @@ pub(crate) fn routes() -> Router {
         )
         .route(
             "/static/apple-touch-icon.png",
+            get(|| async { asset("image/png", TOUCH_ICON) }),
+        )
+        .route(
+            "/favicon.svg",
+            get(|| async { asset("image/svg+xml", ROOT_FAVICON.as_bytes()) }),
+        )
+        .route(
+            "/favicon-32.png",
+            get(|| async { asset("image/png", ROOT_FAVICON_PNG) }),
+        )
+        .route(
+            "/favicon.ico",
+            get(|| async { asset("image/x-icon", ROOT_FAVICON_ICO) }),
+        )
+        .route(
+            "/apple-touch-icon.png",
             get(|| async { asset("image/png", TOUCH_ICON) }),
         );
     #[cfg(apple_logo)]

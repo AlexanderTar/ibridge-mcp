@@ -281,6 +281,8 @@ pub(crate) struct Reply {
     pub(crate) status: StatusCode,
     pub(crate) headers: HeaderMap,
     pub(crate) text: String,
+    /// The body as sent, for the binary files `text` would mangle.
+    pub(crate) bytes: Vec<u8>,
 }
 
 impl Reply {
@@ -349,6 +351,7 @@ impl Harness {
             status,
             headers,
             text: String::from_utf8_lossy(&bytes).into_owned(),
+            bytes: bytes.to_vec(),
         }
     }
 

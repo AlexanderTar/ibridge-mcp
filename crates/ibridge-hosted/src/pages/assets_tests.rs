@@ -10,8 +10,13 @@ use crate::oauth::Access;
 use crate::oauth::test_support::{Harness, harness};
 
 const CSS: &str = "/static/ibridge.css";
-const FAVICON: &str = "/static/favicon.svg";
-const TOUCH_ICON: &str = "/static/apple-touch-icon.png";
+const STATIC_FAVICON: &str = "/static/favicon.svg";
+const STATIC_TOUCH_ICON: &str = "/static/apple-touch-icon.png";
+// The icon files at the server root, where Claude's connector list looks for them.
+const FAVICON: &str = "/favicon.svg";
+const FAVICON_PNG: &str = "/favicon-32.png";
+const FAVICON_ICO: &str = "/favicon.ico";
+const TOUCH_ICON: &str = "/apple-touch-icon.png";
 const MARK_LIGHT: &str = "/static/mark-light.svg";
 const MARK_DARK: &str = "/static/mark-dark.svg";
 
@@ -20,9 +25,13 @@ async fn assets_are_served_with_type_and_cache_headers() {
     let h = harness(Access::MultiTenant).await;
     for (path, kind) in [
         (CSS, "text/css; charset=utf-8"),
-        (FAVICON, "image/svg+xml"),
+        (STATIC_FAVICON, "image/svg+xml"),
         (MARK_LIGHT, "image/svg+xml"),
         (MARK_DARK, "image/svg+xml"),
+        (STATIC_TOUCH_ICON, "image/png"),
+        (FAVICON, "image/svg+xml"),
+        (FAVICON_PNG, "image/png"),
+        (FAVICON_ICO, "image/x-icon"),
         (TOUCH_ICON, "image/png"),
     ] {
         let asset = h.get_path(path, IP, None).await;
@@ -95,7 +104,8 @@ async fn every_page_links_the_assets_and_nothing_external() {
         assert_eq!(page.status, StatusCode::OK, "{path}: {}", page.text);
         for link in [
             format!(r#"rel="stylesheet" href="{CSS}""#),
-            format!(r#"rel="icon" href="{FAVICON}""#),
+            format!(r#"rel="icon" href="{FAVICON}" type="image/svg+xml""#),
+            format!(r#"rel="icon" href="{FAVICON_PNG}" type="image/png" sizes="32x32""#),
             format!(r#"rel="apple-touch-icon" href="{TOUCH_ICON}""#),
             format!(r#"src="{MARK_LIGHT}""#),
             format!(r#"src="{MARK_DARK}""#),
@@ -131,6 +141,35 @@ async fn every_page_links_the_assets_and_nothing_external() {
         }
         assert!(!csp.contains("unsafe-inline"), "{path} CSP: {csp}");
     }
+}
+
+/// Claude's connector list shows the root `/favicon.svg` only when it is a full-bleed square
+/// with solid colours: a transparent or rounded tile, or colours chosen by a media query, show
+/// as no icon. The ICO holds the three sizes browsers ask for.
+#[tokio::test]
+async fn the_root_favicons_are_a_square_tile_in_every_size() {
+    let h = harness(Access::MultiTenant).await;
+    let svg = h.get_path(FAVICON, IP, None).await.text;
+    assert!(
+        svg.contains(r#"<rect x="0" y="0" width="64" height="64""#),
+        "a full-bleed rect: {svg}"
+    );
+    for forbidden in ["rx=", "@media", "<style", "stroke=\"#D5E3E6\""] {
+        assert!(
+            !svg.contains(forbidden),
+            "no {forbidden} in the tile: {svg}"
+        );
+    }
+
+    let png = h.get_path(FAVICON_PNG, IP, None).await.bytes;
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n", "a PNG");
+    assert_eq!(png[16..24], [0, 0, 0, 32, 0, 0, 0, 32], "32 x 32");
+
+    let ico = h.get_path(FAVICON_ICO, IP, None).await.bytes;
+    assert_eq!(ico[..4], [0, 0, 1, 0], "an ICO header");
+    assert_eq!(ico[4], 3, "three images");
+    let sizes: Vec<u8> = (0..3).map(|i| ico[6 + 16 * i]).collect();
+    assert_eq!(sizes, [16, 32, 48], "the sizes");
 }
 
 const LOGO_FILES: [&str; 2] = ["apple-logo-white.svg", "apple-logo-black.svg"];

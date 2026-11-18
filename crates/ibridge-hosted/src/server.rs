@@ -14,7 +14,7 @@ use ibridge_server::http::{base_config, mcp_service};
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData, Icon,
     ListToolsResult, PaginatedRequestParams, ServerConfig,
 };
 use rmcp::service::RequestContext;
@@ -57,11 +57,22 @@ pub trait ServerSource: Send + Sync + 'static {
 /// The service answers only to the public host, so a request that reached it under
 /// another name (DNS rebinding) is refused. It has no auth of its own: pass the
 /// router to [`crate::router`], which puts it behind the token check.
+///
+/// `info` is reported as given, with `serverInfo.icons` set to the root favicons at the public URL.
 pub fn mcp_router<P: ServerSource>(
     source: Arc<P>,
-    info: ServerConfig,
+    mut info: ServerConfig,
     config: &OAuthConfig,
 ) -> Router {
+    // The icons are the root favicons `assets::routes` serves, at the public URL.
+    info.server_info.icons = Some(vec![
+        Icon::new(config.url("/favicon.svg"))
+            .with_mime_type("image/svg+xml")
+            .with_sizes(vec!["any".to_owned()]),
+        Icon::new(config.url("/favicon-32.png"))
+            .with_mime_type("image/png")
+            .with_sizes(vec!["32x32".to_owned()]),
+    ]);
     let handler = HostedHandler::new(source, info).with_account_url(config.url("/account"));
     let service = mcp_service(
         move || handler.clone(),

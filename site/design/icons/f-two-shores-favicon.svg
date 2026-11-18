@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <style>:root{--ink:#0F2538;--teal:#0B7A80;--coral:#E0532B}@media (prefers-color-scheme:dark){:root{--ink:#EAF2F5;--teal:#5CC8CC;--coral:#FF7F57}}</style>
+  <path d="M13 50 Q32 -14 51 50" fill="none" style="stroke:var(--coral)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M18 40 A8 8 0 1 1 19 24.05 A12 12 0 0 1 42.87 22.26 A9 9 0 1 1 45 40 Z" style="fill:var(--teal)" transform="translate(-6 31) scale(0.7)"/>
+  <path d="M18 40 A8 8 0 1 1 19 24.05 A12 12 0 0 1 42.87 22.26 A9 9 0 1 1 45 40 Z" style="fill:var(--ink)" transform="translate(26 31) scale(0.7)"/>
+</svg>

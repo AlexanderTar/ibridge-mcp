@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iBridge · Connect iCloud to your AI assistant</title>
+<meta name="description" content="iBridge is an MCP server that lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts.">
+<link rel="icon" href="../icons/d-i-pylon-favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/d-i-pylon-tile-light.svg">
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../components.css">
+<style>
+  /* Direction 2 · Workbench: product-first split hero, bento grid on a soft grey page. */
+  body { background: var(--color-bg-subtle); }
+  .nav { background: color-mix(in srgb, var(--color-bg-subtle) 82%, transparent); }
+  .split { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 72px); align-items: center; padding-block: clamp(48px, 7vw, 104px) clamp(56px, 7vw, 96px); }
+  .split .display { font-size: clamp(2.5rem, 1.8rem + 2.8vw, 4rem); }
+  .split .lede { margin-top: var(--space-5); max-width: 560px; }
+  .split .copy-box { margin-top: var(--space-6); max-width: 480px; background: var(--color-surface); }
+  .split .btn-row { margin-top: var(--space-5); }
+  .consent { max-width: 460px; justify-self: end; width: 100%; }
+  .consent .window-body { display: grid; gap: var(--space-4); }
+  .consent-head { display: flex; align-items: center; gap: var(--space-3); }
+  .consent-head img { width: 40px; height: 40px; }
+  .consent-head b { font-size: 1.0625rem; letter-spacing: -0.01em; }
+  .consent-lede { font-size: var(--text-small); color: var(--color-text-secondary); }
+  /* Pictures of the real connect page's fields: flat boxes, inside the inert .window only. */
+  .field { display: grid; gap: 6px; }
+  .field-label { font-size: var(--text-caption); font-weight: var(--weight-semibold); color: var(--color-text); }
+  .field-box { display: block; padding: 10px 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); font-size: var(--text-small); color: var(--color-text); }
+  .field-box--secret { font-family: var(--font-mono); letter-spacing: 0.04em; }
+  .field-hint { font-size: var(--text-caption); line-height: var(--leading-caption); color: var(--color-text-tertiary); }
+  .check { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-3); font-size: var(--text-small); color: var(--color-text-secondary); }
+  .check b { color: var(--color-text); }
+  .check-box { width: 20px; height: 20px; margin-top: 1px; border-radius: 6px; border: 1.5px solid var(--color-border-strong); background: var(--color-surface); }
+  .check-box { position: relative; }
+  .check-box[data-checked] { background: var(--color-brand); border-color: var(--color-brand); }
+  .check-box[data-checked]::after { content: ""; position: absolute; inset: 0; background: var(--color-on-brand); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3.2 3.2L15 6.8' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 18px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3.2 3.2L15 6.8' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 18px no-repeat; }
+  .consent .btn { width: 100%; }
+  .bento { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-4); }
+  .tile { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--space-6); }
+  .tile p { color: var(--color-text-secondary); font-size: var(--text-small); margin-top: var(--space-2); }
+  .tile .h3 { margin-top: var(--space-4); }
+  .span-4 { grid-column: span 4; } .span-2 { grid-column: span 2; } .span-3 { grid-column: span 3; }
+  .apps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); margin-top: var(--space-5); }
+  .app { border-radius: var(--radius-lg); background: var(--color-surface-sunken); padding: var(--space-4); }
+  .app .feature-icon { background: var(--color-surface); }
+  .app b { display: block; margin-top: var(--space-3); font-size: var(--text-small); }
+  .app span { display: block; font-size: var(--text-caption); line-height: var(--leading-caption); color: var(--color-text-tertiary); margin-top: 2px; }
+  .step-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); counter-reset: step; list-style: none; margin: 0; padding: 0; }
+  .step-cards li { counter-increment: step; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5); }
+  .step-cards li::before { content: counter(step); display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--color-brand-tint); color: var(--color-link); font-weight: var(--weight-bold); font-size: var(--text-small); margin-bottom: var(--space-4); }
+  .step-cards b { display: block; }
+  .step-cards p { color: var(--color-text-secondary); font-size: var(--text-small); margin-top: var(--space-1); }
+  .connect-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-4); }
+  .connect-row .tile { padding: var(--space-5); }
+  .connect-row .copy-box { margin-top: var(--space-3); }
+  .faq-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: var(--space-7); align-items: start; }
+  .faq-split .faq { border-top: 0; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: 0 var(--space-6); }
+  .faq-split .faq details:last-child { border-bottom: 0; }
+  .price-card .price-row { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+  .price-card .or { color: var(--color-text-tertiary); font-size: var(--text-small); margin: var(--space-1) 0; }
+  .price-card .price + .or + .price { margin-top: 0; font-size: 1.75rem; }
+  .footer { background: var(--color-bg); }
+  @media (max-width: 960px) {
+    .split, .faq-split { grid-template-columns: minmax(0, 1fr); }
+    .consent { justify-self: stretch; max-width: none; }
+    .span-4, .span-2, .span-3 { grid-column: span 6; }
+    .step-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .connect-row { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .apps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .step-cards { grid-template-columns: minmax(0, 1fr); }
+    .tile { padding: var(--space-5); }
+    .faq-split .faq { padding: 0 var(--space-5); }
+  }
+</style>
+</head>
+<body>
+<nav class="nav" aria-label="Main">
+  <div class="container nav-inner">
+    <a class="logo" href="#top"><img class="when-light" src="../icons/d-i-pylon-mark-light.svg" alt=""><img class="when-dark" src="../icons/d-i-pylon-mark-dark.svg" alt=""><span>iBridge</span></a>
+    <ul class="nav-links"><li><a href="#how">How it works</a></li><li><a href="#security">Security</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#faq">FAQ</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
+    <a class="btn btn--primary" href="#how">Connect</a>
+    <details class="nav-menu"><summary aria-label="Menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h14M3 14h14"/></svg></summary>
+      <ul><li><a href="#how">How it works</a></li><li><a href="#security">Security</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#faq">FAQ</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li><li><a href="#how">Connect</a></li></ul></details>
+  </div>
+</nav>
+
+<main id="top">
+  <header class="container split">
+    <div>
+      <span class="eyebrow">MCP server for iCloud</span>
+      <h1 class="display">Bring iCloud to your AI&nbsp;assistant.</h1>
+      <p class="lede">iBridge lets Claude and other AI assistants read and manage your iCloud Mail, Calendar, Reminders and Contacts. You choose read-only or full access, and you can revoke it any time.</p>
+      <span class="copy-box" aria-label="Connector URL"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span>
+      <div class="btn-row"><a class="btn btn--primary btn--lg" href="#how">How to connect</a><a class="btn btn--ghost btn--lg" href="#free">Or run it yourself, free</a></div>
+    </div>
+    <figure class="consent" style="margin:0">
+      <div class="window" aria-hidden="true">
+        <div class="window-bar"><i></i><i></i><i></i><span>mcp.ibridge.fyi</span></div>
+        <div class="window-body">
+          <div class="consent-head"><img class="when-light" src="../icons/d-i-pylon-tile-light.svg" alt=""><img class="when-dark" src="../icons/d-i-pylon-tile-dark.svg" alt=""><b>Connect iCloud to Claude</b></div>
+          <p class="consent-lede">Claude is asking to use your iCloud Mail, Calendar, Reminders and Contacts.</p>
+          <div class="field"><span class="field-label">Your primary iCloud address</span><span class="field-box">you@icloud.com</span></div>
+          <div class="field"><span class="field-label">App-specific password</span><span class="field-box field-box--secret">••••-••••-••••-••••</span><span class="field-hint">Never use your main Apple ID password here.</span></div>
+          <div class="check"><span class="check-box" data-checked></span><span><b>Read-only access.</b> Claude can read but cannot send, move, change or delete anything.</span></div>
+          <span class="btn btn--primary">Connect</span>
+        </div>
+      </div>
+      <figcaption class="caption" style="margin-top:var(--space-3);text-align:center">Illustration with example data: the connect step, shown in the new design. You enter your iCloud address and an app-specific password, and tick read-only if you want it.</figcaption>
+    </figure>
+  </header>
+
+  <section class="section" id="features" style="padding-top:0">
+    <div class="container bento">
+      <div class="tile span-4">
+        <span class="eyebrow">What it connects</span>
+        <h2 class="h2">Four iCloud apps, one connector.</h2>
+        <div class="apps">
+          <div class="app"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M4 7.5l8 5.5 8-5.5"/></svg></div><b>Mail</b><span>Read and manage messages</span></div>
+          <div class="app"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></div><b>Calendar</b><span>Read and manage events</span></div>
+          <div class="app"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 7h10M10 12h10M10 17h10"/><path d="M3.5 7l1.5 1.5L7.5 6M3.5 12l1.5 1.5L7.5 11"/><circle cx="5.25" cy="17" r="1.5"/></svg></div><b>Reminders</b><span>Read and manage lists</span></div>
+          <div class="app"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.2-3.6 4-5 7-5s5.8 1.4 7 5"/></svg></div><b>Contacts</b><span>Read and manage people</span></div>
+        </div>
+      </div>
+      <div class="tile span-2">
+        <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <h3 class="h3">Read-only or full access</h3>
+        <p>Read-only lets the assistant look. Full access lets it manage things for you.</p>
+        <ul class="access-modes"><li><b>Read-only</b>Reads, but cannot send, move, change or delete anything.</li><li><b>Full access</b>Reads and manages your mail, events, reminders and contacts.</li></ul>
+      </div>
+      <div class="tile span-2" id="security">
+        <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg></div>
+        <h3 class="h3">Encrypted under your key</h3>
+        <p>Your app-specific password is stored encrypted under a key only your connected app holds. <a href="https://mcp.ibridge.fyi/privacy">Privacy policy</a></p>
+      </div>
+      <div class="tile span-2">
+        <div class="feature-icon" style="background:var(--color-accent-tint);color:var(--color-accent-text)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M21 12v2"/></svg></div>
+        <h3 class="h3">Never your main password</h3>
+        <p>Use an app-specific password. Never use your main Apple ID password.</p>
+      </div>
+      <div class="tile span-2">
+        <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></div>
+        <h3 class="h3">Revoke any time</h3>
+        <p>Disconnect from your <a href="https://mcp.ibridge.fyi/account">account page</a> whenever you like.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="how" style="padding-top:0">
+    <div class="container">
+      <div class="section-head section-head--start">
+        <span class="eyebrow">Get started</span>
+        <h2 class="h2">Connect in four steps</h2>
+      </div>
+      <ol class="step-cards">
+        <li><b>Add the connector</b><p>In Claude, open Settings, then Connectors, and add a custom connector with the address below.</p></li>
+        <li><b>Sign in with Apple</b><p>Claude opens the iBridge sign-in page. Sign in with Apple there.</p></li>
+        <li><b>Choose a plan</b><p>Subscribe for US$1.99/month or US$19.99/year. Tax is added at checkout.</p></li>
+        <li><b>Connect iCloud</b><p>Enter your iCloud address and an app-specific password, never your main Apple ID password. Tick “Read-only access” if the assistant should only read. Revoke it any time.</p></li>
+      </ol>
+      <div class="connect-row">
+        <div class="tile"><span class="copy-box-label">Connector address</span><span class="copy-box"><code>https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span><p>Assistants that support MCP sign-in use the same address.</p></div>
+        <div class="tile"><span class="copy-box-label">Claude Code</span><span class="copy-box"><code>claude mcp add <span class="nobr">--transport</span> http ibridge https://<wbr>mcp.ibridge.fyi<wbr>/mcp</code><button type="button">Copy</button></span><p>One command adds iBridge to Claude Code.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="pricing" style="padding-top:0">
+    <div class="container">
+      <div class="section-head section-head--start">
+        <span class="eyebrow">Pricing</span>
+        <h2 class="h2">Hosted, or free to run yourself.</h2>
+      </div>
+      <div class="pricing-grid">
+        <div class="price-card price-card--featured">
+          <span class="tag">Hosted</span>
+          <h3 class="h3">iBridge hosted</h3>
+          <p class="price">US$1.99<small>/month</small></p>
+          <p class="or">or</p>
+          <p class="price">US$19.99<small>/year</small></p>
+          <p class="price-alt">Tax added at checkout.</p>
+          <ul><li>Connector URL for Claude and other assistants</li><li>Sign in with Apple</li><li>Read-only or full access</li><li>Revoke any time</li></ul>
+          <a class="btn btn--primary btn--lg" href="#how">Connect iBridge</a>
+        </div>
+        <div class="price-card" id="free">
+          <span class="tag">Free</span>
+          <h3 class="h3">Open source</h3>
+          <p class="price">Free</p>
+          <p class="price-alt">Apache-2.0 licence.</p>
+          <ul><li>Run locally in Claude Desktop (.mcpb)</li><li>Run locally in Claude Code</li><li>Self-host with Docker</li></ul>
+          <a class="btn btn--secondary btn--lg" href="https://github.com/AlexanderTar/icloud-mcp">View on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="faq" style="padding-top:0">
+    <div class="container faq-split">
+      <div class="section-head section-head--start" style="margin-bottom:0">
+        <h2 class="h2">Questions</h2>
+        <p class="lede">Still unsure? The <a href="https://mcp.ibridge.fyi/privacy">privacy policy</a> and <a href="https://mcp.ibridge.fyi/terms">terms</a> spell out the details.</p>
+      </div>
+      <div class="faq">
+        <details><summary>Is iBridge made by Apple?</summary><div class="answer"><p>No. iBridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p></div></details>
+        <details><summary>Which assistants can use it?</summary><div class="answer"><p>Claude, and other AI assistants that support MCP sign-in. In Claude Code, add it with one command.</p></div></details>
+        <details><summary>Can my assistant change or delete things?</summary><div class="answer"><p>Only with full access. Choose read-only when you connect if you only want it to read. You can revoke access any time from your <a href="https://mcp.ibridge.fyi/account">account page</a>.</p></div></details>
+        <details><summary>Which password do I give it?</summary><div class="answer"><p>An app-specific password, never your main Apple ID password. It is stored encrypted under a key only your connected app holds.</p></div></details>
+        <details><summary>How much does it cost?</summary><div class="answer"><p>The hosted service is US$1.99/month or US$19.99/year, with tax added at checkout. Running it yourself is free.</p></div></details>
+        <details><summary>Can I run it myself?</summary><div class="answer"><p>Yes. iBridge is open source under Apache-2.0. Run it locally in Claude Desktop (.mcpb) or Claude Code, or self-host it with Docker. The code is on <a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a>.</p></div></details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-top">
+      <a class="logo" href="#top"><img class="when-light" src="../icons/d-i-pylon-mark-light.svg" alt=""><img class="when-dark" src="../icons/d-i-pylon-mark-dark.svg" alt=""><span>iBridge</span></a>
+      <ul class="footer-links"><li><a href="https://mcp.ibridge.fyi/privacy">Privacy</a></li><li><a href="https://mcp.ibridge.fyi/terms">Terms</a></li><li><a href="https://mcp.ibridge.fyi/account">Account</a></li><li><a href="https://github.com/AlexanderTar/icloud-mcp">GitHub</a></li></ul>
+    </div>
+    <p class="disclaimer">iBridge is an unofficial service. It is not affiliated with or endorsed by Apple. iCloud is a trademark of Apple Inc.</p>
+  </div>
+</footer>
+<script src="../copy.js"></script>
+</body>
+</html>

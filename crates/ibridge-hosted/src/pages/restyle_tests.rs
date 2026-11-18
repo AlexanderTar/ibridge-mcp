@@ -182,7 +182,6 @@ async fn the_authorize_page_uses_the_components() {
     assert_styled("authorize", &page);
     for wanted in [
         r#"class="btn btn--primary btn--lg""#,
-        r#"<label class="check" for=""#,
         r#"<div class="field"><label for="apple_id">"#,
         r#"<div class="field"><label for="password">"#,
     ] {

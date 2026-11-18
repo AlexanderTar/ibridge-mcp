@@ -722,8 +722,8 @@ fn plan_view(user: &User, room: Room) -> PlanView {
     }
 }
 
-/// The address a new key is for. A user who has linked one can use only that; a user who
-/// has not types one, and it is linked when the key is made.
+/// The address a new key is for. A user who has linked one can use only that, if it may
+/// still sign in; a user who has not types one, and it is linked when the key is made.
 pub(crate) fn address_to_use(
     shared: &Shared,
     linked: Option<AppleId>,
@@ -737,7 +737,10 @@ pub(crate) fn address_to_use(
         {
             Err(link_refusal(&StoreError::LinkedToOther { linked }))
         }
-        (Some(linked), _) => Ok(linked),
+        // The allowlist applies to a linked address too, as it does at /authorize: an
+        // operator who closes the service stops new keys for addresses that fell off it.
+        (Some(linked), _) if shared.config.may_sign_in(&linked) => Ok(linked),
+        (Some(_), _) => Err(GENERIC_FAILURE.to_owned()),
         (None, Some(typed)) => AppleId::try_from(typed)
             .ok()
             .filter(|address| shared.config.may_sign_in(address))

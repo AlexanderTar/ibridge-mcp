@@ -303,6 +303,36 @@ async fn mint_key_other_address_refused() {
 }
 
 #[tokio::test]
+async fn mint_key_for_linked_address_off_the_allowlist_refused() {
+    // The operator closed the service to BEA only, after ada linked ADA.
+    let rig = Setup::default().only(&[BEA]).build().await;
+    let user = rig.linked_user("uid-1", "ada@example.com", ADA).await;
+    let browser = rig.browser(&user);
+    let checks = rig.harness.checks.load(Ordering::SeqCst);
+    let grants = count(&rig, "SELECT COUNT(*) FROM grants").await;
+
+    let refused = rig
+        .post(
+            "/account/keys",
+            &browser,
+            &[("name", "laptop"), ("password", ASP_ALL)],
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(refused.error_text().is_some(), "{}", refused.text);
+    assert_eq!(
+        rig.harness.checks.load(Ordering::SeqCst),
+        checks,
+        "an address that may not sign in is never checked with iCloud"
+    );
+    assert_eq!(
+        count(&rig, "SELECT COUNT(*) FROM grants").await,
+        grants,
+        "no key was made"
+    );
+}
+
+#[tokio::test]
 async fn mint_key_address_of_other_user_refused_without_detail() {
     let rig = Rig::identity_only().await;
     let _owner = rig.linked_user("uid-1", "ada@example.com", ADA).await;

@@ -150,7 +150,7 @@ The paid-plan launch goes in this order. Each stage must pass before the next st
 2. Step 10: set the Sign in with Apple variables.
 3. Step 11: the sandbox stage, on the deployed host, with sandbox Stripe keys.
 4. Step 12: create the live Stripe objects and swap to live keys.
-5. Step 13: the live checks, then comp the owner and test user.
+5. Step 13: the live checks, then link and comp the owner and test user. Do this before you connect Claude.ai and call `account_status`: a grant made before billing was on, such as the datacenter check's, belongs to no user, so it gets the no-plan error. After billing is on, link the owner's address (create an API key on `/account`) and comp it, or disconnect and reconnect Claude.ai so the new grant is tied to the user.
 6. Step 14: open sign-ups.
 
 **Status: none of steps 10 to 13 has been run.** Every command and every check in them is untested against the real services, and the restricted live key's permissions are unproven (see step 12).
@@ -265,7 +265,7 @@ None of these has been run. Tick each with the sha and the date when done:
 - [ ] Real Sign in with Apple on `https://ibridge.fyi` with the Services ID `fyi.ibridge.mcp`.
 - [ ] The live webhook endpoint exists with the pinned `api_version` and the six events, and its first delivery is answered 2xx.
 - [ ] One live Checkout with a user who is **not** comped (the host is closed, so first link an allowlisted address on `/account` by creating an API key), US$1.99 on a real card: `/billing/return` shows an active plan and `tools/call` works. Then cancel from the portal and refund the charge in the Dashboard.
-- [ ] Comp the owner and the test user, so they are never charged. Each must have signed in with Apple once, because comp matches a user row. `ibridge admin comp` takes the Apple email (a private relay address is fine) or the Firebase uid:
+- [ ] Comp the owner and the test user, so they are never charged. Each must have signed in with Apple once and linked their iCloud address (an API key on `/account`), because comp matches a user row and a grant only counts once it belongs to that user. `ibridge admin comp` takes the Apple email (a private relay address is fine) or the Firebase uid:
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --environment production --service ibridge -- ibridge admin comp <owner's Apple email>
@@ -277,7 +277,7 @@ RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --projec
 
 ## 14. Open sign-ups at 50
 
-Only after steps 5 to 13 pass and you have connected Claude.ai to `https://ibridge.fyi/mcp` and called `account_status` yourself. First remove the test account the datacenter check created, so it does not use up one of the 50 places (it holds a sealed password for the test Apple ID until you do):
+Only after steps 5 to 13 pass and you have connected Claude.ai to `https://ibridge.fyi/mcp` and called `account_status` yourself, after the owner's address is linked and comped (step 13); a connection made earlier gets the no-plan error until you reconnect. First remove the test account the datacenter check created, so it does not use up one of the 50 places (it holds a sealed password for the test Apple ID until you do):
 
 ```sh
 RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --environment production --service ibridge -- ibridge admin delete <test Apple ID>

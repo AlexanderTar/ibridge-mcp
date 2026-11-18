@@ -7,6 +7,8 @@ pub(crate) mod account;
 mod account_apple_tests;
 #[cfg(test)]
 mod account_delete_tests;
+#[cfg(test)]
+mod assets_tests;
 mod delete;
 pub(crate) mod landing;
 #[cfg(test)]

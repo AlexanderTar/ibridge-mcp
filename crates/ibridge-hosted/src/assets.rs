@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! The stylesheet and icons the pages link, served by the server itself.
+//!
+//! They are compiled in, so a self-hosted server needs no other site for its look, and the
+//! pages make no outside request. The stylesheet is the design system in `site/design`
+//! (tokens, then components) followed by `assets/server.css`, the few pieces the pages
+//! need beyond it.
+
+use axum::Router;
+use axum::http::{HeaderValue, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+
+const STYLESHEET: &str = concat!(
+    include_str!("../../../site/design/tokens.css"),
+    include_str!("../../../site/design/components.css"),
+    include_str!("../assets/server.css"),
+);
+const FAVICON: &str = include_str!("../../../site/design/icons/b-cloud-arch-favicon.svg");
+const MARK_LIGHT: &str = include_str!("../../../site/design/icons/b-cloud-arch-mark-light.svg");
+const MARK_DARK: &str = include_str!("../../../site/design/icons/b-cloud-arch-mark-dark.svg");
+/// `b-cloud-arch-tile-light.svg` at 180 × 180, because iOS ignores an SVG touch icon.
+const TOUCH_ICON: &[u8] = include_bytes!("../assets/apple-touch-icon.png");
+
+/// A day. The files change only with a new release, and a stale copy is harmless.
+const CACHE: &str = "public, max-age=86400";
+
+pub(crate) fn routes() -> Router {
+    Router::new()
+        .route(
+            "/static/ibridge.css",
+            get(|| async { asset("text/css; charset=utf-8", STYLESHEET.as_bytes()) }),
+        )
+        .route(
+            "/static/favicon.svg",
+            get(|| async { asset("image/svg+xml", FAVICON.as_bytes()) }),
+        )
+        .route(
+            "/static/mark-light.svg",
+            get(|| async { asset("image/svg+xml", MARK_LIGHT.as_bytes()) }),
+        )
+        .route(
+            "/static/mark-dark.svg",
+            get(|| async { asset("image/svg+xml", MARK_DARK.as_bytes()) }),
+        )
+        .route(
+            "/static/apple-touch-icon.png",
+            get(|| async { asset("image/png", TOUCH_ICON) }),
+        )
+}
+
+fn asset(content_type: &'static str, body: &'static [u8]) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (header::CACHE_CONTROL, HeaderValue::from_static(CACHE)),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}

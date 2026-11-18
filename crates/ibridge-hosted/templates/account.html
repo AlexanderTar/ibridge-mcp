@@ -63,7 +63,7 @@
 <p class="hint">{% if billing %}Your plan covers one iCloud address. {% endif %}The first one you connect is the one this account keeps.</p>
 {% endif %}
 <div class="field"><label for="password">App-specific password</label><input id="password" name="password" type="password" autocomplete="off" required maxlength="64"></div>
-<p class="hint">The key keeps your app-specific password sealed under itself. Type it again so we can check it with iCloud and seal it.</p>
+<p class="hint">Your app-specific password is stored encrypted, and only this key can unlock it. Enter it again so we can check it with iCloud.</p>
 <label class="check" for="read_only"><input id="read_only" name="read_only" type="checkbox"><span>Read-only access. The key can read but cannot send, move, change or delete anything.</span></label>
 <button class="btn btn--primary btn--lg" type="submit">Create key</button>
 </form>

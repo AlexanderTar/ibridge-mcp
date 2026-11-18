@@ -37,6 +37,10 @@ fn assert_styled(name: &str, page: &Reply) {
         !text.contains("ibridge") && !html.contains("<title>Your ibridge"),
         "{name} says iBridge in what people read: {text}"
     );
+    assert!(
+        !text.to_lowercase().contains("seal"),
+        "{name} uses the technical word seal in what people read: {text}"
+    );
     for old in [
         r#"class="button""#,
         r#"class="secondary""#,
@@ -148,6 +152,13 @@ async fn the_password_sign_in_and_dashboard_use_the_components() {
 
     let dashboard = h.get_path("/account", IP, Some(&cookie)).await;
     assert_styled("account (with a key)", &dashboard);
+    assert!(
+        dashboard.text.contains(
+            "Your app-specific password is stored encrypted, and only this key can unlock it. Enter it again so we can check it with iCloud."
+        ),
+        "the key form explains the password in plain words: {}",
+        dashboard.text
+    );
     for wanted in [
         r#"<ul class="grants">"#,
         r#"class="btn btn--secondary""#,
@@ -244,6 +255,10 @@ async fn the_public_pages_spell_the_name_and_link_the_product_site() {
             "{path} spells the name wrong: {text}"
         );
         assert!(text.contains("iBridge"), "{path} names the product");
+        assert!(
+            !text.to_lowercase().contains("seal"),
+            "{path} uses the technical word seal: {text}"
+        );
         assert!(
             page.text.contains(r#"<h1 class="h1">"#) && page.text.contains(r#"<h2 class="h3">"#),
             "{path} uses the design system's type roles"

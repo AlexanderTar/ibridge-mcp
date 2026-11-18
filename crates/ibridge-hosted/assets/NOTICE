@@ -1,0 +1,10 @@
+Apple's Sign in with Apple logo
+
+apple-logo-white.svg and apple-logo-black.svg are Apple's artwork, copied unmodified from
+Apple's "Sign in with Apple - Logo Only" set (the white and black logo-only SVG files). They
+are not covered by the Apache License that applies to the rest of this project. They may be used
+only under Apple's Human Interface Guidelines and the Sign in with Apple terms; do not change
+them.
+
+The server serves them only while both files exist (build.rs turns on cfg(apple_logo)). A
+self-hoster who does not want them can delete both files: the button is then text-only.

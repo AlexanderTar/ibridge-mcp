@@ -2,3 +2,8 @@ ibridge
 Copyright 2026 Alexander Taraymovich
 
 Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+Exception: crates/ibridge-hosted/assets/apple-logo-white.svg and apple-logo-black.svg are
+Apple's "Sign in with Apple" logo artwork, copied unmodified from Apple's logo-only set. They
+are Apple's, are not covered by the Apache License of this project, and may be used only under
+Apple's Human Interface Guidelines and Sign in with Apple terms. Delete them to build without.

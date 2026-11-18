@@ -81,8 +81,8 @@ form:not(:has(input[name=confirm]:checked)) .btn--danger { background: var(--col
    with Apple button"): the title is exactly "Sign in with Apple"; the button and its title
    are black on a light page and white on a dark one; it is 44px high (Apple's default) with
    the system font at 43% of that height (19px); it is never narrower than 140px, and the
-   corner radius follows the other buttons (a capsule). The Apple logo is licensed artwork
-   and is not in this repository; assets.rs adds it only when both assets/apple-logo-*.svg exist. */
+   corner radius follows the other buttons (a capsule). The Apple logo is Apple's artwork
+   (assets/NOTICE); assets.rs shows it only while both assets/apple-logo-*.svg exist. */
 :root { --apple-bg: #000; --apple-fg: #fff; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) { --apple-bg: #fff; --apple-fg: #000; }

@@ -49,6 +49,8 @@ docker build -t ibridge:test .             # builds before it is uploaded
 
 Write the sha in the deploy notes. `/privacy` tells users each deployment names its exact version, so keep a record.
 
+Apple's Sign in with Apple logo (`crates/ibridge-hosted/assets/apple-logo-white.svg` and `apple-logo-black.svg`) is committed in the repository, unmodified, so any build from a clean clone shows it: `docker build`, `railway up`, or a Railway deploy that builds the GitHub repository. There is no step to add it and no ignore file to keep it in the upload. It is Apple's artwork, not covered by the Apache-2.0 licence (see `crates/ibridge-hosted/assets/NOTICE`).
+
 ## 3. Create the project, service and volume
 
 ```sh

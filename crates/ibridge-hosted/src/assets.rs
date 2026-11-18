@@ -19,8 +19,8 @@ const STYLESHEET: &str = concat!(
     include_str!("../../../site/design/components.css"),
     include_str!("../assets/server.css"),
 );
-/// Apple's logo, which is licensed artwork and is not in the repository. When both files are
-/// added, `build.rs` turns on `cfg(apple_logo)`: the server then serves them unmodified, and
+/// Apple's logo, Apple's own artwork (see `assets/NOTICE`), committed unmodified. While both
+/// files exist `build.rs` turns on `cfg(apple_logo)`: the server then serves them, and
 /// the button shows the white logo on its black light-mode background and the black one on
 /// its white dark-mode background. Each file draws its own button-coloured square, so the
 /// button keeps one flat colour (no hover tint) for the square to blend into.

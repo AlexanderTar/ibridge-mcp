@@ -9,6 +9,7 @@ The product site at https://ibridge.fyi: static files in `public/`, no build ste
 Pages behaviour the site relies on:
 
 - `/privacy` and `/terms` are served from `privacy.html` and `terms.html`. Link to the extension-less paths.
+- A trailing slash is not redirected: `/privacy/` and `/terms/` answer 404 (Vercel used to redirect them). Internal links never use one.
 - Unknown paths get `404.html` with status 404, at any depth, so `404.html` uses root-absolute asset paths (`/assets/...`).
 - Pages cannot send custom headers. The Content-Security-Policy is a `<meta http-equiv="Content-Security-Policy">` tag in every HTML page, placed before any script, link or image, together with `<meta name="referrer" content="strict-origin-when-cross-origin">`. A meta CSP ignores `frame-ancestors` and `report-*`, so the site cannot forbid framing. Keep the policy identical on all four pages. The other headers the old Vercel config sent (HSTS, nosniff, Permissions-Policy, X-Frame-Options, Cache-Control) are no longer set by the site; Pages decides them.
 - SVG files carry no CSP (their inline style needs none).

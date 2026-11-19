@@ -1,6 +1,6 @@
 # Deploying the public instance on Railway
 
-This is the runbook for the public instance at `https://mcp.ibridge.fyi`, the hosted connector (`https://mcp.ibridge.fyi/mcp`). The product site `https://ibridge.fyi` is a separate site with its own `/privacy` and `/terms`; it is not served by this server; it is static files in `site/public`, published with GitHub Pages (`.github/workflows/pages.yml`, see `site/README.md`). Every step that changes something comes after the account checks in step 1. Do not skip them: this machine's Railway CLI is logged in to a different (work) account, and `vercel` may default to another scope.
+This is the runbook for the public instance at `https://mcp.ibridge.fyi`, the hosted connector (`https://mcp.ibridge.fyi/mcp`). The product site `https://ibridge.fyi` is a separate site with its own `/privacy` and `/terms`, and this server does not serve it. It is static files in `site/public`, published with GitHub Pages (`.github/workflows/pages.yml`, see `site/README.md`). Every step that changes something comes after the account checks in step 1. Do not skip them: this machine's Railway CLI is logged in to a different (work) account, and `vercel` may default to another scope.
 
 Never print the Railway token or an app-specific password. Do not paste either into a command line, a log, an issue or a commit. Steps that read a secret say how to do it without echoing it.
 

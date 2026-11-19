@@ -10,17 +10,20 @@
 use std::sync::Arc;
 
 use axum::Router;
+use ibridge_core::AppleId;
 use ibridge_server::http::{base_config, mcp_service};
+use ibridge_server::{AccountSnapshot, IbridgeServer, NoCalendar, NoContacts, ServiceStatus};
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData, Icon,
-    ListToolsResult, PaginatedRequestParams, ServerConfig,
+    ListToolsResult, PaginatedRequestParams, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 
 use crate::billing::Access;
-use crate::middleware::CallAuth;
+use crate::middleware::{Anonymous, CallAuth};
+use crate::no_mail::NoMail;
 use crate::oauth::OAuthConfig;
 use crate::store::Scope;
 
@@ -81,6 +84,32 @@ pub fn mcp_router<P: ServerSource>(
     Router::new().nest_service("/mcp", service)
 }
 
+/// Whether the middleware let this request through with no token, for discovery only.
+fn is_anonymous(context: &RequestContext<RoleServer>) -> bool {
+    context
+        .extensions
+        .get::<http::request::Parts>()
+        .is_some_and(|parts| parts.extensions.get::<Anonymous>().is_some())
+}
+
+/// The tools a signed-in read-write account with every service sees, listed for callers
+/// with no token.
+///
+/// The server behind it is a stand-in: no account, no backend, nothing to reach. Only its
+/// tool list is used, and it is built once.
+fn public_tools() -> Vec<Tool> {
+    let account = AccountSnapshot {
+        apple_id: AppleId::try_from("placeholder@icloud.com").expect("a well-formed address"),
+        mail: ServiceStatus::On,
+        calendar: ServiceStatus::On,
+        contacts: ServiceStatus::On,
+    };
+    IbridgeServer::read_write(account, Arc::new(NoMail))
+        .with_calendar(Arc::new(NoCalendar))
+        .with_contacts(Arc::new(NoContacts))
+        .tools()
+}
+
 /// Who is calling, as the middleware recorded it on the request.
 pub(crate) fn call_auth(context: &RequestContext<RoleServer>) -> Result<&CallAuth, ErrorData> {
     context
@@ -99,6 +128,7 @@ pub struct HostedHandler<P> {
     source: Arc<P>,
     info: ServerConfig,
     account_url: Option<String>,
+    public_tools: Arc<[Tool]>,
 }
 
 impl<P> Clone for HostedHandler<P> {
@@ -107,6 +137,7 @@ impl<P> Clone for HostedHandler<P> {
             source: Arc::clone(&self.source),
             info: self.info.clone(),
             account_url: self.account_url.clone(),
+            public_tools: Arc::clone(&self.public_tools),
         }
     }
 }
@@ -119,6 +150,7 @@ impl<P: ServerSource> HostedHandler<P> {
             source,
             info,
             account_url: None,
+            public_tools: public_tools().into(),
         }
     }
 
@@ -159,6 +191,9 @@ impl<P: ServerSource> ServerHandler for HostedHandler<P> {
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        if is_anonymous(&context) {
+            return Ok(ListToolsResult::with_all_items(self.public_tools.to_vec()));
+        }
         let (servers, scope) = self.server_for(&context)?;
         servers.for_scope(scope).list_tools(request, context).await
     }

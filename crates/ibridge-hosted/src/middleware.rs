@@ -11,12 +11,14 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use axum::Router;
+use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse as _, Response};
 use ibridge_auth::Credentials;
 use ibridge_core::AppleId;
+use serde_json::Value;
 
 use crate::billing::{self, Access};
 use crate::store::{GrantId, Scope, Services, Store, StoreError};
@@ -84,6 +86,25 @@ impl fmt::Debug for CallAuth {
     }
 }
 
+/// Marks a request let through without a token, which is only ever discovery.
+///
+/// It carries no grant, account or credentials. The handler lists the public tools for it
+/// and refuses everything else.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Anonymous;
+
+/// The methods a caller may use with no token: enough to see what the server does.
+const DISCOVERY_METHODS: [&str; 4] = [
+    "initialize",
+    "notifications/initialized",
+    "ping",
+    "tools/list",
+];
+
+/// The largest body read to decide whether a tokenless request is discovery. Real
+/// discovery messages are a few hundred bytes; a larger body must sign in.
+const DISCOVERY_BODY_BYTES: usize = 16 * 1024;
+
 struct Gate {
     store: Store,
     metadata_url: String,
@@ -115,7 +136,12 @@ pub(crate) fn protect(mcp: Router, store: Store, metadata_url: String, gating: G
 
 async fn authenticate(State(gate): State<Arc<Gate>>, mut request: Request, next: Next) -> Response {
     let Some(token) = bearer(request.headers()) else {
-        return challenge(&gate, None);
+        // Any `Authorization` header, even one that is not a bearer, is a caller trying to
+        // sign in: it gets the challenge, never discovery.
+        if request.headers().contains_key(header::AUTHORIZATION) {
+            return challenge(&gate, None);
+        }
+        return discover(&gate, request, next).await;
     };
     // Opened afresh for every call: the store keeps only ciphertext, and so does this layer.
     match gate.store.open_for_call(token, SystemTime::now()).await {
@@ -142,6 +168,42 @@ async fn authenticate(State(gate): State<Arc<Gate>>, mut request: Request, next:
             | StoreError::Suspended,
         ) => challenge(&gate, Some("invalid_token")),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Serves a tokenless request that is only discovery, and challenges any other.
+///
+/// Only a POST whose body is one JSON-RPC message (or a batch of them) with every method in
+/// [`DISCOVERY_METHODS`] passes. A body that is too big, not JSON or not a message is treated
+/// as not discovery, so it gets the same challenge as before.
+async fn discover(gate: &Gate, request: Request, next: Next) -> Response {
+    if request.method() != Method::POST {
+        return challenge(gate, None);
+    }
+    let (parts, body) = request.into_parts();
+    let Ok(bytes) = to_bytes(body, DISCOVERY_BODY_BYTES).await else {
+        return challenge(gate, None);
+    };
+    if !is_discovery(&bytes) {
+        return challenge(gate, None);
+    }
+    let mut request = Request::from_parts(parts, Body::from(bytes));
+    request.extensions_mut().insert(Anonymous);
+    next.run(request).await
+}
+
+/// Whether `body` is JSON-RPC made only of discovery requests and notifications.
+fn is_discovery(body: &[u8]) -> bool {
+    let allowed = |message: &Value| {
+        message
+            .get("method")
+            .and_then(Value::as_str)
+            .is_some_and(|method| DISCOVERY_METHODS.contains(&method))
+    };
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Array(batch)) => !batch.is_empty() && batch.iter().all(allowed),
+        Ok(message) => allowed(&message),
+        Err(_) => false,
     }
 }
 
@@ -207,10 +269,10 @@ mod tests {
     use tower::ServiceExt as _;
 
     use super::{CallAuth, Gating, protect};
+    use crate::no_mail::NoMail;
     use crate::oauth::{Access, OAuthConfig};
     use crate::server::{ScopedServers, ServerSource, mcp_router};
     use crate::store::{IssuedTokens, Scope, Store, ValidatedCredentials};
-    use crate::test_mail::IdleMail;
 
     const ASP: &str = "abcd-efgh-ijkl-mnop";
     const METADATA: &str = "https://ibridge.example/.well-known/oauth-protected-resource/mcp";
@@ -467,10 +529,10 @@ mod tests {
     }
 
     /// Serves one fixed account, so the scope tests need no provider cache.
-    struct Fixed(Arc<ScopedServers<IbridgeServer<IdleMail>>>);
+    struct Fixed(Arc<ScopedServers<IbridgeServer<NoMail>>>);
 
     impl ServerSource for Fixed {
-        type Server = IbridgeServer<IdleMail>;
+        type Server = IbridgeServer<NoMail>;
 
         fn servers(&self, _call: &CallAuth) -> Arc<ScopedServers<Self::Server>> {
             Arc::clone(&self.0)
@@ -484,7 +546,7 @@ mod tests {
             calendar: ServiceStatus::On,
             contacts: ServiceStatus::On,
         };
-        let mail = Arc::new(IdleMail);
+        let mail = Arc::new(NoMail);
         let servers = Arc::new(ScopedServers {
             read_only: IbridgeServer::read_only(account.clone(), Arc::clone(&mail)),
             read_write: IbridgeServer::read_write(account, mail),

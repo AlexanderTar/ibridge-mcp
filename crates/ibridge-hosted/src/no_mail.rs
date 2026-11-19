@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! A mail backend for tests that only look at which tools exist.
+//! A mail backend behind tool lists that never run a call.
 
 use ibridge_core::{Attachment, CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId};
 use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
 
-/// Every operation fails as unsupported.
+/// Every operation fails as unsupported. It stands behind the public tool list, which is
+/// only listed, and behind tests that only look at which tools exist.
 #[derive(Debug)]
-pub(crate) struct IdleMail;
+pub(crate) struct NoMail;
 
-const OFF: CoreError = CoreError::Unsupported("idle");
+const OFF: CoreError = CoreError::Unsupported("no mail backend");
 
 #[expect(
     clippy::unused_async_trait_impl,
     reason = "the stand-in answers without waiting"
 )]
-impl MailApi for IdleMail {
+impl MailApi for NoMail {
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, CoreError> {
         Err(OFF)
     }

@@ -21,15 +21,12 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::middleware::{Anonymous, CallAuth};
-use crate::oauth::{ProxyTrust, peer_key};
 
 /// The limits on the hosted HTTP surface.
 #[derive(Debug, Clone)]
 pub struct Guards {
     /// Tool calls one account may make in any minute, across all its grants.
     pub calls_per_minute: usize,
-    /// Requests with no token (discovery only) one IP address may make in any minute.
-    pub anonymous_per_minute: usize,
     /// The largest request body any route accepts.
     pub body_bytes: usize,
     /// How long a request may take to produce its response headers.
@@ -40,7 +37,6 @@ impl Default for Guards {
     fn default() -> Self {
         Self {
             calls_per_minute: 60,
-            anonymous_per_minute: 120,
             body_bytes: 1 << 20,
             timeout: Duration::from_secs(60),
         }
@@ -112,27 +108,18 @@ pub(crate) fn around(app: Router, guards: &Guards) -> Router {
 #[derive(Debug)]
 pub(crate) struct CallLimit {
     limiter: Limiter,
-    /// Requests with no token, per client address.
-    anonymous: Limiter,
-    trust: ProxyTrust,
     body_bytes: usize,
 }
 
 /// Counts the tool calls an account makes, behind the token check.
 ///
-/// A request the token check let through with no token (discovery only) spends no tool calls.
-/// It spends the client address's anonymous budget instead, where `trust` says whether
-/// the address is the socket peer or the last `X-Forwarded-For` entry, and gets 429 once it is spent.
-///
 /// Only `tools/call` messages spend the budget, so a client can still list tools and
 /// say who it is when it is out of calls. The count reads the body, so it sits behind
 /// the same size limit as everything else. The key is the account's address, which is
 /// lowercase, so every spelling of it shares one budget.
-pub(crate) fn limit_calls(mcp: Router, guards: &Guards, trust: ProxyTrust) -> Router {
+pub(crate) fn limit_calls(mcp: Router, guards: &Guards) -> Router {
     let limit = Arc::new(CallLimit {
         limiter: Limiter::new(guards.calls_per_minute, Duration::from_mins(1)),
-        anonymous: Limiter::new(guards.anonymous_per_minute, Duration::from_mins(1)),
-        trust,
         body_bytes: guards.body_bytes,
     });
     mcp.layer(middleware::from_fn_with_state(limit, count_calls))
@@ -143,14 +130,8 @@ async fn count_calls(
     request: Request,
     next: Next,
 ) -> Response {
-    if request.method() != Method::POST {
-        return next.run(request).await;
-    }
-    if request.extensions().get::<Anonymous>().is_some() {
-        let client = peer_key(request.headers(), request.extensions(), limit.trust);
-        if !limit.anonymous.allow(&client, Instant::now()) {
-            return too_many();
-        }
+    if request.method() != Method::POST || request.extensions().get::<Anonymous>().is_some() {
+        // A tokenless request is discovery only, which spends no tool calls.
         return next.run(request).await;
     }
     let Some(account) = request
@@ -167,18 +148,14 @@ async fn count_calls(
     };
     let calls = tool_calls_in(&bytes);
     if calls > 0 && !limit.limiter.allow_n(&account, calls, Instant::now()) {
-        return too_many();
+        let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
+        return response;
     }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
-}
-
-fn too_many() -> Response {
-    let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
-    response
 }
 
 /// How many `tools/call` messages `body` holds. Text that is not JSON-RPC counts as one call.

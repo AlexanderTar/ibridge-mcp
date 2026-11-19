@@ -143,13 +143,9 @@ impl OAuthConfig {
         self
     }
 
-    /// Where the client address comes from.
-    pub(crate) fn proxy_trust(&self) -> ProxyTrust {
-        if self.behind_proxy {
-            ProxyTrust::Proxy
-        } else {
-            ProxyTrust::Direct
-        }
+    /// Whether the client address comes from `X-Forwarded-For`.
+    pub(crate) fn is_behind_proxy(&self) -> bool {
+        self.behind_proxy
     }
 
     /// The address the privacy policy and terms give for questions and deletion requests.
@@ -230,44 +226,25 @@ impl FromRequestParts<Arc<Shared>> for Peer {
         parts: &mut Parts,
         shared: &Arc<Shared>,
     ) -> Result<Self, Self::Rejection> {
-        Ok(Self(peer_key(
-            &parts.headers,
-            &parts.extensions,
-            shared.config.proxy_trust(),
-        )))
+        let forwarded = shared
+            .config
+            .is_behind_proxy()
+            .then(|| {
+                parts
+                    .headers
+                    .get("x-forwarded-for")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.rsplit(',').next())
+                    .map(|entry| entry.trim().to_owned())
+            })
+            .flatten();
+        let direct = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.ip().to_string());
+        let peer = forwarded.or(direct).unwrap_or_else(|| "unknown".to_owned());
+        Ok(Self(budget_key(&peer)))
     }
-}
-
-/// Where a request's client address comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProxyTrust {
-    /// The socket peer is the client.
-    Direct,
-    /// The last `X-Forwarded-For` entry is the client: a proxy we run appended it.
-    Proxy,
-}
-
-/// The budget key of the client that made a request: the last `X-Forwarded-For` entry when
-/// the proxy is trusted, otherwise the socket peer, otherwise one shared "unknown" key.
-pub(crate) fn peer_key(
-    headers: &axum::http::HeaderMap,
-    extensions: &axum::http::Extensions,
-    trust: ProxyTrust,
-) -> String {
-    let forwarded = (trust == ProxyTrust::Proxy)
-        .then(|| {
-            headers
-                .get("x-forwarded-for")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.rsplit(',').next())
-                .map(|entry| entry.trim().to_owned())
-        })
-        .flatten();
-    let direct = extensions
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|ConnectInfo(addr)| addr.ip().to_string());
-    let peer = forwarded.or(direct).unwrap_or_else(|| "unknown".to_owned());
-    budget_key(&peer)
 }
 
 /// The key a peer's rate-limit budget is kept under. A client usually holds a whole

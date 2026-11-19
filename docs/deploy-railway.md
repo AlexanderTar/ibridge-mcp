@@ -186,6 +186,17 @@ rm ./check.db
 
 `integrity_check` must print `ok`. The file holds only sealed passwords. Check again after 24 hours that a second file appeared. Delete the local copy once you have looked.
 
+If `railway volume ... download` prints `Timeout`, do not run `sqlite3` on the path anyway: `sqlite3` creates an empty database for a missing file and prints `ok` and `0`, which looks like a pass. Check the file size first (`ls -l ./check.db`, it must match the `ls -l /data/backups` size), or copy the file through `railway ssh` instead, which worked on 2026-11-19 when the volume download timed out:
+
+```sh
+RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway ssh --project <project id> --environment production --service ibridge -- base64 /data/backups/<name> | grep -v '^Using SSH key' | tr -d '\r' | base64 -d > ./check.db
+ls -l ./check.db
+sqlite3 -readonly ./check.db 'pragma integrity_check; pragma user_version;'
+rm ./check.db
+```
+
+**Second backup (2026-11-19):** `ibridge-20261119T130934Z.db` appeared next to the first, 24 hours later; the copy matched the server's size (73,728 bytes), `integrity_check` printed `ok` and `user_version` was 4.
+
 ## Launch order
 
 The paid-plan launch goes in this order. Each stage must pass before the next starts:

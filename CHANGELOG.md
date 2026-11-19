@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- The hosted server answers `initialize`, `ping` and `tools/list` without a token, so people and agents can see what iBridge does before signing up. Everything else, including every tool call, still needs a token and gets the same `401` challenge. Such requests are limited per client address (120 a minute, `Guards::anonymous_per_minute`). A wrong or expired token still gets `401` on every method.
+- The hosted server answers `initialize`, `notifications/initialized`, `ping` and `tools/list` without a token, so people and agents can see what iBridge does before signing up. Everything else, including every tool call, still needs a token and gets the same `401` challenge. Such requests are limited per client address (120 a minute, `Guards::anonymous_per_minute`). A wrong or expired token still gets `401` on every method.
 
 ### Added
 

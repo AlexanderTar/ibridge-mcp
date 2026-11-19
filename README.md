@@ -1,6 +1,8 @@
-<p align="center">
-  <img src="site/public/icon-512.png" alt="iBridge" width="96" height="96">
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/AlexanderTar/ibridge-mcp/main/site/design/readme-cover/2-chat-dark@2x.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/AlexanderTar/ibridge-mcp/main/site/design/readme-cover/2-chat-light@2x.png">
+  <img src="https://raw.githubusercontent.com/AlexanderTar/ibridge-mcp/main/site/design/readme-cover/2-chat-light@2x.png" alt="iBridge: your iCloud, in your AI assistant. Mail, Calendar and Contacts." width="100%">
+</picture>
 
 # iBridge
 

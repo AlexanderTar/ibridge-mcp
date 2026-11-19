@@ -61,7 +61,7 @@ event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the project maintainer, [@AlexanderTar](https://github.com/AlexanderTar),
 through GitHub: open a
-[private security advisory](https://github.com/AlexanderTar/icloud-mcp/security/advisories/new)
+[private security advisory](https://github.com/AlexanderTar/ibridge-mcp/security/advisories/new)
 and say it is a conduct report. Do not post a report in a public issue. All
 complaints will be reviewed and investigated promptly and fairly.
 

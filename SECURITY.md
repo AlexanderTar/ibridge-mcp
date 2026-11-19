@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report a vulnerability privately through [GitHub private vulnerability reporting](https://github.com/AlexanderTar/icloud-mcp/security/advisories/new). Do not open a public issue or pull request for a security report.
+Report a vulnerability privately through [GitHub private vulnerability reporting](https://github.com/AlexanderTar/ibridge-mcp/security/advisories/new). Do not open a public issue or pull request for a security report.
 
 Do not include an app-specific password, a token or message contents. A description and the steps to reproduce are enough.
 

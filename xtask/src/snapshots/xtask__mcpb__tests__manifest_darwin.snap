@@ -27,7 +27,7 @@ expression: "manifest(\"0.1.0\", platform)"
   "name": "ibridge",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AlexanderTar/icloud-mcp"
+    "url": "https://github.com/AlexanderTar/ibridge-mcp"
   },
   "server": {
     "entry_point": "server/ibridge",

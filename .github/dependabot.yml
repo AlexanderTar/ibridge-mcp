@@ -20,6 +20,11 @@ updates:
     directory: /
     patterns: ["*"]
     multi-ecosystem-group: all-dependencies
+    ignore:
+      # Its ref is the Rust version (pinned to match rust-toolchain.toml), not
+      # an action release, so Dependabot's "newer" tags are toolchains that
+      # don't exist yet.
+      - dependency-name: dtolnay/rust-toolchain
 
   - package-ecosystem: npm
     directory: /site

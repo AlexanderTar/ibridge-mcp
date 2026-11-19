@@ -6,7 +6,7 @@
   "version": "1.0.0",
   "websiteUrl": "https://ibridge.fyi",
   "repository": {
-    "url": "https://github.com/AlexanderTar/icloud-mcp",
+    "url": "https://github.com/AlexanderTar/ibridge-mcp",
     "source": "github"
   },
   "packages": [

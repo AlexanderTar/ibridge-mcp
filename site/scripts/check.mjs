@@ -40,7 +40,7 @@ function assertCurly(name, html) {
 
 // ---------- Unit 1: page copy, naming, links ----------
 const CONNECTOR = "https://mcp.ibridge.fyi/mcp";
-const GITHUB = "https://github.com/AlexanderTar/icloud-mcp";
+const GITHUB = "https://github.com/AlexanderTar/ibridge-mcp";
 const ACCOUNT = "https://mcp.ibridge.fyi/account";
 // Links to other sites. Privacy and Terms are pages of this site (/privacy, /terms), not links to mcp.ibridge.fyi.
 const ALLOWED_EXTERNAL = new Set([

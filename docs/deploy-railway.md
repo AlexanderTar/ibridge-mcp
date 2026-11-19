@@ -101,9 +101,9 @@ It prints `{"data":{"serviceInstanceUpdate":true}}`.
 
 The Dockerfile must not declare `VOLUME`: Railway fails the build with `docker VOLUME ... is not supported, use Railway Volumes`.
 
-Then deploy the commit. The service builds the `Dockerfile` from the GitHub repository `AlexanderTar/icloud-mcp`, so a push to `main` deploys; `railway up` uploads a local checkout and is the manual fallback (an incident, or a commit that is not on `main`).
+Then deploy the commit. The service builds the `Dockerfile` from the GitHub repository `AlexanderTar/ibridge-mcp`, so a push to `main` deploys; `railway up` uploads a local checkout and is the manual fallback (an incident, or a commit that is not on `main`).
 
-**Connect the GitHub repository (once).** In the Railway dashboard, open the `ibridge` service, Settings, Source, and connect the repository `AlexanderTar/icloud-mcp`. This needs the Railway GitHub app installed on that repository (Railway asks for it the first time). Then set:
+**Connect the GitHub repository (once).** In the Railway dashboard, open the `ibridge` service, Settings, Source, and connect the repository `AlexanderTar/ibridge-mcp`. This needs the Railway GitHub app installed on that repository (Railway asks for it the first time). Then set:
 
 - Branch: `main`.
 - Auto-deploy: on, so every push to `main` builds and deploys. Turn on "Wait for CI" so a push deploys only after the repository's checks pass.

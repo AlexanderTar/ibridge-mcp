@@ -73,7 +73,7 @@ fn manifest(version: &str, platform: Platform) -> Value {
         "description": "Read, search and manage iCloud Mail, Calendar and Contacts from Claude.",
         "long_description": "Runs on your machine and talks to iCloud with an app-specific password. The password is kept by Claude Desktop and passed to the server as an environment variable.",
         "author": { "name": "Alexander Tar", "url": "https://github.com/AlexanderTar" },
-        "repository": { "type": "git", "url": "https://github.com/AlexanderTar/icloud-mcp" },
+        "repository": { "type": "git", "url": "https://github.com/AlexanderTar/ibridge-mcp" },
         "homepage": "https://ibridge.fyi",
         "license": "Apache-2.0",
         "keywords": ["icloud", "mail", "calendar", "contacts"],

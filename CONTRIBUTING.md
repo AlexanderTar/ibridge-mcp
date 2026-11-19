@@ -7,8 +7,8 @@ Thanks for helping. Please read the [Code of Conduct](CODE_OF_CONDUCT.md) first.
 You need Rust 1.100 (`rust-toolchain.toml` pins it; the minimum supported version is 1.98) and, for the integration tests only, Docker. [docs/local-development.md](docs/local-development.md) has the toolchain and CI tool install.
 
 ```sh
-git clone https://github.com/AlexanderTar/icloud-mcp
-cd icloud-mcp
+git clone https://github.com/AlexanderTar/ibridge-mcp
+cd ibridge-mcp
 cargo build --workspace
 cargo nextest run --workspace
 ```

@@ -4,7 +4,7 @@
 
 # iBridge
 
-[![CI](https://github.com/AlexanderTar/icloud-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexanderTar/icloud-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/AlexanderTar/ibridge-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexanderTar/ibridge-mcp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![crates.io](https://img.shields.io/crates/v/ibridge.svg)](https://crates.io/crates/ibridge)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.AlexanderTar%2Fibridge-informational)](https://registry.modelcontextprotocol.io)
@@ -45,12 +45,12 @@ cargo install ibridge
 Or build from a checkout:
 
 ```sh
-git clone https://github.com/AlexanderTar/icloud-mcp
-cd icloud-mcp
+git clone https://github.com/AlexanderTar/ibridge-mcp
+cd ibridge-mcp
 cargo install --path crates/ibridge
 ```
 
-Or install straight from git: `cargo install --git https://github.com/AlexanderTar/icloud-mcp ibridge`.
+Or install straight from git: `cargo install --git https://github.com/AlexanderTar/ibridge-mcp ibridge`.
 
 ## Connect Claude Code
 

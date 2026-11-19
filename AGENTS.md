@@ -1,6 +1,6 @@
 # Agent instructions
 
-The binary, crates, keychain service and env prefix are `ibridge`. The git repository stays `icloud-mcp`.
+The binary, crates, keychain service and env prefix are `ibridge`. The git repository is `ibridge-mcp`.
 
 ## BeautifulRust
 

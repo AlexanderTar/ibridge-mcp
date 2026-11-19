@@ -20,8 +20,8 @@
       <path d="M680 104 H1216" stroke="#DCE3E8" stroke-width="1.5"/>
       <circle cx="706" cy="78" r="6" fill="#C3CED6"/><circle cx="726" cy="78" r="6" fill="#C3CED6"/><circle cx="746" cy="78" r="6" fill="#C3CED6"/>
       <text x="766" y="85" font-size="18" font-weight="500" fill="#5B6B7B">Your assistant</text>
-      <!-- user bubble: DS bubble-user style, 20 px radius with a 6 px bottom-right corner -->
-      <path d="M836 130 H1170 a20 20 0 0 1 20 20 V178 a6 6 0 0 1 -6 6 H836 a20 20 0 0 1 -20 -20 V150 a20 20 0 0 1 20 -20 Z" fill="#0B7A80"/>
+      <!-- user bubble: DS .bubble-user, 18 px radius with a 6 px bottom-right corner (components.css) -->
+      <path d="M834 130 H1172 a18 18 0 0 1 18 18 V178 a6 6 0 0 1 -6 6 H834 a18 18 0 0 1 -18 -18 V148 a18 18 0 0 1 18 -18 Z" fill="#0B7A80"/>
       <text x="1168" y="165" font-size="21" font-weight="500" fill="#FFFFFF" text-anchor="end">What's on my calendar tomorrow?</text>
       <!-- assistant bubble -->
       <rect x="704" y="204" width="414" height="214" rx="20" fill="#F0F4F6" stroke="#DCE3E8" stroke-width="1.5"/>

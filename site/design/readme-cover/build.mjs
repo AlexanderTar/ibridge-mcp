@@ -17,7 +17,7 @@ const light = {
 };
 const dark = {
   bg: "#0B1118", sky: "#0F2129", surface: "#131D27", sunken: "#0A1017", border: "#233140", borderStrong: "#33475A",
-  text: "#EAF2F5", text2: "#A9B9C6", link: "#6CD0D3", brand: "#5CC8CC", onBrand: "#062528",
+  text: "#EAF2F5", text2: "#A9B9C6", text3: "#8A9CAB", link: "#6CD0D3", brand: "#5CC8CC", onBrand: "#062528",
   tint: "#12303A", accent: "#FF7F57", tileTop: "#17344C", tileBottom: "#0B1826", tileStroke: "#24445E",
 };
 const INK = "#0F2538", TEAL = "#0B7A80", CORAL = "#E0532B";
@@ -108,8 +108,8 @@ function chat(t, scheme) {
       <path d="M${wx} ${wy + 52} H${wx + ww}" stroke="${t.border}" stroke-width="1.5"/>
       <circle cx="${wx + 26}" cy="${wy + 26}" r="6" fill="${t.borderStrong}"/><circle cx="${wx + 46}" cy="${wy + 26}" r="6" fill="${t.borderStrong}"/><circle cx="${wx + 66}" cy="${wy + 26}" r="6" fill="${t.borderStrong}"/>
       <text x="${wx + 86}" y="${wy + 33}" font-size="18" font-weight="500" fill="${t.text3}">Your assistant</text>
-      <!-- user bubble: DS bubble-user style, 20 px radius with a 6 px bottom-right corner -->
-      <path d="M${wx + 156} ${wy + 78} H${wx + 490} a20 20 0 0 1 20 20 V${wy + 126} a6 6 0 0 1 -6 6 H${wx + 156} a20 20 0 0 1 -20 -20 V${wy + 98} a20 20 0 0 1 20 -20 Z" fill="${t.brand}"/>
+      <!-- user bubble: DS .bubble-user, 18 px radius with a 6 px bottom-right corner (components.css) -->
+      <path d="M${wx + 154} ${wy + 78} H${wx + 492} a18 18 0 0 1 18 18 V${wy + 126} a6 6 0 0 1 -6 6 H${wx + 154} a18 18 0 0 1 -18 -18 V${wy + 96} a18 18 0 0 1 18 -18 Z" fill="${t.brand}"/>
       <text x="${wx + 488}" y="${wy + 113}" font-size="21" font-weight="500" fill="${t.onBrand}" text-anchor="end">What's on my calendar tomorrow?</text>
       <!-- assistant bubble -->
       <rect x="${wx + 24}" y="${wy + 152}" width="414" height="214" rx="20" fill="${t.sunken}" stroke="${t.border}" stroke-width="1.5"/>
@@ -175,11 +175,11 @@ function bridge() {
 function connector() {
   const id = "cn";
   const defs = `<linearGradient id="${id}-teal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0B7A80"/><stop offset="1" stop-color="#086268"/></linearGradient>`;
-  // big faint Cloud Arch mark bleeding off the right edge
-  const big = 560;
+  // big faint Cloud Arch marks bleeding off the bottom corners, clear of the headline (which ends near x 1070)
+  const big = 560, right = 480;
   const body = `
     <rect width="${W}" height="${H}" fill="url(#${id}-teal)"/>
-    <svg x="${W - big * 0.62}" y="${-big * 0.08}" width="${big}" height="${big}" viewBox="6 8 52 52" opacity="0.10">${markInner("#FFFFFF", "#FFFFFF")}</svg>
+    <svg x="${W - right * 0.45}" y="${H - right * 0.42}" width="${right}" height="${right}" viewBox="6 8 52 52" opacity="0.10">${markInner("#FFFFFF", "#FFFFFF")}</svg>
     <svg x="${-big * 0.42}" y="${H - big * 0.42}" width="${big * 0.8}" height="${big * 0.8}" viewBox="6 8 52 52" opacity="0.06">${markInner("#FFFFFF", "#FFFFFF")}</svg>
     <g font-family="${SANS}" text-anchor="middle">
       ${mark(W / 2 - 92, 44, 46, "#FFFFFF", "#FFB49B")}
@@ -205,6 +205,9 @@ const outputs = {
   "4-connector": connector(),
 };
 for (const [name, svg] of Object.entries(outputs)) {
+  // A missing token interpolates as "undefined" (or a bad sum as "NaN"); fail instead of drawing black text.
+  const bad = svg.match(/.{0,40}\b(undefined|NaN)\b.{0,20}/);
+  if (bad) throw new Error(`${name}: "${bad[1]}" in output near: ${bad[0]}`);
   const svgPath = join(DIR, `${name}.svg`);
   writeFileSync(svgPath, svg);
   execFileSync("rsvg-convert", ["--zoom", "2", "--output", join(DIR, `${name}@2x.png`), svgPath]);

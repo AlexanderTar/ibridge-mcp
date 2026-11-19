@@ -19,9 +19,9 @@
       <path d="M680.75 104 V72 a19.25 19.25 0 0 1 19.25 -19.25 H1196 a19.25 19.25 0 0 1 19.25 19.25 V104 Z" fill="#0F1720"/>
       <path d="M680 104 H1216" stroke="#233140" stroke-width="1.5"/>
       <circle cx="706" cy="78" r="6" fill="#33475A"/><circle cx="726" cy="78" r="6" fill="#33475A"/><circle cx="746" cy="78" r="6" fill="#33475A"/>
-      <text x="766" y="85" font-size="18" font-weight="500" fill="undefined">Your assistant</text>
-      <!-- user bubble: DS bubble-user style, 20 px radius with a 6 px bottom-right corner -->
-      <path d="M836 130 H1170 a20 20 0 0 1 20 20 V178 a6 6 0 0 1 -6 6 H836 a20 20 0 0 1 -20 -20 V150 a20 20 0 0 1 20 -20 Z" fill="#5CC8CC"/>
+      <text x="766" y="85" font-size="18" font-weight="500" fill="#8A9CAB">Your assistant</text>
+      <!-- user bubble: DS .bubble-user, 18 px radius with a 6 px bottom-right corner (components.css) -->
+      <path d="M834 130 H1172 a18 18 0 0 1 18 18 V178 a6 6 0 0 1 -6 6 H834 a18 18 0 0 1 -18 -18 V148 a18 18 0 0 1 18 -18 Z" fill="#5CC8CC"/>
       <text x="1168" y="165" font-size="21" font-weight="500" fill="#062528" text-anchor="end">What's on my calendar tomorrow?</text>
       <!-- assistant bubble -->
       <rect x="704" y="204" width="414" height="214" rx="20" fill="#0A1017" stroke="#233140" stroke-width="1.5"/>
@@ -31,15 +31,15 @@
       
       <rect x="726" y="270" width="5" height="32" rx="2.5" fill="#FF7F57"/>
       <text x="744" y="292" font-size="21" fill="#EAF2F5">Team planning</text>
-      <text x="1090" y="292" font-size="19" fill="undefined" text-anchor="end">09:30</text>
+      <text x="1090" y="292" font-size="19" fill="#8A9CAB" text-anchor="end">09:30</text>
       
       <rect x="726" y="318" width="5" height="32" rx="2.5" fill="#FF7F57"/>
       <text x="744" y="340" font-size="21" fill="#EAF2F5">Lunch with Sam</text>
-      <text x="1090" y="340" font-size="19" fill="undefined" text-anchor="end">12:30</text>
+      <text x="1090" y="340" font-size="19" fill="#8A9CAB" text-anchor="end">12:30</text>
       
       <rect x="726" y="366" width="5" height="32" rx="2.5" fill="#FF7F57"/>
       <text x="744" y="388" font-size="21" fill="#EAF2F5">Dentist</text>
-      <text x="1090" y="388" font-size="19" fill="undefined" text-anchor="end">14:00</text>
+      <text x="1090" y="388" font-size="19" fill="#8A9CAB" text-anchor="end">14:00</text>
     </g>
   </g>
   <rect x="1" y="1" width="1278" height="398" rx="23" fill="none" stroke="#233140" stroke-width="2"/>

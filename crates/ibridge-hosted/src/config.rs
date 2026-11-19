@@ -219,7 +219,7 @@ mod tests {
         APPLE_KEY_ID, APPLE_PRIVATE_KEY, APPLE_SERVICES_ID, APPLE_TEAM_ID, FIREBASE_API_KEY,
         FIREBASE_PROJECT_ID,
     };
-    use crate::oauth::ConfigError;
+    use crate::oauth::{ConfigError, ProxyTrust};
 
     #[derive(Clone, Copy)]
     enum Mode {
@@ -384,16 +384,28 @@ mod tests {
     fn behind_proxy_env_reaches_peer() {
         for on in ["true", " true ", "1"] {
             let config = resolve(Mode::Public, &[(BEHIND_PROXY, on)]).expect("resolves");
-            assert!(config.oauth.is_behind_proxy(), "{on:?} trusts the proxy");
+            assert_eq!(
+                config.oauth.proxy_trust(),
+                ProxyTrust::Proxy,
+                "{on:?} trusts the proxy"
+            );
         }
         for off in ["false", "0", ""] {
             let config = resolve(Mode::Public, &[(BEHIND_PROXY, off)]).expect("resolves");
-            assert!(!config.oauth.is_behind_proxy(), "{off:?} does not");
+            assert_eq!(
+                config.oauth.proxy_trust(),
+                ProxyTrust::Direct,
+                "{off:?} does not"
+            );
         }
         let mut flagged = options(Mode::Public);
         flagged.behind_proxy = true;
         let config = HostedConfig::resolve(flagged, |_| None).expect("resolves");
-        assert!(config.oauth.is_behind_proxy(), "--behind-proxy trusts it");
+        assert_eq!(
+            config.oauth.proxy_trust(),
+            ProxyTrust::Proxy,
+            "--behind-proxy trusts it"
+        );
         for bad in ["yes", "on", "2"] {
             let error = resolve(Mode::Public, &[(BEHIND_PROXY, bad)]).expect_err("refused");
             assert!(
@@ -406,8 +418,9 @@ mod tests {
     #[test]
     fn behind_proxy_off_by_default() {
         let config = resolve(Mode::Public, &[]).expect("resolves");
-        assert!(
-            !config.oauth.is_behind_proxy(),
+        assert_eq!(
+            config.oauth.proxy_trust(),
+            ProxyTrust::Direct,
             "nobody opts in by accident"
         );
     }

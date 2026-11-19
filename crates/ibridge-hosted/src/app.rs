@@ -41,7 +41,11 @@ pub async fn app<B: Backend>(
     drop(cache.spawn_sweeper());
     let evicting = Arc::clone(&cache);
     let evict: Evict = Arc::new(move |apple_id| evicting.drop_account(apple_id));
-    let mcp = limit_calls(mcp_router(cache, info, &config), guards);
+    let mcp = limit_calls(
+        mcp_router(cache, info, &config),
+        guards,
+        config.proxy_trust(),
+    );
     let oauth = router(config, &store, checker, evict, mcp).await?;
     Ok(around(oauth.merge(health::routes(store)), guards))
 }

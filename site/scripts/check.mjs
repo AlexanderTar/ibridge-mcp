@@ -49,7 +49,7 @@ const ALLOWED_EXTERNAL = new Set([
   "https://support.apple.com/102654",
 ]);
 const LOCAL_PAGES = ["/privacy", "/terms"];
-// A local href names a shipped file, with Vercel's cleanUrls (/privacy serves privacy.html).
+// A local href names a shipped file, the way GitHub Pages serves it (/privacy serves privacy.html).
 const resolvesLocally = (href) => {
   const path = href.split("#")[0].replace(/^\//, "");
   return path === "" || existsSync(join(PUBLIC, path)) || existsSync(join(PUBLIC, `${path}.html`));
@@ -259,52 +259,54 @@ function checkIcons() {
 
 checkIcons();
 
-// ---------- Unit 3: Vercel config, 404, rendered checks ----------
-function readVercelConfig() {
-  try { return JSON.parse(read(join(SITE, "vercel.json"))); } catch { return null; }
-}
-// The headers Vercel sends for a path: every rule whose source matches (a source is a path-to-regexp pattern; ours are plain regex groups).
-const headersFor = (config, path) => Object.fromEntries((config?.headers ?? [])
-  .filter((r) => new RegExp(`^${r.source}$`).test(path))
-  .flatMap((r) => r.headers.map((h) => [h.key.toLowerCase(), h.value])));
+// ---------- Unit 3: GitHub Pages hosting, 404, rendered checks ----------
+// GitHub Pages sends no custom headers, so the Content-Security-Policy travels in a <meta> tag on every page.
+// A meta CSP ignores frame-ancestors, report-uri and sandbox; those are left out.
+const PAGES = ["index", "privacy", "terms", "404"];
+const metaContent = (html, attr, name) => (html.match(new RegExp(`<meta\\b[^>]*\\b${attr}="${name}"[^>]*\\bcontent="([^"]*)"`, "i")) || [])[1] ?? "";
+const cspOf = (html) => (html.match(/<meta\b[^>]*http-equiv="Content-Security-Policy"[^>]*\bcontent="([^"]*)"/i) || [])[1] ?? "";
 
-function checkVercelConfig(config) {
-  if (!config) return fail("site/vercel.json is missing or not valid JSON");
-  assert(config.cleanUrls === true, "vercel.json: cleanUrls must be true");
-  assert(config.outputDirectory === "public", "vercel.json: outputDirectory must be public");
-  const all = headersFor(config, "/");
-  assert(config.installCommand === "" && config.buildCommand === "", "vercel.json: installCommand and buildCommand must be empty strings (a static site; null would auto-detect and run npm install)");
-  for (const path of ["/favicon.svg", "/img/mark-light.svg", "/img/tile-dark.svg"]) {
-    assert(!("content-security-policy" in headersFor(config, path)), `vercel.json: no CSP on ${path} (its inline style needs one Firefox can render)`);
-    assert(headersFor(config, path)["x-content-type-options"] === "nosniff", `vercel.json: ${path} still needs the other security headers`);
+function checkPagesConfig() {
+  assert(!existsSync(join(SITE, "vercel.json")), "site/vercel.json must be removed: the site is served by GitHub Pages");
+  assert(read(join(PUBLIC, "CNAME")).trim() === "ibridge.fyi", "site/public/CNAME must contain exactly ibridge.fyi");
+  const workflow = read(join(SITE, "..", ".github", "workflows", "pages.yml"));
+  assert(workflow !== "", ".github/workflows/pages.yml is missing");
+  if (workflow) {
+    for (const want of ["actions/configure-pages", "actions/upload-pages-artifact", "actions/deploy-pages", "site/public", "node site/scripts/check.mjs", "pages: write", "id-token: write"]) {
+      assert(workflow.includes(want), `pages.yml must contain ${want}`);
+    }
   }
-  for (const path of ["/privacy", "/terms", "/nope", "/assets/page.css"]) assert("content-security-policy" in headersFor(config, path), `vercel.json: CSP must be sent on ${path}`);
-  assert(!/interest-cohort/.test(all["permissions-policy"] ?? ""), "Permissions-Policy: drop interest-cohort (retired FLoC directive)");
-  const csp = all["content-security-policy"] ?? "";
-  assert(csp.includes("default-src 'self'"), "CSP must start from default-src 'self'");
-  assert(!/unsafe-inline|unsafe-eval|https?:|\*/.test(csp), "CSP must allow only 'self' (no unsafe-*, hosts or wildcards)");
-  for (const d of ["script-src 'self'", "style-src 'self'", "img-src 'self'", "object-src 'none'", "base-uri 'self'", "frame-ancestors 'none'", "form-action 'self'"]) {
-    assert(csp.includes(d), `CSP missing ${d}`);
+  const policies = new Set();
+  for (const name of PAGES) {
+    const html = read(join(PUBLIC, `${name}.html`));
+    const csp = cspOf(html);
+    assert(csp !== "", `${name}.html: missing <meta http-equiv="Content-Security-Policy">`);
+    assert(metaContent(html, "name", "referrer") === "strict-origin-when-cross-origin", `${name}.html: missing <meta name="referrer" content="strict-origin-when-cross-origin">`);
+    // The CSP applies from the tag onwards, so it must come before every script, stylesheet and image.
+    const cspAt = html.search(/http-equiv="Content-Security-Policy"/i);
+    const firstLoad = html.search(/<(?:script|link|img)\b/i);
+    assert(cspAt !== -1 && cspAt < firstLoad, `${name}.html: the CSP meta tag must come before the first script, link or img`);
+    assert(!/frame-ancestors|report-uri|report-to|sandbox/i.test(csp), `${name}.html: a meta CSP ignores frame-ancestors, report-* and sandbox; leave them out`);
+    policies.add(csp);
+    assert(csp.includes("default-src 'self'"), `${name}.html: CSP must start from default-src 'self'`);
+    assert(!/unsafe-inline|unsafe-eval|https?:|\*/.test(csp), `${name}.html: CSP must allow only 'self' (no unsafe-*, hosts or wildcards)`);
+    for (const d of ["script-src 'self'", "style-src 'self'", "img-src 'self'", "font-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'"]) {
+      assert(csp.includes(d), `${name}.html: CSP missing ${d}`);
+    }
   }
-  const maxAge = Number(/max-age=(\d+)/.exec(all["strict-transport-security"] ?? "")?.[1] ?? 0);
-  assert(maxAge >= 31536000, "HSTS needs a max-age of at least one year");
-  assert(all["x-content-type-options"] === "nosniff", "X-Content-Type-Options must be nosniff");
-  assert(/^(strict-origin|strict-origin-when-cross-origin|no-referrer|same-origin)$/.test(all["referrer-policy"] ?? ""), "Referrer-Policy must be a strict value");
-  assert(Boolean(all["permissions-policy"]), "Permissions-Policy must be set");
-  const cached = config.headers?.find((r) => r.headers.some((h) => h.key.toLowerCase() === "cache-control"));
-  assert(Boolean(cached), "vercel.json needs a Cache-Control rule for assets and images");
+  assert(policies.size === 1, "every page must carry the same CSP");
+  // SVG files cannot carry a meta CSP and are served by Pages without one, so their inline style is never blocked.
 }
 
 const notFoundPage = () => read(join(PUBLIC, "404.html")) || "Not found";
 const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
-// Serves site/public the way Vercel will: the vercel.json security headers on every response, 404.html for unknown paths.
-function serve(config) {
+// Serves site/public the way GitHub Pages does: no custom headers, /privacy serves privacy.html, 404.html (status 404) for unknown paths.
+function serve() {
   const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
     let file = join(PUBLIC, path === "/" ? "index.html" : path);
-    if (!extname(file) && existsSync(`${file}.html`)) file += ".html"; // cleanUrls
+    if (!extname(file) && existsSync(`${file}.html`)) file += ".html";
     if (!file.startsWith(PUBLIC) || !existsSync(file) || statSync(file).isDirectory()) file = null;
-    for (const [k, v] of Object.entries(headersFor(config, path))) res.setHeader(k, v);
     res.statusCode = file ? 200 : 404;
     res.setHeader("content-type", TYPES[extname(file ?? "x.html")] ?? "application/octet-stream");
     res.end(file ? readFileSync(file) : notFoundPage());
@@ -312,7 +314,7 @@ function serve(config) {
   return new Promise((ok) => server.listen(0, "127.0.0.1", () => ok(server)));
 }
 
-async function checkRendered(config) {
+async function checkRendered() {
   let puppeteer;
   let axeSource;
   try {
@@ -321,12 +323,13 @@ async function checkRendered(config) {
   } catch { return fail("puppeteer-core and axe-core are not installed (run: npm ci --prefix site)"); }
   const chrome = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => p && existsSync(p));
   if (!chrome) return fail("no Chrome found (set CHROME_PATH)");
-  const server = await serve(config);
+  const server = await serve();
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: ["--no-sandbox"] });
-  const served = async (path) => (await fetch(origin + path)).headers;
-  assert(!(await served("/favicon.svg")).has("content-security-policy"), "favicon.svg must be served without a CSP (its inline style is blocked by style-src 'self', and Firefox then renders it black)");
-  assert((await served("/")).has("content-security-policy"), "the home page must be served with a CSP");
+  // Pages behaviour: extension-less paths resolve to .html, unknown paths get 404.html with status 404.
+  for (const [path, status] of [["/privacy", 200], ["/terms", 200], ["/does-not-exist", 404], ["/a/b/c", 404]]) {
+    assert((await fetch(origin + path)).status === status, `${path} must answer ${status}`);
+  }
   await checkOgTile(browser, origin);
   const viewports = [
     { width: 1440, height: 900, deviceScaleFactor: 1 },
@@ -343,6 +346,11 @@ async function checkRendered(config) {
           page.on("response", (r) => { if (r.status() >= 400 && r.url() !== origin + pagePath) problems.push(`${r.status()} for ${r.url()}`); });
           page.on("console", (m) => { if (m.type() === "error" && m.location().url !== origin + pagePath) problems.push(`console error: ${m.text()}`); });
           page.on("pageerror", (e) => problems.push(`page error: ${e.message}`));
+          // A CSP violation is reported by the page itself, whatever the console says.
+          await page.evaluateOnNewDocument(() => {
+            window.__csp = [];
+            document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(`${e.violatedDirective} blocked ${e.blockedURI}`));
+          });
           await page.setViewport(viewport);
           await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: scheme }]);
           const response = await page.goto(origin + pagePath, { waitUntil: "networkidle0" });
@@ -352,6 +360,7 @@ async function checkRendered(config) {
           await page.evaluate(axeSource);
           const result = await page.evaluate(() => axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] } }));
           for (const v of result.violations) fail(`${where}: axe ${v.id} (${v.nodes.length}): ${v.nodes[0].html.slice(0, 100)}`);
+          for (const v of await page.evaluate(() => window.__csp)) problems.push(`CSP violation: ${v}`);
           for (const p of problems) fail(`${where}: ${p}`);
           if (label === "home" && viewport.width === 1440 && scheme === "light") await checkCopyButtons(page, browser, origin);
           await page.close();
@@ -424,12 +433,11 @@ async function checkCopyButtons(page, browser, origin) {
   assert(await page.$$eval(".copy-box button", (bs) => bs.every((b) => !("copied" in b.dataset))), "copy confirmation must clear after a moment");
 }
 
-const config = readVercelConfig();
-checkVercelConfig(config);
+checkPagesConfig();
 const notFound = read(join(PUBLIC, "404.html"));
 assert(/<h1\b/.test(notFound) && /href="\/"/.test(notFound), "404.html must exist with a heading and a link home");
 assertCurly("404", notFound);
-await checkRendered(config);
+await checkRendered();
 
 if (failures.length) {
   console.error(`check: ${failures.length} failure(s)`);

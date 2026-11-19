@@ -54,7 +54,7 @@ Tests never reach Apple, Firebase or Stripe: `identity/fakes.rs` (`FakeApple`, `
 
 ## Prose
 
-The product is "iBridge" in README and docs prose; lowercase `ibridge` is only for identifiers (the binary and its commands, crates, environment variables, domains and paths), in backticks. The hosted connector is `https://mcp.ibridge.fyi/mcp`, and `https://ibridge.fyi` is the product site with no server routes. The README mentions Reminders only in its `## Reminders` section, which states the limit. `cargo xtask check-docs` (also a test in the default nextest run) checks all of this over README.md, CONTRIBUTING.md, SECURITY.md and `docs/*.md`.
+The product is "iBridge" in README and docs prose; lowercase `ibridge` is only for identifiers (the binary and its commands, crates, environment variables, domains and paths), in backticks. The hosted connector is `https://mcp.ibridge.fyi/mcp`, and `https://ibridge.fyi` is the product site with no server routes, static files in `site/public` published by GitHub Pages (`site/README.md`). The README mentions Reminders only in its `## Reminders` section, which states the limit. `cargo xtask check-docs` (also a test in the default nextest run) checks all of this over README.md, CONTRIBUTING.md, SECURITY.md and `docs/*.md`.
 
 ## Platform code
 

@@ -1,6 +1,6 @@
 # Deploying the public instance on Railway
 
-This is the runbook for the public instance at `https://mcp.ibridge.fyi`, the hosted connector (`https://mcp.ibridge.fyi/mcp`). The product site `https://ibridge.fyi` is a separate site with its own `/privacy` and `/terms`; it is not served by this server. Every step that changes something comes after the account checks in step 1. Do not skip them: this machine's Railway CLI is logged in to a different (work) account, and `vercel` may default to another scope.
+This is the runbook for the public instance at `https://mcp.ibridge.fyi`, the hosted connector (`https://mcp.ibridge.fyi/mcp`). The product site `https://ibridge.fyi` is a separate site with its own `/privacy` and `/terms`; it is not served by this server; it is static files in `site/public`, published with GitHub Pages (`.github/workflows/pages.yml`, see `site/README.md`). Every step that changes something comes after the account checks in step 1. Do not skip them: this machine's Railway CLI is logged in to a different (work) account, and `vercel` may default to another scope.
 
 Never print the Railway token or an app-specific password. Do not paste either into a command line, a log, an issue or a commit. Steps that read a secret say how to do it without echoing it.
 
@@ -11,7 +11,7 @@ The Railway commands below were checked against `railway` 5.62.1's `--help`. The
 What it settled, and where each point is used below:
 
 - **Where it runs.** Railway project `e20f91a4-970a-483e-86af-f10d5107b4d9`, service `ibridge`, environment `production`, deployed from commit `9c1e17a`. These ids are not secrets.
-- **Host.** `mcp.ibridge.fyi`, a subdomain: a `CNAME` to `dymkwjd1.up.railway.app` and a `_railway-verify.mcp` `TXT` record, both on Vercel DNS (step 6). The apex `ibridge.fyi` is the product site and is not pointed at Railway.
+- **Host.** `mcp.ibridge.fyi`, a subdomain: a `CNAME` to `dymkwjd1.up.railway.app` and a `_railway-verify.mcp` `TXT` record, both on Vercel DNS (step 6). The apex `ibridge.fyi` is the product site (GitHub Pages) and is not pointed at Railway.
 - **Start command.** Railway's start command replaces the image's entrypoint, so it starts with the program, `ibridge serve ...`, not `serve ...` (step 5).
 - **Sign-in domains.** The Apple Services ID's return URL is `<public-url>/signin/apple/callback`, here `https://mcp.ibridge.fyi/signin/apple/callback`, and the Firebase project's authorized domains must include the server's host, `mcp.ibridge.fyi` (step 10).
 - **Stripe.** The live objects were created through the Stripe API, and the sandbox stage (step 11) was skipped by the owner's choice. The ids are in step 12.
@@ -136,7 +136,7 @@ vercel dns add ibridge.fyi mcp CNAME <railway target> --scope <scope>
 vercel dns add ibridge.fyi _railway-verify.mcp TXT '<value Railway printed>' --scope <scope>
 ```
 
-Add nothing else and do not touch existing records, above all the apex, which serves the product site. Then wait for `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway domain --project <project id> --environment production status mcp.ibridge.fyi --service ibridge` to show the certificate issued, and:
+Add nothing else and do not touch existing records, above all the apex, which points at GitHub Pages for the product site. Then wait for `RAILWAY_API_TOKEN="$(cat ~/.config/railway-personal/token)" railway domain --project <project id> --environment production status mcp.ibridge.fyi --service ibridge` to show the certificate issued, and:
 
 ```sh
 curl -fsS https://mcp.ibridge.fyi/readyz     # ready

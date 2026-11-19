@@ -20,7 +20,7 @@ use serde_json::Value;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
-use crate::middleware::{Anonymous, CallAuth};
+use crate::middleware::CallAuth;
 
 /// The limits on the hosted HTTP surface.
 #[derive(Debug, Clone)]
@@ -130,8 +130,7 @@ async fn count_calls(
     request: Request,
     next: Next,
 ) -> Response {
-    if request.method() != Method::POST || request.extensions().get::<Anonymous>().is_some() {
-        // A tokenless request is discovery only, which spends no tool calls.
+    if request.method() != Method::POST {
         return next.run(request).await;
     }
     let Some(account) = request

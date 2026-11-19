@@ -3,8 +3,6 @@
 //! Hosted OAuth server and token-sealed credential store.
 
 mod admin;
-#[cfg(test)]
-mod anonymous_tests;
 mod app;
 mod assets;
 mod backup;
@@ -20,7 +18,6 @@ mod integration;
 mod limits;
 pub mod logging;
 mod middleware;
-mod no_mail;
 mod oauth;
 mod pages;
 mod provider;
@@ -33,6 +30,8 @@ mod web;
 
 #[cfg(test)]
 mod test_app;
+#[cfg(test)]
+mod test_mail;
 
 pub use oauth::{
     Access, Combined, ConfigError, Evict, OAuthConfig, SignInCheck, ValidatedBy, router,

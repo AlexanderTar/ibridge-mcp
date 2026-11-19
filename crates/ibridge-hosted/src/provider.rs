@@ -655,7 +655,7 @@ mod tests {
                 calendar: ibridge_server::ServiceStatus::On,
                 contacts: ibridge_server::ServiceStatus::On,
             },
-            Arc::new(crate::no_mail::NoMail),
+            Arc::new(crate::test_mail::IdleMail),
         );
         let info = rmcp::ServerHandler::get_info(&info);
         let app = protect(

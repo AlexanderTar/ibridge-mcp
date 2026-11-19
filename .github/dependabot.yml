@@ -1,10 +1,32 @@
+# One weekly pull request that updates every dependency: Rust crates,
+# GitHub Actions, the site's npm packages and the Docker base images.
 version: 2
+
+multi-ecosystem-groups:
+  all-dependencies:
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+
 updates:
   - package-ecosystem: cargo
     directory: /
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies
+
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies
+
+  - package-ecosystem: npm
+    directory: /site
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies
+
+  - package-ecosystem: docker
+    directory: /
+    patterns: ["*"]
+    multi-ecosystem-group: all-dependencies

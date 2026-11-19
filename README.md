@@ -7,7 +7,7 @@
 [![CI](https://github.com/AlexanderTar/ibridge-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexanderTar/ibridge-mcp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![crates.io](https://img.shields.io/crates/v/ibridge.svg)](https://crates.io/crates/ibridge)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.AlexanderTar%2Fibridge-informational)](https://registry.modelcontextprotocol.io)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.AlexanderTar%2Fibridge-informational)](https://registry.modelcontextprotocol.io/?q=io.github.AlexanderTar%2Fibridge)
 
 An [MCP](https://modelcontextprotocol.io) server that lets Claude and other MCP clients read, search and manage your iCloud Mail, Calendar and Contacts.
 

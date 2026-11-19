@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "xtask"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
@@ -46,14 +46,14 @@ hyper-util = { version = "0.1", features = [
     "http2",
     "tokio",
 ] }
-ibridge-auth = { path = "crates/ibridge-auth", version = "1.0.0" }
-ibridge-calendar = { path = "crates/ibridge-calendar", version = "1.0.0" }
-ibridge-contacts = { path = "crates/ibridge-contacts", version = "1.0.0" }
-ibridge-core = { path = "crates/ibridge-core", version = "1.0.0" }
-ibridge-dav = { path = "crates/ibridge-dav", version = "1.0.0" }
-ibridge-hosted = { path = "crates/ibridge-hosted", version = "1.0.0" }
-ibridge-mail = { path = "crates/ibridge-mail", version = "1.0.0" }
-ibridge-server = { path = "crates/ibridge-server", version = "1.0.0" }
+ibridge-auth = { path = "crates/ibridge-auth", version = "1.0.1" }
+ibridge-calendar = { path = "crates/ibridge-calendar", version = "1.0.1" }
+ibridge-contacts = { path = "crates/ibridge-contacts", version = "1.0.1" }
+ibridge-core = { path = "crates/ibridge-core", version = "1.0.1" }
+ibridge-dav = { path = "crates/ibridge-dav", version = "1.0.1" }
+ibridge-hosted = { path = "crates/ibridge-hosted", version = "1.0.1" }
+ibridge-mail = { path = "crates/ibridge-mail", version = "1.0.1" }
+ibridge-server = { path = "crates/ibridge-server", version = "1.0.1" }
 ibridge-testkit = { path = "crates/ibridge-testkit" }
 imap-codec = "1.0.0"
 insta = { version = "1", features = ["json"] }

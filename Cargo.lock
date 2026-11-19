@@ -1893,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -1928,7 +1928,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-auth"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "ibridge-core",
  "keyring-core",
@@ -1943,7 +1943,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-calendar"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "calcard",
  "chrono",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-contacts"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "calcard",
  "getrandom 0.4.3",
@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "base64 0.23.1",
  "proptest",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-dav"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -2006,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-hosted"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aes-gcm",
  "askama",
@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-mail"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "async-imap",
  "base64 0.23.1",
@@ -2072,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-server"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "ibridge-testkit"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "async-imap",
  "bytes",
@@ -5006,7 +5006,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "async-imap",
  "base64 0.23.1",

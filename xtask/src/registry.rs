@@ -5,7 +5,7 @@
 //! `check` validates it against the registry's JSON schema (vendored in
 //! `xtask/schemas`) and ties it to the rest of the repository: the README line
 //! the registry reads to prove ownership of the crate, the version, the `cargo`
-//! package and the hosted URL. See `docs/release.md`.
+//! package, the icons and the hosted URL. See `docs/release.md`.
 
 use std::fs;
 use std::io;
@@ -19,6 +19,8 @@ const SCHEMA: &str = include_str!("../schemas/server.schema.json");
 const SERVER_NAME: &str = "io.github.AlexanderTar/ibridge";
 const CRATE: &str = "ibridge";
 const REMOTE_URL: &str = "https://mcp.ibridge.fyi/mcp";
+const ICON_SVG: &str = "https://mcp.ibridge.fyi/favicon.svg";
+const ICON_PNG: &str = "https://mcp.ibridge.fyi/favicon-32.png";
 
 /// Everything that can go wrong while checking `server.json`.
 #[derive(Debug, thiserror::Error)]
@@ -104,6 +106,8 @@ pub(crate) fn check(root: &Path) -> Result<(), RegistryError> {
         version,
     );
 
+    expect_icons(&mut problems, &server["icons"]);
+
     let remotes = server["remotes"].as_array().map_or(&[][..], Vec::as_slice);
     let hosted = remotes
         .iter()
@@ -137,6 +141,17 @@ fn schema_problems(server: &Value) -> Vec<String> {
             .map(|error| format!("schema: {error} at {}", error.instance_path()))
             .collect(),
         Err(error) => vec![format!("the vendored schema does not compile: {error}")],
+    }
+}
+
+/// The icons the hosted server also reports in `serverInfo.icons`, so every client shows one logo.
+fn expect_icons(problems: &mut Vec<String>, got: &Value) {
+    let want = serde_json::json!([
+        {"src": ICON_SVG, "mimeType": "image/svg+xml", "sizes": ["any"]},
+        {"src": ICON_PNG, "mimeType": "image/png", "sizes": ["32x32"]},
+    ]);
+    if *got != want {
+        problems.push(format!("icons is {got}, expected {want}"));
     }
 }
 
@@ -231,6 +246,30 @@ mod tests {
             server["packages"][0]["version"] = Value::String("0.0.1".to_owned());
         });
         assert!(problems(check(dir.path())).contains("package version"));
+    }
+
+    #[test]
+    fn a_server_json_without_the_icons_is_reported() {
+        let dir = copy_of_repo();
+        edit_server(dir.path(), |server| {
+            server.as_object_mut().expect("object").remove("icons");
+        });
+        assert!(problems(check(dir.path())).contains("icons"));
+    }
+
+    #[test]
+    fn the_icons_are_the_two_favicons_the_hosted_server_serves() {
+        let server: Value = serde_json::from_str(
+            &fs::read_to_string(server_json_path(&repo())).expect("server.json"),
+        )
+        .expect("json");
+        assert_eq!(
+            server["icons"],
+            serde_json::json!([
+                {"src": "https://mcp.ibridge.fyi/favicon.svg", "mimeType": "image/svg+xml", "sizes": ["any"]},
+                {"src": "https://mcp.ibridge.fyi/favicon-32.png", "mimeType": "image/png", "sizes": ["32x32"]},
+            ])
+        );
     }
 
     #[test]

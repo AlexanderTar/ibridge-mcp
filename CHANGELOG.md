@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-19
+
+### Changed
+
+- The hosted server answers `initialize`, `ping` and `tools/list` without a token, so people and agents can see what iBridge does before signing up. Everything else, including every tool call, still needs a token and gets the same `401` challenge. Such requests are limited per client address (120 a minute, `Guards::anonymous_per_minute`). A wrong or expired token still gets `401` on every method.
+
+### Added
+
+- `server.json` lists the iBridge icons (`icons`), and `cargo xtask registry check` verifies them.
+
 ## [1.0.0] - 2026-11-18
 
 First release. iBridge is distributed as source: build it with Rust, or use the hosted connector.
@@ -28,5 +38,6 @@ First release. iBridge is distributed as source: build it with Rust, or use the 
 - Secrets are never logged and are wiped after use. The hosted server stores each password sealed with a key derived from the token that unlocks it, so nothing in its settings or storage can decrypt it.
 - Mail, event, reminder and contact text reaches the client as plain JSON fields. Hidden Unicode (tag characters, bidirectional controls, zero-width characters) is stripped from it, and HTML mail loses text hidden with `display:none`, `visibility:hidden`, `font-size:0`, `opacity:0`, a zero height with `overflow:hidden` or the `hidden` attribute (CSS comments and character references in the style are resolved first), plus `<script>`, `<style>`, `<head>` and comments, before it becomes text. Each read tool's description says where its text comes from.
 
-[Unreleased]: https://github.com/AlexanderTar/ibridge-mcp/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/AlexanderTar/ibridge-mcp/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/AlexanderTar/ibridge-mcp/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AlexanderTar/ibridge-mcp/releases/tag/v1.0.0

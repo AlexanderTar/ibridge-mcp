@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400">
+  <defs><linearGradient id="br-dusk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#17344C"/><stop offset="1" stop-color="#0B1826"/></linearGradient><clipPath id="br-clip"><rect width="1280" height="400" rx="24"/></clipPath></defs>
+  <g clip-path="url(#br-clip)">
+    <rect width="1280" height="400" fill="#0B1826"/>
+
+    <rect width="1280" height="400" fill="url(#br-dusk)"/>
+    <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+      <text x="72" y="168" font-size="88" font-weight="700" letter-spacing="-2.5" fill="#EAF2F5">iBridge</text>
+      <text x="74" y="224" font-size="32" fill="#B4C3CF">Your iCloud,</text>
+      <text x="74" y="264" font-size="32" fill="#B4C3CF">in your AI assistant.</text>
+      <text x="74" y="322" font-size="24" font-weight="600" fill="#6CD0D3">Mail · Calendar · Contacts</text>
+    </g>
+    <!-- arch and posts -->
+    <path d="M698 420 Q883 148 1068 420" fill="none" stroke="#5CC8CC" stroke-width="8" stroke-linecap="round"/>
+    <path d="M736 266 V369.9" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/><path d="M774 266 V331.2" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/><path d="M812 266 V304.0" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/><path d="M850 266 V288.3" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/><path d="M888 266 V284.1" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/><path d="M926 266 V291.3" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/><path d="M964 266 V310.1" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/><path d="M1002 266 V340.3" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/><path d="M1040 266 V381.9" stroke="#5CC8CC" stroke-opacity="0.45" stroke-width="3"/>
+    <!-- abutments -->
+    <rect x="540" y="266" width="158" height="400" fill="#5CC8CC" fill-opacity="0.16"/>
+    <rect x="1068" y="266" width="152" height="400" fill="#5CC8CC" fill-opacity="0.16"/>
+    <!-- deck -->
+    <path d="M528 262 H1228" stroke="#FF7F57" stroke-width="7" stroke-linecap="round"/>
+    <!-- iCloud side: the Cloud Arch cloud, sitting on the deck -->
+    <path fill="#5CC8CC" fill-rule="evenodd" transform="translate(504 100.6) scale(3.6) translate(0 4)" d="M18 40 A8 8 0 1 1 19 24.05 A12 12 0 0 1 42.87 22.26 A9 9 0 1 1 45 40 Z M22.5 40 V36 A9.5 9.5 0 0 1 41.5 36 V40 Z"/>
+    <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#B4C3CF">
+      <text x="619" y="308" text-anchor="middle">Your iCloud</text>
+      <text x="1144" y="308" text-anchor="middle">Your assistant</text>
+    </g>
+    <!-- Mail, Calendar, Contacts crossing the deck -->
+    
+      <rect x="762" y="196" width="58" height="58" rx="14" fill="#12303A" stroke="#24445E" stroke-width="1.5"/>
+      <svg x="775" y="209" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6CD0D3" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M4 7.5l8 5.5 8-5.5"/></svg>
+      <path d="M716 236 h30 M724 218 h22" stroke="#5CC8CC" stroke-opacity="0.35" stroke-width="3" stroke-linecap="round"/>
+      <rect x="868" y="196" width="58" height="58" rx="14" fill="#12303A" stroke="#24445E" stroke-width="1.5"/>
+      <svg x="881" y="209" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6CD0D3" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+      <path d="M822 236 h30 M830 218 h22" stroke="#5CC8CC" stroke-opacity="0.35" stroke-width="3" stroke-linecap="round"/>
+      <rect x="974" y="196" width="58" height="58" rx="14" fill="#12303A" stroke="#24445E" stroke-width="1.5"/>
+      <svg x="987" y="209" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6CD0D3" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.2-3.6 4-5 7-5s5.8 1.4 7 5"/></svg>
+      <path d="M928 236 h30 M936 218 h22" stroke="#5CC8CC" stroke-opacity="0.35" stroke-width="3" stroke-linecap="round"/>
+    <!-- assistant side: a chat bubble -->
+    <path d="M1090 106 h108 a22 22 0 0 1 22 22 v70 a22 22 0 0 1 -22 22 h-62 l-26 22 v-22 h-20 a22 22 0 0 1 -22 -22 v-70 a22 22 0 0 1 22 -22 Z" fill="#EAF2F5"/>
+    <circle cx="1118" cy="163" r="8" fill="#0B7A80"/><circle cx="1144" cy="163" r="8" fill="#0B7A80"/><circle cx="1170" cy="163" r="8" fill="#0B7A80"/>
+  </g>
+  <rect x="1" y="1" width="1278" height="398" rx="23" fill="none" stroke="#24445E" stroke-width="2"/>
+</svg>

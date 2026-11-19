@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400">
+  <defs><linearGradient id="ch-dark-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0F2129"/><stop offset="1" stop-color="#0B1118"/></linearGradient>
+    <filter id="ch-dark-shadow" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.5"/></filter><clipPath id="ch-dark-clip"><rect width="1280" height="400" rx="24"/></clipPath></defs>
+  <g clip-path="url(#ch-dark-clip)">
+    <rect width="1280" height="400" fill="#0B1118"/>
+
+    <rect width="1280" height="400" fill="url(#ch-dark-sky)"/>
+    <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+      <svg x="72" y="62" width="44" height="44" viewBox="6 8 52 52"><path fill="#5CC8CC" fill-rule="evenodd" transform="translate(0 4)" d="M18 40 A8 8 0 1 1 19 24.05 A12 12 0 0 1 42.87 22.26 A9 9 0 1 1 45 40 Z M22.5 40 V36 A9.5 9.5 0 0 1 41.5 36 V40 Z"/><path d="M8 52 H56" stroke="#FF7F57" stroke-width="4.5" stroke-linecap="round"/></svg>
+      <text x="126" y="98" font-size="34" font-weight="700" letter-spacing="-0.8" fill="#EAF2F5">iBridge</text>
+      <text x="72" y="196" font-size="58" font-weight="700" letter-spacing="-1.8" fill="#EAF2F5">Your iCloud,</text>
+      <text x="72" y="262" font-size="58" font-weight="700" letter-spacing="-1.8" fill="#EAF2F5">in your AI assistant.</text>
+      <text x="74" y="324" font-size="27" font-weight="600" fill="#6CD0D3">Mail · Calendar · Contacts</text>
+    </g>
+    <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" filter="url(#ch-dark-shadow)">
+      <rect x="680" y="52" width="536" height="420" rx="20" fill="#131D27" stroke="#233140" stroke-width="1.5"/>
+    </g>
+    <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+      <path d="M680.75 104 V72 a19.25 19.25 0 0 1 19.25 -19.25 H1196 a19.25 19.25 0 0 1 19.25 19.25 V104 Z" fill="#0F1720"/>
+      <path d="M680 104 H1216" stroke="#233140" stroke-width="1.5"/>
+      <circle cx="706" cy="78" r="6" fill="#33475A"/><circle cx="726" cy="78" r="6" fill="#33475A"/><circle cx="746" cy="78" r="6" fill="#33475A"/>
+      <text x="766" y="85" font-size="18" font-weight="500" fill="undefined">Your assistant</text>
+      <!-- user bubble: DS bubble-user style, 20 px radius with a 6 px bottom-right corner -->
+      <path d="M836 130 H1170 a20 20 0 0 1 20 20 V178 a6 6 0 0 1 -6 6 H836 a20 20 0 0 1 -20 -20 V150 a20 20 0 0 1 20 -20 Z" fill="#5CC8CC"/>
+      <text x="1168" y="165" font-size="21" font-weight="500" fill="#062528" text-anchor="end">What's on my calendar tomorrow?</text>
+      <!-- assistant bubble -->
+      <rect x="704" y="204" width="414" height="214" rx="20" fill="#0A1017" stroke="#233140" stroke-width="1.5"/>
+      <rect x="720" y="222" width="186" height="32" rx="16" fill="#12303A"/>
+      <svg x="728" y="228" width="20" height="20" viewBox="6 8 52 52"><path fill="#5CC8CC" fill-rule="evenodd" transform="translate(0 4)" d="M18 40 A8 8 0 1 1 19 24.05 A12 12 0 0 1 42.87 22.26 A9 9 0 1 1 45 40 Z M22.5 40 V36 A9.5 9.5 0 0 1 41.5 36 V40 Z"/><path d="M8 52 H56" stroke="#FF7F57" stroke-width="4.5" stroke-linecap="round"/></svg>
+      <text x="754" y="244" font-size="17" font-weight="600" fill="#6CD0D3">iBridge · Calendar</text>
+      
+      <rect x="726" y="270" width="5" height="32" rx="2.5" fill="#FF7F57"/>
+      <text x="744" y="292" font-size="21" fill="#EAF2F5">Team planning</text>
+      <text x="1090" y="292" font-size="19" fill="undefined" text-anchor="end">09:30</text>
+      
+      <rect x="726" y="318" width="5" height="32" rx="2.5" fill="#FF7F57"/>
+      <text x="744" y="340" font-size="21" fill="#EAF2F5">Lunch with Sam</text>
+      <text x="1090" y="340" font-size="19" fill="undefined" text-anchor="end">12:30</text>
+      
+      <rect x="726" y="366" width="5" height="32" rx="2.5" fill="#FF7F57"/>
+      <text x="744" y="388" font-size="21" fill="#EAF2F5">Dentist</text>
+      <text x="1090" y="388" font-size="19" fill="undefined" text-anchor="end">14:00</text>
+    </g>
+  </g>
+  <rect x="1" y="1" width="1278" height="398" rx="23" fill="none" stroke="#233140" stroke-width="2"/>
+</svg>

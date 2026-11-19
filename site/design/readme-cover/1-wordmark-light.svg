@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400">
+  <defs><linearGradient id="wm-light-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#EAF5F5"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient><clipPath id="wm-light-clip"><rect width="1280" height="400" rx="24"/></clipPath></defs>
+  <g clip-path="url(#wm-light-clip)">
+    <rect width="1280" height="400" fill="#FFFFFF"/>
+
+    <rect width="1280" height="400" fill="url(#wm-light-sky)"/>
+    <rect x="0" y="376" width="1280" height="24" fill="#0B7A80"/>
+    <rect x="0" y="370" width="1280" height="6" fill="#E0532B"/>
+    <svg x="232" y="85" width="200" height="200" viewBox="0 0 64 64">
+    <defs><linearGradient id="wm-light-tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E7F3F3"/></linearGradient></defs>
+    <rect x="0.5" y="0.5" width="63" height="63" rx="14.2" fill="url(#wm-light-tile)" stroke="#D5E3E6" stroke-width="0.48"/>
+    <g transform="translate(8.96 8.96) scale(0.8862) translate(-6 -8)"><path fill="#0B7A80" fill-rule="evenodd" transform="translate(0 4)" d="M18 40 A8 8 0 1 1 19 24.05 A12 12 0 0 1 42.87 22.26 A9 9 0 1 1 45 40 Z M22.5 40 V36 A9.5 9.5 0 0 1 41.5 36 V40 Z"/><path d="M8 52 H56" stroke="#E0532B" stroke-width="4.5" stroke-linecap="round"/></g></svg>
+    <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+      <text x="484" y="180" font-size="104" font-weight="700" letter-spacing="-3" fill="#0F2538">iBridge</text>
+      <text x="487" y="240" font-size="38" fill="#46576A">Your iCloud, in your AI assistant.</text>
+      <text x="487" y="292" font-size="28" font-weight="600" fill="#0A6C72">Mail · Calendar · Contacts</text>
+    </g>
+  </g>
+  <rect x="1" y="1" width="1278" height="398" rx="23" fill="none" stroke="#DCE3E8" stroke-width="2"/>
+</svg>

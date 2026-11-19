@@ -82,7 +82,7 @@ That writes `target/mcpb/ibridge-<version>-<platform>.mcpb` (it needs `zip` on y
 
 ## Hosted connector
 
-[ibridge.fyi](https://ibridge.fyi) runs iBridge for you, for Claude.ai and other remote MCP clients. Add a custom connector with the URL `https://mcp.ibridge.fyi/mcp`, sign in with Apple, then connect your iCloud address with an app-specific password. Without signing in, a client can connect and list the tools to see what iBridge offers; running a tool needs a signed-in connection. It costs US$1.99 per month or US$19.99 per year. Running iBridge on your own machine or self-hosting is free and never gated.
+[ibridge.fyi](https://ibridge.fyi) runs iBridge for you, for Claude.ai and other remote MCP clients. Add a custom connector with the URL `https://mcp.ibridge.fyi/mcp`, sign in with Apple, then connect your iCloud address with an app-specific password. It costs US$1.99 per month or US$19.99 per year. Running iBridge on your own machine or self-hosting is free and never gated.
 
 ## Self-host
 

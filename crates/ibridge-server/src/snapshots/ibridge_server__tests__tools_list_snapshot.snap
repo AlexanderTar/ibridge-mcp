@@ -766,7 +766,7 @@ expression: tools
   {
     "name": "mail_unsubscribe",
     "title": "Unsubscribe",
-    "description": "Unsubscribes from the sender of a message, like an unsubscribe button. Takes only the message id: the sender's own unsubscribe address, if the message offers one, is used. An unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
+    "description": "Unsubscribes from the sender of a message, like an unsubscribe button. Takes only the message id: the sender's own unsubscribe route, if the message offers one, is used. If the sender supports one-click unsubscribe (RFC 8058), the server POSTs the request to the sender's https link with no account credentials; a failure is reported and nothing else is sent. Otherwise an unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -787,6 +787,11 @@ expression: tools
             {
               "const": "emailed",
               "description": "An unsubscribe email was sent.",
+              "type": "string"
+            },
+            {
+              "const": "one_click",
+              "description": "The sender's server accepted a one-click unsubscribe request.",
               "type": "string"
             },
             {

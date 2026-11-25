@@ -236,6 +236,8 @@ pub(crate) struct SendOut {
 pub(crate) enum UnsubscribeStatus {
     /// An unsubscribe email was sent.
     Emailed,
+    /// The sender's server accepted a one-click unsubscribe request.
+    OneClick,
     /// Only a web link is on offer, and nothing was sent.
     LinkOnly,
 }

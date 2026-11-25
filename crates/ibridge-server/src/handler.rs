@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use ibridge_core::{
     CalendarProvider, ContactsProvider, CoreError, Draft, FlagChange, MailSearch, Mailbox,
-    MailboxPath, MailboxRole, Message, MessageId, MessageSummary, RemindersProvider, Unsubscribe,
-    UnsubscribeMethod, decode, encode,
+    MailboxPath, MailboxRole, Message, MessageId, MessageSummary, OneClickFailure,
+    RemindersProvider, Unsubscribe, UnsubscribeMethod, decode, encode,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -36,7 +36,8 @@ const MAX_IN_FLIGHT: usize = 4;
 const DEFAULT_LIMIT: u32 = 25;
 const MAX_LIMIT: u32 = 100;
 const SENT_COPY_WARNING: &str = "sent, but the copy was not saved to Sent Messages";
-const LINK_ONLY_NOTE: &str = "The sender offers only a web link. One-click unsubscribe is not available yet, so nothing was sent. The link is as the sender wrote it; open it in a browser to unsubscribe.";
+const LINK_ONLY_NOTE: &str = "The sender offers only a web link and does not support one-click unsubscribe, so nothing was sent. The link is as the sender wrote it; open it in a browser to unsubscribe.";
+const ONE_CLICK_NOTE: &str = "The sender's server accepted the one-click unsubscribe request. The sender decides when it takes effect.";
 const SAVE_ATTACHMENT: &str = "mail_save_attachment";
 const MAIL_TOOLS: &[&str] = &[
     "mail_create_draft",
@@ -583,10 +584,10 @@ where
     /// # Errors
     ///
     /// Returns [`ErrorData::invalid_params`] when the id is not usable, and an MCP error
-    /// when the message cannot be read or SMTP refuses the email.
+    /// when the message cannot be read or SMTP refuses the email. A failed one-click POST is a tool error.
     #[tool(
         title = "Unsubscribe",
-        description = "Unsubscribes from the sender of a message, like an unsubscribe button. Takes only the message id: the sender's own unsubscribe address, if the message offers one, is used. An unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
+        description = "Unsubscribes from the sender of a message, like an unsubscribe button. Takes only the message id: the sender's own unsubscribe route, if the message offers one, is used. If the sender supports one-click unsubscribe (RFC 8058), the server POSTs the request to the sender's https link with no account credentials; a failure is reported and nothing else is sent. Otherwise an unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -623,6 +624,22 @@ where
                     summary,
                 )
             }
+            Unsubscribed::OneClicked => respond(
+                &UnsubscribedOut {
+                    status: UnsubscribeStatus::OneClick,
+                    id: None,
+                    warning: None,
+                    links: Vec::new(),
+                    note: ONE_CLICK_NOTE.to_owned(),
+                },
+                "one-click unsubscribe accepted".to_owned(),
+            ),
+            Unsubscribed::OneClickFailed {
+                failure,
+                mailto_offered,
+            } => Ok(CallToolResult::error(vec![ContentBlock::text(
+                one_click_failed(failure, mailto_offered),
+            )])),
             Unsubscribed::Links(links) => respond(
                 &UnsubscribedOut {
                     status: UnsubscribeStatus::LinkOnly,
@@ -888,6 +905,17 @@ fn message_out(message: &Message, next_offset: Option<usize>) -> MessageOut {
         unsubscribe: unsubscribe_out(message.unsubscribe.as_ref()),
         next_offset: widen(next_offset),
     }
+}
+
+/// What a failed one-click POST says: the failure class, that nothing else was sent, and
+/// whether an unsubscribe email exists. Nothing in it comes from the server.
+fn one_click_failed(failure: OneClickFailure, mailto_offered: bool) -> String {
+    let next = if mailto_offered {
+        "The sender also offers an unsubscribe email; it was not sent automatically."
+    } else {
+        "The message offers no other unsubscribe route that can be used automatically."
+    };
+    format!("one-click unsubscribe failed: {failure}. Nothing was sent. {next}")
 }
 
 fn unsubscribe_out(options: Option<&Unsubscribe>) -> UnsubscribeOut {

@@ -21,12 +21,14 @@ iBridge is distributed as source. There are no prebuilt binaries: you build it w
 
 ## Tools
 
-- **Mail:** list mailboxes, search, read messages and attachments, create drafts, send, unsubscribe, move and set flags.
+- **Mail:** list mailboxes, search, read messages and attachments, create drafts, send, unsubscribe (one-click where the sender supports it), move and set flags.
 - **Calendar:** list calendars, search and read events, create, update and delete them.
 - **Contacts:** search and read contacts, create, update and delete them.
 - **Account:** `account_status` reports which services are reachable.
 
 Tools that change anything are marked as such. Mail, event and contact text reaches the client as plain JSON fields, with hidden characters and hidden HTML removed, and each read tool says where its text comes from.
+
+One-click unsubscribe sends one credential-less POST to the sender's own `https` host, only when a message offers it (RFC 8058). The server refuses private and local addresses and never follows redirects. See [docs/security-model.md](docs/security-model.md).
 
 ## Start read-only
 

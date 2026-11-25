@@ -167,6 +167,14 @@ impl<C: ibridge_mail::Connect + 'static> MailApi for SessionMail<C> {
             UnsubscribeOutcome::Emailed(sent) => {
                 ibridge_server::Unsubscribed::Emailed(SentMail { id: sent.id })
             }
+            UnsubscribeOutcome::OneClicked => ibridge_server::Unsubscribed::OneClicked,
+            UnsubscribeOutcome::OneClickFailed {
+                failure,
+                mailto_offered,
+            } => ibridge_server::Unsubscribed::OneClickFailed {
+                failure,
+                mailto_offered,
+            },
             UnsubscribeOutcome::Links(links) => ibridge_server::Unsubscribed::Links(links),
             _ => ibridge_server::Unsubscribed::NotOffered,
         })

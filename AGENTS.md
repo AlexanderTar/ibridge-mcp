@@ -46,6 +46,8 @@ The live test account lives outside the repo, in `~/.config/ibridge/test-account
 
 Credentials go only to these hosts: `imap.mail.me.com`, `smtp.mail.me.com`, `caldav.icloud.com`, `contacts.icloud.com`, `p*-caldav.icloud.com`, `p*-contacts.icloud.com`. A redirect to any other host drops the credentials and fails.
 
+The one exception to "only these hosts" carries no credentials: `mail_unsubscribe` POSTs `List-Unsubscribe=One-Click` (RFC 8058) to the `https` link of a message that has `List-Unsubscribe-Post`, in local and hosted mode. It lives in `crates/ibridge-mail/src/oneclick/`. Keep every guard: `https` on port 443 only and no user info, a POST and never a GET, no account credential, cookie or `Authorization` header, no redirect followed (3xx is a failure), the host resolved once with every address checked by `is_public` (loopback, private, link-local, CGNAT, unspecified, multicast, reserved, documentation and mapped forms refused) and the connection made to that address with the certificate checked for the host name, a 10 second limit, only the status line read, and no server text in any result. Tests use `TlsFake` on loopback and swap the address policy and the resolver; the production policy is proven by `the_production_policy_refuses_loopback_and_private_hosts`. Never call a sender host for anything else, and never add a second route that fetches a link.
+
 The hosted server also calls, with their own credentials only: when Sign in with Apple is on, `appleid.apple.com`, `identitytoolkit.googleapis.com` and `www.googleapis.com`; when billing is on, `api.stripe.com`. Add no other outbound host without updating `docs/security-model.md`.
 
 ## Fakes and the Stripe sandbox test

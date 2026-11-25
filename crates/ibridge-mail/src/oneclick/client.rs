@@ -279,6 +279,31 @@ async fn read_status<S: AsyncRead + Unpin>(stream: &mut S) -> Result<u16, OneCli
         .fold(0, |code, digit| code * 10 + u16::from(digit - b'0')))
 }
 
+/// A client that trusts `root_der`, resolves every name to loopback, lets loopback through
+/// and connects to `port`: for tests that put a fake in place of the sender.
+#[cfg(test)]
+pub(crate) fn loopback(root_der: Vec<u8>, port: u16) -> OneClick {
+    struct Loopback;
+    impl Resolve for Loopback {
+        fn resolve<'a>(
+            &'a self,
+            _host: &'a str,
+        ) -> Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send + 'a>> {
+            Box::pin(async { Ok(vec![IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)]) })
+        }
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(root_der))
+        .expect("test root");
+    let mut client = OneClick::with_roots(roots).expect("client");
+    client.policy = Arc::new(|address: IpAddr| address.is_loopback() || is_public(address));
+    client.resolver = Arc::new(Loopback);
+    client.port = port;
+    client.timeout = Duration::from_secs(5);
+    client
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;

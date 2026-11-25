@@ -301,6 +301,20 @@ pub enum UnsubscribeMethod {
 }
 
 impl Unsubscribe {
+    /// The `https` link a one-click POST goes to: the first one, when `List-Unsubscribe-Post`
+    /// asked for one-click. `None` otherwise, so a plain link is never posted to.
+    #[must_use]
+    pub fn one_click_link(&self) -> Option<&str> {
+        self.one_click
+            .then(|| {
+                self.links.iter().map(String::as_str).find(|link| {
+                    link.get(..8)
+                        .is_some_and(|head| head.eq_ignore_ascii_case("https://"))
+                })
+            })
+            .flatten()
+    }
+
     /// The methods on offer, best first: one-click, then mailto, then a link.
     #[must_use]
     pub fn methods(&self) -> Vec<UnsubscribeMethod> {

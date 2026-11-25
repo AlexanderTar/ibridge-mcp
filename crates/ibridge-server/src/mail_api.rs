@@ -4,7 +4,7 @@
 
 use ibridge_core::{
     Attachment, CoreError, Draft, FlagChange, MailSearch, Mailbox, MailboxPath, MailboxRole,
-    Message, MessageId, MessageSummary,
+    Message, MessageId, MessageSummary, OneClickFailure,
 };
 
 /// One page of search hits, plus how many messages were skipped.
@@ -51,6 +51,15 @@ pub struct SentMail {
 pub enum Unsubscribed {
     /// An unsubscribe email to the sender was accepted by SMTP.
     Emailed(SentMail),
+    /// The sender's server accepted a one-click POST (RFC 8058).
+    OneClicked,
+    /// The one-click POST failed, and nothing else was sent.
+    OneClickFailed {
+        /// Why it failed, as a class that carries no server text.
+        failure: OneClickFailure,
+        /// The message also offers an unsubscribe email, which was not sent.
+        mailto_offered: bool,
+    },
     /// The sender offers only these web links, and nothing was sent.
     Links(Vec<String>),
     /// The message has no usable `List-Unsubscribe` header.

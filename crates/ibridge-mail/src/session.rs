@@ -5,11 +5,14 @@
 use std::sync::Arc;
 
 use ibridge_core::{
-    CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId, Unsubscribe, UnsubscribeMail,
+    CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId, OneClickFailure,
+    Unsubscribe, UnsubscribeMail,
 };
 
 use crate::imap::{Connect, ImapPool};
 use crate::limits::{SendLimits, SendWindow};
+#[cfg(test)]
+use crate::oneclick::OneClick;
 use crate::smtp::{OutgoingMail, SmtpClient};
 
 /// A send that SMTP accepted.
@@ -26,6 +29,11 @@ const UNSUBSCRIBE_SUBJECT: &str = "Unsubscribe";
 
 /// How [`MailSession::unsubscribe`] will act on a message.
 enum Route {
+    /// POST to the https link; `mailto_offered` is only for the failure message.
+    OneClick {
+        link: String,
+        mailto_offered: bool,
+    },
     Mailto(UnsubscribeMail),
     Links(Vec<String>),
     None,
@@ -36,7 +44,12 @@ fn choose_route(options: Option<Unsubscribe>) -> Route {
     let Some(options) = options else {
         return Route::None;
     };
-    if let Some(mailto) = options.mailto {
+    if let Some(link) = options.one_click_link() {
+        Route::OneClick {
+            link: link.to_owned(),
+            mailto_offered: options.mailto.is_some(),
+        }
+    } else if let Some(mailto) = options.mailto {
         Route::Mailto(mailto)
     } else if options.links.is_empty() {
         Route::None
@@ -51,6 +64,15 @@ fn choose_route(options: Option<Unsubscribe>) -> Route {
 pub enum UnsubscribeOutcome {
     /// The sender's unsubscribe address was emailed and SMTP accepted it.
     Emailed(SendOutcome),
+    /// The sender's server accepted the one-click POST (RFC 8058).
+    OneClicked,
+    /// The one-click POST failed. Nothing else was sent, not even the mailto.
+    OneClickFailed {
+        /// Why, as a class that carries no server text.
+        failure: OneClickFailure,
+        /// The message also offers an unsubscribe email, which was not sent.
+        mailto_offered: bool,
+    },
     /// The sender offers only web links, which this session does not follow.
     Links(Vec<String>),
     /// The message has no usable `List-Unsubscribe` header.
@@ -63,6 +85,9 @@ pub struct MailSession<C: Connect> {
     imap: ImapPool<C>,
     smtp: SmtpClient,
     sends: Arc<SendWindow>,
+    /// Replaces the shared client in tests.
+    #[cfg(test)]
+    one_click: Option<OneClick>,
 }
 
 impl<C: Connect> MailSession<C> {
@@ -86,7 +111,13 @@ impl<C: Connect> MailSession<C> {
     /// hourly cap belongs to the account and not to the session.
     #[must_use]
     pub const fn with_window(imap: ImapPool<C>, smtp: SmtpClient, sends: Arc<SendWindow>) -> Self {
-        Self { imap, smtp, sends }
+        Self {
+            imap,
+            smtp,
+            sends,
+            #[cfg(test)]
+            one_click: None,
+        }
     }
 
     /// The IMAP pool, for reads.
@@ -131,8 +162,10 @@ impl<C: Connect> MailSession<C> {
     /// The address, subject and body come from the message's own `List-Unsubscribe` header
     /// and from nowhere else. A mailto is sent like any message: it counts against the send
     /// caps, goes out from the account's address, and a copy is saved to Sent Messages (a
-    /// failed copy is logged, as for [`MailSession::send`]). A message that offers only web
-    /// links returns them and sends nothing.
+    /// failed copy is logged, as for [`MailSession::send`]). When the message offers
+    /// RFC 8058 one-click, that wins: an `https` POST with no credentials, and a failure
+    /// is reported, never retried by mail. A message that offers only web links returns
+    /// them and sends nothing.
     ///
     /// # Errors
     ///
@@ -141,6 +174,19 @@ impl<C: Connect> MailSession<C> {
     /// [`CoreError`] when SMTP fails.
     pub async fn unsubscribe(&self, id: &MessageId) -> Result<UnsubscribeOutcome, CoreError> {
         match choose_route(self.imap.unsubscribe_options(id).await?) {
+            Route::OneClick {
+                link,
+                mailto_offered,
+            } => {
+                // Never falls back to the mailto: a failed POST is the user's call.
+                Ok(match self.post_one_click(&link).await {
+                    Ok(()) => UnsubscribeOutcome::OneClicked,
+                    Err(failure) => UnsubscribeOutcome::OneClickFailed {
+                        failure,
+                        mailto_offered,
+                    },
+                })
+            }
             Route::Mailto(mailto) => {
                 let draft = Draft {
                     to: vec![mailto.to],
@@ -155,6 +201,17 @@ impl<C: Connect> MailSession<C> {
             }
             Route::Links(links) => Ok(UnsubscribeOutcome::Links(links)),
             Route::None => Ok(UnsubscribeOutcome::NotOffered),
+        }
+    }
+
+    async fn post_one_click(&self, link: &str) -> Result<(), OneClickFailure> {
+        #[cfg(test)]
+        if let Some(client) = &self.one_click {
+            return client.post(link).await;
+        }
+        match crate::oneclick::shared().await {
+            Some(client) => client.post(link).await,
+            None => Err(OneClickFailure::Unreachable),
         }
     }
 
@@ -235,6 +292,9 @@ mod tests {
     };
     use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
 
+    use ibridge_core::OneClickFailure;
+    use ibridge_testkit::tls_fake::{TlsFake, TlsReply};
+
     use super::{MailSession, UnsubscribeOutcome};
     use crate::imap::ImapPool;
     use crate::smtp::SmtpClient;
@@ -302,7 +362,7 @@ mod tests {
     async fn unsubscribe_emails_the_mailto_and_saves_a_sent_copy() {
         let (fake, capture, session) = newsletter_session().await;
         let outcome = session
-            .unsubscribe(&message(70))
+            .unsubscribe(&message(78))
             .await
             .expect("unsubscribe");
         assert!(
@@ -410,12 +470,129 @@ mod tests {
                 max_per_hour: 1,
             },
         );
-        session.unsubscribe(&message(70)).await.expect("first");
+        session.unsubscribe(&message(78)).await.expect("first");
         let err = session
-            .unsubscribe(&message(70))
+            .unsubscribe(&message(78))
             .await
             .expect_err("the cap applies to unsubscribe emails");
         assert!(matches!(err, CoreError::RateLimited { .. }), "got {err:?}");
+    }
+
+    /// A session whose one-click client talks to `fake` as if it were `example.com`.
+    async fn one_click_session(
+        reply: TlsReply,
+    ) -> (TlsFake, SmtpCapture, FakeImap, MailSession<FakeImap>) {
+        let tls = TlsFake::start("example.com", reply).await;
+        let (fake, capture, mut session) = newsletter_session().await;
+        session.one_click = Some(crate::oneclick::loopback(tls.root_der(), tls.port()));
+        (tls, capture, fake, session)
+    }
+
+    fn ok_reply() -> TlsReply {
+        TlsReply::Bytes(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec())
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_prefers_one_click_over_mailto() {
+        let (tls, capture, fake, session) = one_click_session(ok_reply()).await;
+        let outcome = session
+            .unsubscribe(&message(70))
+            .await
+            .expect("unsubscribe");
+        assert_eq!(outcome, UnsubscribeOutcome::OneClicked);
+        let requests = tls.requests();
+        assert_eq!(requests.len(), 1, "one POST");
+        let request = String::from_utf8_lossy(&requests[0]).into_owned();
+        assert!(
+            request.starts_with("POST /u?id=1 HTTP/1.1\r\n")
+                && request.ends_with("\r\n\r\nList-Unsubscribe=One-Click"),
+            "the https link from the header gets the RFC 8058 body, got {request:?}"
+        );
+        assert!(capture.message().is_empty(), "the mailto is not also sent");
+        assert!(fake.appended().is_empty(), "nothing is saved to Sent");
+    }
+
+    #[tokio::test]
+    async fn an_https_link_without_the_post_header_is_never_posted() {
+        let (tls, capture, _fake, session) = one_click_session(ok_reply()).await;
+        let outcome = session
+            .unsubscribe(&message(75))
+            .await
+            .expect("unsubscribe");
+        assert_eq!(
+            outcome,
+            UnsubscribeOutcome::Links(vec!["https://example.com/u?id=3".to_owned()]),
+            "the link is returned for the user to open"
+        );
+        let outcome = session
+            .unsubscribe(&message(76))
+            .await
+            .expect("unsubscribe");
+        assert!(
+            matches!(outcome, UnsubscribeOutcome::Emailed(_)),
+            "https plus mailto and no Post header falls to the mailto, got {outcome:?}"
+        );
+        assert_eq!(capture.rcpts(), vec!["m@example.com".to_owned()]);
+        assert_eq!(tls.connections(), 0, "no web request was made");
+    }
+
+    #[tokio::test]
+    async fn a_failed_one_click_sends_nothing_and_says_the_mailto_exists() {
+        let (tls, capture, fake, session) = one_click_session(TlsReply::Bytes(
+            b"HTTP/1.1 500 Internal Server Error\r\n\r\nSECRET".to_vec(),
+        ))
+        .await;
+        let outcome = session
+            .unsubscribe(&message(70))
+            .await
+            .expect("unsubscribe");
+        assert_eq!(
+            outcome,
+            UnsubscribeOutcome::OneClickFailed {
+                failure: OneClickFailure::Rejected,
+                mailto_offered: true,
+            }
+        );
+        assert_eq!(tls.requests().len(), 1, "one attempt, no retry");
+        assert!(capture.message().is_empty(), "the mailto is not auto-sent");
+        assert!(fake.appended().is_empty(), "nothing is saved to Sent");
+    }
+
+    #[tokio::test]
+    async fn a_failed_one_click_without_a_mailto_says_so() {
+        let (_tls, capture, _fake, session) = one_click_session(TlsReply::Bytes(
+            b"HTTP/1.1 302 Found\r\nLocation: https://example.net/\r\n\r\n".to_vec(),
+        ))
+        .await;
+        let outcome = session
+            .unsubscribe(&message(77))
+            .await
+            .expect("unsubscribe");
+        assert_eq!(
+            outcome,
+            UnsubscribeOutcome::OneClickFailed {
+                failure: OneClickFailure::Redirected,
+                mailto_offered: false,
+            }
+        );
+        assert!(capture.message().is_empty());
+    }
+
+    #[tokio::test]
+    async fn one_click_does_not_use_up_the_send_cap() {
+        let (_tls, _capture, _fake, mut session) = one_click_session(ok_reply()).await;
+        session.sends =
+            std::sync::Arc::new(crate::limits::SendWindow::new(crate::limits::SendLimits {
+                max_recipients: 50,
+                max_per_hour: 1,
+            }));
+        for _ in 0..2 {
+            let outcome = session
+                .unsubscribe(&message(70))
+                .await
+                .expect("unsubscribe");
+            assert_eq!(outcome, UnsubscribeOutcome::OneClicked);
+        }
     }
 
     #[tokio::test]

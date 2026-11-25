@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use ibridge_core::{
     AppleId, Attachment, AttachmentInfo, CoreError, Draft, FlagChange, MailSearch, Mailbox,
-    Message, MessageId, MessageSummary, Uid, UidValidity, Unsubscribe, UnsubscribeMail, encode,
+    Message, MessageId, MessageSummary, OneClickFailure, Uid, UidValidity, Unsubscribe,
+    UnsubscribeMail, encode,
 };
 use ibridge_server::{
     AccountSnapshot, IbridgeServer, MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail,
@@ -155,6 +156,15 @@ impl MailApi for Scripted {
                 "https://example.com/u?id=9\u{200B}\u{E0049}".to_owned(),
             ])),
             45 => Ok(Unsubscribed::Emailed(SentMail { id: None })),
+            46 => Ok(Unsubscribed::OneClicked),
+            47 => Ok(Unsubscribed::OneClickFailed {
+                failure: OneClickFailure::Rejected,
+                mailto_offered: true,
+            }),
+            48 => Ok(Unsubscribed::OneClickFailed {
+                failure: OneClickFailure::Blocked,
+                mailto_offered: false,
+            }),
             _ => Err(CoreError::NotFound),
         }
     }
@@ -380,14 +390,83 @@ async fn e2e_unsubscribe_link_only_returns_the_link_and_sends_nothing() {
         "the link comes back with hidden characters stripped"
     );
     assert!(
-        out["note"]
-            .as_str()
-            .is_some_and(|note| note.contains("One-click unsubscribe is not available yet")),
-        "the note says one-click is not available, got {out}"
+        out["note"].as_str().is_some_and(|note| {
+            note.contains("does not support one-click") && note.contains("open it in a browser")
+        }),
+        "the note says why nothing was posted and what to do, got {out}"
     );
     assert!(
         mail.sent.lock().expect("sent lock").is_empty(),
         "nothing was sent"
+    );
+}
+
+#[tokio::test]
+async fn e2e_unsubscribe_reports_an_accepted_one_click_post() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let result = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(46) }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(false), "not an error: {result:?}");
+    let out = result.structured_content.expect("structured content");
+    assert_eq!(out["status"], "one_click", "got {out}");
+    assert_eq!(out["id"], serde_json::Value::Null);
+    assert_eq!(out["links"], serde_json::json!([]));
+    assert!(
+        out["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("accepted") && note.contains("one-click")),
+        "the note says the sender accepted the request, got {out}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_a_failed_one_click_is_a_tool_error_that_names_the_class_and_the_mailto() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let refused = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(47) }),
+    )
+    .await;
+    assert_eq!(
+        refused.is_error,
+        Some(true),
+        "a tool error, got {refused:?}"
+    );
+    let text = text_blocks(&refused).join(" ");
+    assert!(
+        text.contains("refused the request")
+            && text.contains("unsubscribe email")
+            && text.contains("not sent"),
+        "names the class, says the mailto exists and was not sent, got {text:?}"
+    );
+    let blocked = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(48) }),
+    )
+    .await;
+    assert_eq!(
+        blocked.is_error,
+        Some(true),
+        "a tool error, got {blocked:?}"
+    );
+    let text = text_blocks(&blocked).join(" ");
+    assert!(
+        text.contains("private or local network") && !text.contains("unsubscribe email"),
+        "names the class and offers no mailto when there is none, got {text:?}"
     );
 }
 

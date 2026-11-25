@@ -240,6 +240,14 @@ impl<C: Connect + 'static> MailApi for SessionMail<C> {
     async fn unsubscribe(&self, id: &MessageId) -> Result<Unsubscribed, CoreError> {
         Ok(match self.0.unsubscribe(id).await? {
             UnsubscribeOutcome::Emailed(sent) => Unsubscribed::Emailed(SentMail { id: sent.id }),
+            UnsubscribeOutcome::OneClicked => Unsubscribed::OneClicked,
+            UnsubscribeOutcome::OneClickFailed {
+                failure,
+                mailto_offered,
+            } => Unsubscribed::OneClickFailed {
+                failure,
+                mailto_offered,
+            },
             UnsubscribeOutcome::Links(links) => Unsubscribed::Links(links),
             _ => Unsubscribed::NotOffered,
         })

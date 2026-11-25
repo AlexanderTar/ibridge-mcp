@@ -6,6 +6,7 @@ mod html;
 mod imap;
 mod limits;
 mod mime;
+mod oneclick;
 mod session;
 mod smtp;
 

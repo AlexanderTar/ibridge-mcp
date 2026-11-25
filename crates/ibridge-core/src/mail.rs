@@ -258,6 +258,36 @@ pub struct Unsubscribe {
     pub one_click: bool,
 }
 
+/// Why a one-click unsubscribe POST failed. Never carries server text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum OneClickFailure {
+    /// The link is not a plain `https` link on port 443 without credentials.
+    #[error("the link is not a plain https link on port 443")]
+    InvalidLink,
+    /// The link's host is a private, local or otherwise non-public address, so it was not contacted.
+    #[error("the link points to a private or local network address, so it was not contacted")]
+    Blocked,
+    /// The sender's server could not be found or connected to.
+    #[error("the sender's server could not be reached")]
+    Unreachable,
+    /// The sender's server did not present a valid certificate for its name.
+    #[error("the sender's server did not present a valid certificate")]
+    Tls,
+    /// The sender's server did not answer in time.
+    #[error("the sender's server did not answer in time")]
+    Timeout,
+    /// The sender's server answered with a redirect, which is never followed.
+    #[error("the sender's server redirected the request, and redirects are not followed")]
+    Redirected,
+    /// The sender's server answered with an error status.
+    #[error("the sender's server refused the request")]
+    Rejected,
+    /// The sender's server sent a reply that is not valid HTTP.
+    #[error("the sender's server sent a reply that is not valid HTTP")]
+    BadResponse,
+}
+
 /// One way to unsubscribe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]

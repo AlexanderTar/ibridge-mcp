@@ -3,9 +3,11 @@
 //! Which addresses a one-click unsubscribe may connect to.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
-/// Decides whether `address` may be connected to. The production policy is [`is_public`].
-pub(crate) type AddressPolicy = fn(IpAddr) -> bool;
+/// Decides whether `address` may be connected to. The production policy is [`is_public`];
+/// tests swap in one that lets a loopback fake through.
+pub(crate) type AddressPolicy = Arc<dyn Fn(IpAddr) -> bool + Send + Sync>;
 
 /// Whether `address` is a public unicast address.
 ///

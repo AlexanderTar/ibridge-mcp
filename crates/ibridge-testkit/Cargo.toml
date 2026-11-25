@@ -14,8 +14,11 @@ http.workspace = true
 http-body-util.workspace = true
 hyper-util.workspace = true
 imap-codec.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
 wiremock.workspace = true
 
 [dev-dependencies]

@@ -2,4 +2,7 @@
 
 //! RFC 8058 one-click unsubscribe: a credential-less POST to a sender-chosen host.
 
+mod client;
 mod guard;
+
+pub(crate) use client::OneClick;

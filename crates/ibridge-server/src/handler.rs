@@ -24,10 +24,11 @@ use crate::dto::{
     AccountStatusOut, AttachmentInfoOut, AttachmentOut, FlagParams, FlagsOut, GetAttachmentParams,
     GetMessageParams, IdOut, MailboxListOut, MailboxOut, MessageOut, MoveOut, MoveParams,
     SaveAttachmentParams, SavedAttachmentOut, SearchHitOut, SearchOut, SearchParams, SendOut,
-    SendParams, ServiceOut, ServiceState, UnsubscribeMethodOut, UnsubscribeOut,
+    SendParams, ServiceOut, ServiceState, UnsubscribeMethodOut, UnsubscribeOut, UnsubscribeParams,
+    UnsubscribeStatus, UnsubscribedOut,
 };
 use crate::error_map::{MappedError, map_core_error};
-use crate::mail_api::{MailApi, MailDest};
+use crate::mail_api::{MailApi, MailDest, Unsubscribed};
 use crate::sanitize::strip_hidden;
 use crate::save::{safe_name, save_unique};
 
@@ -35,6 +36,7 @@ const MAX_IN_FLIGHT: usize = 4;
 const DEFAULT_LIMIT: u32 = 25;
 const MAX_LIMIT: u32 = 100;
 const SENT_COPY_WARNING: &str = "sent, but the copy was not saved to Sent Messages";
+const LINK_ONLY_NOTE: &str = "The sender offers only a web link. One-click unsubscribe is not available yet, so nothing was sent. The link is as the sender wrote it; open it in a browser to unsubscribe.";
 const SAVE_ATTACHMENT: &str = "mail_save_attachment";
 const MAIL_TOOLS: &[&str] = &[
     "mail_create_draft",
@@ -46,6 +48,7 @@ const MAIL_TOOLS: &[&str] = &[
     "mail_search",
     "mail_send",
     "mail_set_flags",
+    "mail_unsubscribe",
 ];
 const WRITE_TOOLS: &[&str] = &[
     "mail_create_draft",
@@ -53,6 +56,7 @@ const WRITE_TOOLS: &[&str] = &[
     "mail_save_attachment",
     "mail_send",
     "mail_set_flags",
+    "mail_unsubscribe",
 ];
 
 macro_rules! try_mail {
@@ -569,6 +573,70 @@ where
             ),
         };
         respond(&SendOut { id, warning }, summary)
+    }
+
+    /// Unsubscribes from the sender of a message, like an unsubscribe button in a mail app.
+    ///
+    /// The tool takes the message id and nothing else: the address comes from the
+    /// message's own `List-Unsubscribe` header, which the sender wrote.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorData::invalid_params`] when the id is not usable, and an MCP error
+    /// when the message cannot be read or SMTP refuses the email.
+    #[tool(
+        title = "Unsubscribe",
+        description = "Unsubscribes from the sender of a message, like an unsubscribe button. Takes only the message id: the sender's own unsubscribe address, if the message offers one, is used. An unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = true
+        ),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<UnsubscribedOut>(),
+    )]
+    pub async fn mail_unsubscribe(
+        &self,
+        Parameters(params): Parameters<UnsubscribeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.reject_write()?;
+        let id = require_id(&params.id)?;
+        let _permit = self.permit().await?;
+        match try_mail!(self.mail.unsubscribe(&id).await) {
+            Unsubscribed::Emailed(sent) => {
+                let (id, warning, summary) = match sent.id {
+                    Some(id) => (Some(encode(&id)), None, "unsubscribe email sent".to_owned()),
+                    None => (
+                        None,
+                        Some(SENT_COPY_WARNING.to_owned()),
+                        SENT_COPY_WARNING.to_owned(),
+                    ),
+                };
+                respond(
+                    &UnsubscribedOut {
+                        status: UnsubscribeStatus::Emailed,
+                        id,
+                        warning,
+                        links: Vec::new(),
+                        note: "An unsubscribe email was sent to the sender. The sender decides when it takes effect.".to_owned(),
+                    },
+                    summary,
+                )
+            }
+            Unsubscribed::Links(links) => respond(
+                &UnsubscribedOut {
+                    status: UnsubscribeStatus::LinkOnly,
+                    id: None,
+                    warning: None,
+                    links: links.iter().map(|link| strip_hidden(link)).collect(),
+                    note: LINK_ONLY_NOTE.to_owned(),
+                },
+                "only a web link is on offer".to_owned(),
+            ),
+            _ => Ok(CallToolResult::error(vec![ContentBlock::text(
+                "this message does not offer unsubscribe: it has no usable List-Unsubscribe header",
+            )])),
+        }
     }
 
     /// Moves a message to a mailbox or a role.

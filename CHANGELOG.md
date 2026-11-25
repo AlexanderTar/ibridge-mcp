@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `mail_get_message` reports whether a message offers unsubscribe (`List-Unsubscribe`, RFC 2369) and by which methods: `one_click`, `mailto` or `link`.
+- `mail_unsubscribe` unsubscribes from a sender by email. It takes only a message id: the address, subject and body come from the message's own `mailto:` entry, and only `subject` and `body` are read from it. The email goes out through the normal send path, so the send limits apply and a copy is saved in Sent Messages. A message that offers only a web link returns the link and sends nothing. Read-only mode hides the tool.
+
 ## [1.0.1] - 2026-11-19
 
 ### Added

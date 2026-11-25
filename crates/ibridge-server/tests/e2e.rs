@@ -11,7 +11,7 @@ use ibridge_core::{
 };
 use ibridge_server::{
     AccountSnapshot, IbridgeServer, MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail,
-    ServiceStatus,
+    ServiceStatus, Unsubscribed,
 };
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use rmcp::service::RunningService;
@@ -50,6 +50,7 @@ fn message_id() -> MessageId {
 #[derive(Default)]
 struct Scripted {
     sent: Mutex<Vec<Draft>>,
+    unsubscribed: Mutex<Vec<MessageId>>,
 }
 
 #[expect(
@@ -138,6 +139,24 @@ impl MailApi for Scripted {
             reply_to: draft.reply_to.clone(),
         });
         Ok(SentMail { id: None })
+    }
+
+    async fn unsubscribe(&self, id: &MessageId) -> Result<Unsubscribed, CoreError> {
+        self.unsubscribed
+            .lock()
+            .expect("unsubscribed lock")
+            .push(id.clone());
+        match id.uid.get() {
+            42 => Ok(Unsubscribed::Emailed(SentMail {
+                id: Some(message_id()),
+            })),
+            43 => Ok(Unsubscribed::NotOffered),
+            44 => Ok(Unsubscribed::Links(vec![
+                "https://example.com/u?id=9\u{200B}\u{E0049}".to_owned(),
+            ])),
+            45 => Ok(Unsubscribed::Emailed(SentMail { id: None })),
+            _ => Err(CoreError::NotFound),
+        }
     }
 
     async fn move_message(
@@ -267,6 +286,131 @@ async fn e2e_get_message_reports_how_to_unsubscribe() {
         message["unsubscribe"],
         serde_json::json!({ "available": false, "methods": [] }),
         "a message without the header says so, got {message}"
+    );
+}
+
+fn id_with_uid(uid: u32) -> String {
+    encode(&MessageId {
+        uid: Uid::try_from(uid).expect("uid"),
+        ..message_id()
+    })
+}
+
+#[tokio::test]
+async fn e2e_unsubscribe_reports_the_email_it_sent() {
+    let mail = Arc::new(Scripted::default());
+    let client = connect(IbridgeServer::read_write(account(), Arc::clone(&mail))).await;
+    let result = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(42), "to": "attacker@example.net" }),
+    )
+    .await;
+    assert_eq!(
+        result.is_error,
+        Some(false),
+        "unsubscribe works: {result:?}"
+    );
+    let out = result.structured_content.expect("structured content");
+    assert_eq!(out["status"], "emailed", "got {out}");
+    assert_eq!(out["id"].as_str(), Some(id_with_uid(42).as_str()));
+    assert_eq!(out["warning"], serde_json::Value::Null);
+    assert_eq!(out["links"], serde_json::json!([]));
+    assert_eq!(
+        *mail.unsubscribed.lock().expect("lock"),
+        vec![MessageId {
+            uid: Uid::try_from(42).expect("uid"),
+            ..message_id()
+        }],
+        "the backend is asked about the message id and nothing else"
+    );
+    let warned = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(45) }),
+    )
+    .await;
+    let out = warned.structured_content.expect("structured content");
+    assert_eq!(out["status"], "emailed");
+    assert_eq!(out["id"], serde_json::Value::Null);
+    assert_eq!(
+        out["warning"].as_str(),
+        Some("sent, but the copy was not saved to Sent Messages"),
+        "a failed Sent copy is a warning on a sent email, got {out}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_unsubscribe_says_when_the_message_offers_nothing() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let result = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(43) }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true), "a tool error, got {result:?}");
+    let text = text_blocks(&result).join(" ");
+    assert!(
+        text.contains("does not offer") && text.contains("unsubscribe"),
+        "the error says unsubscribe isn't offered, got {text:?}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_unsubscribe_link_only_returns_the_link_and_sends_nothing() {
+    let mail = Arc::new(Scripted::default());
+    let client = connect(IbridgeServer::read_write(account(), Arc::clone(&mail))).await;
+    let result = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(44) }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(false), "not an error: {result:?}");
+    let out = result.structured_content.expect("structured content");
+    assert_eq!(out["status"], "link_only", "got {out}");
+    assert_eq!(
+        out["links"],
+        serde_json::json!(["https://example.com/u?id=9"]),
+        "the link comes back with hidden characters stripped"
+    );
+    assert!(
+        out["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("One-click unsubscribe is not available yet")),
+        "the note says one-click is not available, got {out}"
+    );
+    assert!(
+        mail.sent.lock().expect("sent lock").is_empty(),
+        "nothing was sent"
+    );
+}
+
+#[tokio::test]
+async fn e2e_unsubscribe_is_hidden_and_refused_when_read_only() {
+    let client = connect(IbridgeServer::read_only(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    assert!(
+        !tool_names(&client)
+            .await
+            .iter()
+            .any(|name| name == "mail_unsubscribe"),
+        "read-only servers do not list mail_unsubscribe"
+    );
+    let mut params = CallToolRequestParams::new("mail_unsubscribe");
+    params.arguments = Some(arguments(&serde_json::json!({ "id": id_with_uid(42) })));
+    let refused = client.call_tool(params).await;
+    assert!(
+        refused.is_err_and(|error| error.to_string().contains("tool not found")),
+        "a direct call is refused as an unknown tool"
     );
 }
 

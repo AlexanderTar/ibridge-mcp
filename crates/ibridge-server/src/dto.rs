@@ -67,6 +67,16 @@ pub struct SendParams {
     pub reply_to_id: Option<String>,
 }
 
+/// Arguments for `mail_unsubscribe`.
+///
+/// Only the message. The address or link to use comes from the message's own
+/// `List-Unsubscribe` header, never from the caller.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UnsubscribeParams {
+    /// Opaque message id from `mail_search` or `mail_get_message`.
+    pub id: String,
+}
+
 /// Arguments for `mail_get_message`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct GetMessageParams {
@@ -219,6 +229,28 @@ pub(crate) struct IdOut {
 pub(crate) struct SendOut {
     pub(crate) id: Option<String>,
     pub(crate) warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UnsubscribeStatus {
+    /// An unsubscribe email was sent.
+    Emailed,
+    /// Only a web link is on offer, and nothing was sent.
+    LinkOnly,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct UnsubscribedOut {
+    pub(crate) status: UnsubscribeStatus,
+    /// Id of the copy in Sent Messages, when an email was sent and the copy was saved.
+    pub(crate) id: Option<String>,
+    /// Set when the email was sent but the Sent copy was not saved.
+    pub(crate) warning: Option<String>,
+    /// The sender's web links, as the sender wrote them. Empty when an email was sent.
+    pub(crate) links: Vec<String>,
+    /// What happened and what is left to do.
+    pub(crate) note: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

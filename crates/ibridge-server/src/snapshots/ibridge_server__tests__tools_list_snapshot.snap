@@ -762,5 +762,86 @@ expression: tools
       "idempotentHint": true,
       "openWorldHint": true
     }
+  },
+  {
+    "name": "mail_unsubscribe",
+    "title": "Unsubscribe",
+    "description": "Unsubscribes from the sender of a message, like an unsubscribe button. Takes only the message id: the sender's own unsubscribe address, if the message offers one, is used. An unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "Opaque message id from `mail_search` or `mail_get_message`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "UnsubscribeStatus": {
+          "oneOf": [
+            {
+              "const": "emailed",
+              "description": "An unsubscribe email was sent.",
+              "type": "string"
+            },
+            {
+              "const": "link_only",
+              "description": "Only a web link is on offer, and nothing was sent.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "Id of the copy in Sent Messages, when an email was sent and the copy was saved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "links": {
+          "description": "The sender's web links, as the sender wrote them. Empty when an email was sent.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "note": {
+          "description": "What happened and what is left to do.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/UnsubscribeStatus"
+        },
+        "warning": {
+          "description": "Set when the email was sent but the Sent copy was not saved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "id",
+        "warning",
+        "links",
+        "note"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
   }
 ]

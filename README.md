@@ -21,7 +21,7 @@ iBridge is distributed as source. There are no prebuilt binaries: you build it w
 
 ## Tools
 
-- **Mail:** list mailboxes, search, read messages and attachments, create drafts, send, move and set flags.
+- **Mail:** list mailboxes, search, read messages and attachments, create drafts, send, unsubscribe, move and set flags.
 - **Calendar:** list calendars, search and read events, create, update and delete them.
 - **Contacts:** search and read contacts, create, update and delete them.
 - **Account:** `account_status` reports which services are reachable.

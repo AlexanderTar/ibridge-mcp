@@ -14,6 +14,7 @@ use tokio_rustls::TlsAcceptor;
 
 /// What the fake does after it has read a request.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum TlsReply {
     /// Writes these bytes, then closes.
     Bytes(Vec<u8>),

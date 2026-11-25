@@ -37,6 +37,10 @@ const DEFAULT_LIMIT: u32 = 25;
 const MAX_LIMIT: u32 = 100;
 const SENT_COPY_WARNING: &str = "sent, but the copy was not saved to Sent Messages";
 const LINK_ONLY_NOTE: &str = "The sender offers only a web link and does not support one-click unsubscribe, so nothing was sent. The link is as the sender wrote it; open it in a browser to unsubscribe.";
+const MAILTO_NOT_SENT: &str =
+    "The sender also offers an unsubscribe email; it was not sent automatically.";
+const NO_OTHER_ROUTE: &str =
+    "The message offers no other unsubscribe route that can be used automatically.";
 const ONE_CLICK_NOTE: &str = "The sender's server accepted the one-click unsubscribe request. The sender decides when it takes effect.";
 const SAVE_ATTACHMENT: &str = "mail_save_attachment";
 const MAIL_TOOLS: &[&str] = &[
@@ -637,9 +641,16 @@ where
             Unsubscribed::OneClickFailed {
                 failure,
                 mailto_offered,
-            } => Ok(CallToolResult::error(vec![ContentBlock::text(
-                one_click_failed(failure, mailto_offered),
-            )])),
+            } => {
+                let next = if mailto_offered {
+                    MAILTO_NOT_SENT
+                } else {
+                    NO_OTHER_ROUTE
+                };
+                Ok(CallToolResult::error(vec![ContentBlock::text(
+                    one_click_failed(failure, next),
+                )]))
+            }
             Unsubscribed::Links(links) => respond(
                 &UnsubscribedOut {
                     status: UnsubscribeStatus::LinkOnly,
@@ -908,13 +919,8 @@ fn message_out(message: &Message, next_offset: Option<usize>) -> MessageOut {
 }
 
 /// What a failed one-click POST says: the failure class, that nothing else was sent, and
-/// whether an unsubscribe email exists. Nothing in it comes from the server.
-fn one_click_failed(failure: OneClickFailure, mailto_offered: bool) -> String {
-    let next = if mailto_offered {
-        "The sender also offers an unsubscribe email; it was not sent automatically."
-    } else {
-        "The message offers no other unsubscribe route that can be used automatically."
-    };
+/// what `next` says about other routes. Nothing in it comes from the server.
+fn one_click_failed(failure: OneClickFailure, next: &str) -> String {
     format!("one-click unsubscribe failed: {failure}. Nothing was sent. {next}")
 }
 

@@ -691,33 +691,7 @@ fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
         }
     }
     if script.unsubscribe_messages {
-        messages.extend([
-            list_message(
-                70,
-                "<mailto:unsub@example.com?subject=unsubscribe&body=remove%20me>, <https://example.com/u?id=1>\r\n\
-                 List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n",
-            ),
-            list_message(71, "<http://example.com/u?id=2>\r\n"),
-            list_message(
-                72,
-                "<mailto:a@example.com?cc=evil1@example.net&bcc=evil2@example.net&to=evil3@example.net&subject=hi>\r\n",
-            ),
-            list_message(73, "<mailto:a@example.com,b@example.com>\r\n"),
-            list_message(74, "<mailto:bare@example.com>\r\n"),
-            list_message(75, "<https://example.com/u?id=3>\r\n"),
-            list_message(
-                76,
-                "<https://example.com/u?id=4>, <mailto:m@example.com>\r\n",
-            ),
-            list_message(
-                78,
-                "<mailto:unsub@example.com?subject=unsubscribe&body=remove%20me>\r\n",
-            ),
-            list_message(
-                77,
-                "<https://example.com/u?id=5>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n",
-            ),
-        ]);
+        messages.extend(unsubscribe_messages());
     }
     for (seq, (uid, head, body)) in messages.into_iter().enumerate() {
         let seq = u32::try_from(seq.saturating_add(1)).unwrap_or(1);
@@ -725,6 +699,36 @@ fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
     }
     bytes.extend(tagged_ok(tag));
     bytes
+}
+
+fn unsubscribe_messages() -> [(u32, String, Vec<u8>); 9] {
+    [
+        list_message(
+            70,
+            "<mailto:unsub@example.com?subject=unsubscribe&body=remove%20me>, <https://example.com/u?id=1>\r\n\
+                 List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n",
+        ),
+        list_message(71, "<http://example.com/u?id=2>\r\n"),
+        list_message(
+            72,
+            "<mailto:a@example.com?cc=evil1@example.net&bcc=evil2@example.net&to=evil3@example.net&subject=hi>\r\n",
+        ),
+        list_message(73, "<mailto:a@example.com,b@example.com>\r\n"),
+        list_message(74, "<mailto:bare@example.com>\r\n"),
+        list_message(75, "<https://example.com/u?id=3>\r\n"),
+        list_message(
+            76,
+            "<https://example.com/u?id=4>, <mailto:m@example.com>\r\n",
+        ),
+        list_message(
+            78,
+            "<mailto:unsub@example.com?subject=unsubscribe&body=remove%20me>\r\n",
+        ),
+        list_message(
+            77,
+            "<https://example.com/u?id=5>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n",
+        ),
+    ]
 }
 
 fn list_message(uid: u32, list_unsubscribe: &str) -> (u32, String, Vec<u8>) {

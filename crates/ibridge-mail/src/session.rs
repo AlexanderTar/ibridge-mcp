@@ -575,7 +575,7 @@ mod tests {
                 mailto_offered: false,
             }
         );
-        assert!(capture.message().is_empty());
+        assert_eq!(capture.message(), "", "no email was sent");
     }
 
     #[tokio::test]

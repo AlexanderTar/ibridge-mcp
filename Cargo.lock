@@ -2126,7 +2126,6 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "testcontainers",
- "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
  "tracing",

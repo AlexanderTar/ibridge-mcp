@@ -226,6 +226,110 @@ pub struct Message {
     pub body: String,
     /// Attachments, without their bytes.
     pub attachments: Vec<AttachmentInfo>,
+    /// How the sender lets a reader unsubscribe, from `List-Unsubscribe`.
+    pub unsubscribe: Option<Unsubscribe>,
+}
+
+/// A mailto unsubscribe target from `List-Unsubscribe`, already checked.
+///
+/// Only `to`, `subject` and `body` survive. Every value is free of CR and LF and under
+/// its cap, so it is safe to put in a message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnsubscribeMail {
+    /// The one recipient.
+    pub to: String,
+    /// Subject the sender asked for.
+    pub subject: Option<String>,
+    /// Body the sender asked for.
+    pub body: Option<String>,
+}
+
+/// How a sender lets a reader unsubscribe (RFC 2369, RFC 8058).
+///
+/// The header is written by the sender, so nothing here is trusted: tools take a message
+/// id and read this themselves, never a URL or an address from a caller.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Unsubscribe {
+    /// The mailto route, when the header has one that passed every check.
+    pub mailto: Option<UnsubscribeMail>,
+    /// `http` and `https` links, in header order.
+    pub links: Vec<String>,
+    /// `List-Unsubscribe-Post` asks for `List-Unsubscribe=One-Click` and an `https` link exists.
+    pub one_click: bool,
+}
+
+/// Why a one-click unsubscribe POST failed. Never carries server text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum OneClickFailure {
+    /// The link is not a plain `https` link on port 443 without credentials.
+    #[error("the link is not a plain https link on port 443")]
+    InvalidLink,
+    /// The link's host is a private, local or otherwise non-public address, so it was not contacted.
+    #[error("the link points to a private or local network address, so it was not contacted")]
+    Blocked,
+    /// The sender's server could not be found or connected to.
+    #[error("the sender's server could not be reached")]
+    Unreachable,
+    /// The sender's server did not present a valid certificate for its name.
+    #[error("the sender's server did not present a valid certificate")]
+    Tls,
+    /// The sender's server did not answer in time.
+    #[error("the sender's server did not answer in time")]
+    Timeout,
+    /// The sender's server answered with a redirect, which is never followed.
+    #[error("the sender's server redirected the request, and redirects are not followed")]
+    Redirected,
+    /// The sender's server answered with an error status.
+    #[error("the sender's server refused the request")]
+    Rejected,
+    /// The sender's server sent a reply that is not valid HTTP.
+    #[error("the sender's server sent a reply that is not valid HTTP")]
+    BadResponse,
+}
+
+/// One way to unsubscribe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnsubscribeMethod {
+    /// Send an email to the sender's address.
+    Mailto,
+    /// Post to the sender's `https` link without opening it.
+    OneClick,
+    /// Open a link in a browser.
+    Link,
+}
+
+impl Unsubscribe {
+    /// The `https` link a one-click POST goes to: the first one, when `List-Unsubscribe-Post`
+    /// asked for one-click. `None` otherwise, so a plain link is never posted to.
+    #[must_use]
+    pub fn one_click_link(&self) -> Option<&str> {
+        self.one_click
+            .then(|| {
+                self.links.iter().map(String::as_str).find(|link| {
+                    link.get(..8)
+                        .is_some_and(|head| head.eq_ignore_ascii_case("https://"))
+                })
+            })
+            .flatten()
+    }
+
+    /// The methods on offer, best first: one-click, then mailto, then a link.
+    #[must_use]
+    pub fn methods(&self) -> Vec<UnsubscribeMethod> {
+        let mut methods = Vec::new();
+        if self.one_click {
+            methods.push(UnsubscribeMethod::OneClick);
+        }
+        if self.mailto.is_some() {
+            methods.push(UnsubscribeMethod::Mailto);
+        }
+        if !self.links.is_empty() {
+            methods.push(UnsubscribeMethod::Link);
+        }
+        methods
+    }
 }
 
 /// A fetched attachment.

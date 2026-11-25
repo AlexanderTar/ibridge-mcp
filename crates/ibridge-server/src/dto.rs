@@ -67,6 +67,30 @@ pub struct SendParams {
     pub reply_to_id: Option<String>,
 }
 
+/// Arguments for `mail_unsubscribe`.
+///
+/// The message, and optionally which of its routes to use. The address or link comes from
+/// the message's own `List-Unsubscribe` header, never from the caller.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UnsubscribeParams {
+    /// Opaque message id from `mail_search` or `mail_get_message`.
+    pub id: String,
+    /// Which of the message's own routes to use: `one_click` or `mailto`. Omit to let the
+    /// server choose, which prefers one-click. A route the message does not offer is an error.
+    #[serde(default)]
+    pub method: Option<UnsubscribeMethodParam>,
+}
+
+/// A route a caller may pick. A web link is never followed, so it is not a choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UnsubscribeMethodParam {
+    /// POST to the sender's https link (RFC 8058).
+    OneClick,
+    /// Email the address in the sender's own mailto.
+    Mailto,
+}
+
 /// Arguments for `mail_get_message`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct GetMessageParams {
@@ -171,7 +195,26 @@ pub(crate) struct MessageOut {
     pub(crate) date: String,
     pub(crate) body: String,
     pub(crate) attachments: Vec<AttachmentInfoOut>,
+    pub(crate) unsubscribe: UnsubscribeOut,
     pub(crate) next_offset: Option<u64>,
+}
+
+/// Whether the sender offers a way to unsubscribe, and which.
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct UnsubscribeOut {
+    /// True when the sender's headers offer at least one way to unsubscribe.
+    pub(crate) available: bool,
+    /// What the sender offers, best first: `one_click` (a link that accepts a POST),
+    /// `mailto` (an email address) or `link` (a page for a browser).
+    pub(crate) methods: Vec<UnsubscribeMethodOut>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UnsubscribeMethodOut {
+    OneClick,
+    Mailto,
+    Link,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -200,6 +243,30 @@ pub(crate) struct IdOut {
 pub(crate) struct SendOut {
     pub(crate) id: Option<String>,
     pub(crate) warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UnsubscribeStatus {
+    /// An unsubscribe email was sent.
+    Emailed,
+    /// The sender's server accepted a one-click unsubscribe request.
+    OneClick,
+    /// Only a web link is on offer, and nothing was sent.
+    LinkOnly,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct UnsubscribedOut {
+    pub(crate) status: UnsubscribeStatus,
+    /// Id of the copy in Sent Messages, when an email was sent and the copy was saved.
+    pub(crate) id: Option<String>,
+    /// Set when the email was sent but the Sent copy was not saved.
+    pub(crate) warning: Option<String>,
+    /// The sender's web links, as the sender wrote them. Empty when an email was sent.
+    pub(crate) links: Vec<String>,
+    /// What happened and what is left to do.
+    pub(crate) note: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

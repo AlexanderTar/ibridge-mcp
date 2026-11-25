@@ -14,12 +14,14 @@ use ibridge_calendar::CalDavProvider;
 use ibridge_contacts::CardDavProvider;
 use ibridge_core::{
     AppleId, Attachment, CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId,
+    UnsubscribeMethod,
 };
 use ibridge_dav::{DavClient, DavHttp};
 use ibridge_mail::{
     Connect, IcloudConnect, ImapPool, MailSession, SendLimits, SendWindow, SmtpClient,
+    UnsubscribeOutcome,
 };
-use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
+use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail, Unsubscribed};
 
 use crate::provider::{Backend, Providers};
 
@@ -234,6 +236,27 @@ impl<C: Connect + 'static> MailApi for SessionMail<C> {
     async fn send(&self, draft: &Draft) -> Result<SentMail, CoreError> {
         let sent = self.0.send(draft).await?;
         Ok(SentMail { id: sent.id })
+    }
+
+    async fn unsubscribe(
+        &self,
+        id: &MessageId,
+        method: Option<UnsubscribeMethod>,
+    ) -> Result<Unsubscribed, CoreError> {
+        Ok(match self.0.unsubscribe(id, method).await? {
+            UnsubscribeOutcome::Emailed(sent) => Unsubscribed::Emailed(SentMail { id: sent.id }),
+            UnsubscribeOutcome::OneClicked => Unsubscribed::OneClicked,
+            UnsubscribeOutcome::OneClickFailed {
+                failure,
+                mailto_offered,
+            } => Unsubscribed::OneClickFailed {
+                failure,
+                mailto_offered,
+            },
+            UnsubscribeOutcome::Links(links) => Unsubscribed::Links(links),
+            UnsubscribeOutcome::MethodNotOffered(method) => Unsubscribed::MethodNotOffered(method),
+            _ => Unsubscribed::NotOffered,
+        })
     }
 
     async fn move_message(&self, id: &MessageId, destination: &MailDest) -> Result<(), CoreError> {

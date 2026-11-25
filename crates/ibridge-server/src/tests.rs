@@ -8,7 +8,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::Tool;
 
 use crate::account::{AccountSnapshot, ServiceStatus};
-use crate::dto::{SearchParams, SendParams};
+use crate::dto::{SearchParams, SendParams, UnsubscribeParams};
 use crate::handler::IbridgeServer;
 use crate::mail_api::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
 
@@ -25,6 +25,7 @@ const WRITES: &[&str] = &[
     "mail_move",
     "mail_send",
     "mail_set_flags",
+    "mail_unsubscribe",
 ];
 
 fn account() -> AccountSnapshot {
@@ -203,6 +204,16 @@ fn every_write_tool_is_destructive() {
         assert_eq!(annotations.read_only_hint, Some(false), "{name}");
         assert_eq!(annotations.destructive_hint, Some(true), "{name}");
     }
+    let unsubscribe = require(&tools, "mail_unsubscribe")
+        .annotations
+        .as_ref()
+        .expect("mail_unsubscribe annotations");
+    assert_eq!(
+        unsubscribe.idempotent_hint,
+        Some(false),
+        "a second unsubscribe sends a second email"
+    );
+    assert_eq!(unsubscribe.open_world_hint, Some(true));
     let flags = require(&tools, "mail_set_flags")
         .annotations
         .as_ref()
@@ -259,6 +270,14 @@ async fn read_only_mode_hides_writes() {
     assert!(
         rendered.contains("tool not found"),
         "read-only send should report tool not found, got {rendered}"
+    );
+    let error = read_only
+        .mail_unsubscribe(Parameters(UnsubscribeParams::default()))
+        .await
+        .expect_err("read-only unsubscribe is rejected");
+    assert!(
+        error.to_string().contains("tool not found"),
+        "read-only unsubscribe should report tool not found, got {error}"
     );
 }
 

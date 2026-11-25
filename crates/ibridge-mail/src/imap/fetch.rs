@@ -3,7 +3,7 @@
 //! Message and attachment fetch.
 
 use async_imap::imap_proto::{AttributeValue, Response};
-use ibridge_core::{Attachment, CoreError, Message, MessageId};
+use ibridge_core::{Attachment, CoreError, Message, MessageId, Unsubscribe};
 
 use super::pool::{Connect, ImapPool, Lease, map_command, run_checked};
 use crate::mime;
@@ -48,6 +48,7 @@ impl<C: Connect> ImapPool<C> {
                 date: parsed.date,
                 body: parsed.body,
                 attachments: parsed.attachments,
+                unsubscribe: parsed.unsubscribe,
             },
             next_offset: parsed.next_offset,
         })
@@ -101,6 +102,24 @@ impl<C: Connect> ImapPool<C> {
     ) -> Result<crate::mime::ThreadHeaders, CoreError> {
         let body = load_body(self, id).await?;
         crate::mime::thread_headers(&body)
+    }
+}
+
+impl<C: Connect> ImapPool<C> {
+    /// The unsubscribe options in the headers of `id`, or `None` when it offers none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when the message is missing or unreadable.
+    pub(crate) async fn unsubscribe_options(
+        &self,
+        id: &MessageId,
+    ) -> Result<Option<Unsubscribe>, CoreError> {
+        let body = load_body(self, id).await?;
+        if !mime::parses(&body) {
+            return Err(CoreError::NotFound);
+        }
+        Ok(mime::unsubscribe(&body))
     }
 }
 
@@ -165,7 +184,9 @@ async fn fetch_body<C: Connect>(
 
 #[cfg(test)]
 mod tests {
-    use ibridge_core::{CoreError, MailSearch, MailboxPath, MessageId, Uid, UidValidity};
+    use ibridge_core::{
+        CoreError, MailSearch, MailboxPath, MessageId, Uid, UidValidity, UnsubscribeMethod,
+    };
     use ibridge_testkit::imap_fake::FakeScript;
 
     use super::super::support::pool;
@@ -211,6 +232,44 @@ mod tests {
             !body.contains("<p>") && !body.contains("<b>"),
             "tags are not left in the text, got {body:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn get_message_reports_the_unsubscribe_options() {
+        let (_fake, pooled) = pool(FakeScript {
+            unsubscribe_messages: true,
+            ..FakeScript::default()
+        });
+        let list = pooled
+            .get_message(&message_id(70), 0)
+            .await
+            .expect("newsletter");
+        let options = list.message.unsubscribe.expect("the header is read");
+        assert_eq!(
+            options.methods(),
+            vec![
+                UnsubscribeMethod::OneClick,
+                UnsubscribeMethod::Mailto,
+                UnsubscribeMethod::Link
+            ]
+        );
+        let mailto = options.mailto.expect("mailto route");
+        assert_eq!(mailto.to, "unsub@example.com");
+        assert_eq!(mailto.subject.as_deref(), Some("unsubscribe"));
+        assert_eq!(mailto.body.as_deref(), Some("remove me"));
+        let link_only = pooled
+            .get_message(&message_id(71), 0)
+            .await
+            .expect("link newsletter")
+            .message
+            .unsubscribe
+            .expect("the header is read");
+        assert_eq!(link_only.methods(), vec![UnsubscribeMethod::Link]);
+        let plain = pooled
+            .get_message(&message_id(4), 0)
+            .await
+            .expect("plain message");
+        assert_eq!(plain.message.unsubscribe, None, "no header, no options");
     }
 
     #[tokio::test]

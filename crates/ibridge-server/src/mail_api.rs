@@ -4,7 +4,7 @@
 
 use ibridge_core::{
     Attachment, CoreError, Draft, FlagChange, MailSearch, Mailbox, MailboxPath, MailboxRole,
-    Message, MessageId, MessageSummary,
+    Message, MessageId, MessageSummary, OneClickFailure, UnsubscribeMethod,
 };
 
 /// One page of search hits, plus how many messages were skipped.
@@ -43,6 +43,29 @@ pub struct SentMail {
     ///
     /// `None` when the message was delivered and the Sent append failed.
     pub id: Option<MessageId>,
+}
+
+/// What unsubscribing from a message did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Unsubscribed {
+    /// An unsubscribe email to the sender was accepted by SMTP.
+    Emailed(SentMail),
+    /// The sender's server accepted a one-click POST (RFC 8058).
+    OneClicked,
+    /// The one-click POST failed, and nothing else was sent.
+    OneClickFailed {
+        /// Why it failed, as a class that carries no server text.
+        failure: OneClickFailure,
+        /// The message also offers an unsubscribe email, which was not sent.
+        mailto_offered: bool,
+    },
+    /// The sender offers only these web links, and nothing was sent.
+    Links(Vec<String>),
+    /// The caller asked for a method the message does not offer. Nothing was sent.
+    MethodNotOffered(UnsubscribeMethod),
+    /// The message has no usable `List-Unsubscribe` header.
+    NotOffered,
 }
 
 /// Where a move puts a message.
@@ -119,6 +142,21 @@ pub trait MailApi {
     ///
     /// Returns [`CoreError`] when the message cannot be sent.
     async fn send(&self, draft: &Draft) -> Result<SentMail, CoreError>;
+
+    /// Unsubscribes from the sender of a message, using only what its own headers offer.
+    ///
+    /// A backend that cannot do this keeps the default, which refuses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError`] when the message cannot be read or the email cannot be sent.
+    async fn unsubscribe(
+        &self,
+        _id: &MessageId,
+        _method: Option<UnsubscribeMethod>,
+    ) -> Result<Unsubscribed, CoreError> {
+        async { Err(CoreError::Unsupported("unsubscribing")) }
+    }
 
     /// Moves a message.
     ///

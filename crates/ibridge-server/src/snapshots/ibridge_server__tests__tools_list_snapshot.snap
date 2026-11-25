@@ -265,6 +265,35 @@ expression: tools
             "name"
           ],
           "type": "object"
+        },
+        "UnsubscribeMethodOut": {
+          "enum": [
+            "one_click",
+            "mailto",
+            "link"
+          ],
+          "type": "string"
+        },
+        "UnsubscribeOut": {
+          "description": "Whether the sender offers a way to unsubscribe, and which.",
+          "properties": {
+            "available": {
+              "description": "True when the sender's headers offer at least one way to unsubscribe.",
+              "type": "boolean"
+            },
+            "methods": {
+              "description": "What the sender offers, best first: `one_click` (a link that accepts a POST),\n`mailto` (an email address) or `link` (a page for a browser).",
+              "items": {
+                "$ref": "#/$defs/UnsubscribeMethodOut"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "available",
+            "methods"
+          ],
+          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -303,6 +332,9 @@ expression: tools
             "type": "string"
           },
           "type": "array"
+        },
+        "unsubscribe": {
+          "$ref": "#/$defs/UnsubscribeOut"
         }
       },
       "required": [
@@ -313,6 +345,7 @@ expression: tools
         "date",
         "body",
         "attachments",
+        "unsubscribe",
         "next_offset"
       ],
       "type": "object"
@@ -727,6 +760,120 @@ expression: tools
       "readOnlyHint": false,
       "destructiveHint": true,
       "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "mail_unsubscribe",
+    "title": "Unsubscribe",
+    "description": "Unsubscribes from the sender of a message, like an unsubscribe button. Takes the message id and an optional method (`one_click` or `mailto`); the address or link is never given by the caller, it is the sender's own from the message. By default, if the sender supports one-click unsubscribe (RFC 8058), the server POSTs the request to the sender's https link with no account credentials; a failure is reported and nothing else is sent, and `method: \"mailto\"` then sends the sender's unsubscribe email instead. Otherwise an unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
+    "inputSchema": {
+      "$defs": {
+        "UnsubscribeMethodParam": {
+          "description": "A route a caller may pick. A web link is never followed, so it is not a choice.",
+          "oneOf": [
+            {
+              "const": "one_click",
+              "description": "POST to the sender's https link (RFC 8058).",
+              "type": "string"
+            },
+            {
+              "const": "mailto",
+              "description": "Email the address in the sender's own mailto.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "Opaque message id from `mail_search` or `mail_get_message`.",
+          "type": "string"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnsubscribeMethodParam"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which of the message's own routes to use: `one_click` or `mailto`. Omit to let the\nserver choose, which prefers one-click. A route the message does not offer is an error."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$defs": {
+        "UnsubscribeStatus": {
+          "oneOf": [
+            {
+              "const": "emailed",
+              "description": "An unsubscribe email was sent.",
+              "type": "string"
+            },
+            {
+              "const": "one_click",
+              "description": "The sender's server accepted a one-click unsubscribe request.",
+              "type": "string"
+            },
+            {
+              "const": "link_only",
+              "description": "Only a web link is on offer, and nothing was sent.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "Id of the copy in Sent Messages, when an email was sent and the copy was saved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "links": {
+          "description": "The sender's web links, as the sender wrote them. Empty when an email was sent.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "note": {
+          "description": "What happened and what is left to do.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/UnsubscribeStatus"
+        },
+        "warning": {
+          "description": "Set when the email was sent but the Sent copy was not saved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "id",
+        "warning",
+        "links",
+        "note"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
       "openWorldHint": true
     }
   }

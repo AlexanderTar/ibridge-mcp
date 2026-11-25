@@ -71,6 +71,7 @@ mail-parser = "1.0"
 proptest = "1"
 ring = "0.17"
 rmcp = { version = "3.10", default-features = false }
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
 regex = "1"
 roxmltree = "0.21"
 rpassword = "7"

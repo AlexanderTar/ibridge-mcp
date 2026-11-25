@@ -365,6 +365,7 @@ pub(crate) mod tests {
         username: String,
         password: String,
         mail_from: String,
+        rcpt: Vec<String>,
         data: String,
     }
 
@@ -436,6 +437,11 @@ pub(crate) mod tests {
             self.seen.lock().expect("seen").mail_from.clone()
         }
 
+        /// Envelope recipients of the last message.
+        pub(crate) fn rcpts(&self) -> Vec<String> {
+            self.seen.lock().expect("seen").rcpt.clone()
+        }
+
         pub(crate) fn username(&self) -> String {
             self.seen.lock().expect("seen").username.clone()
         }
@@ -504,7 +510,8 @@ pub(crate) mod tests {
             } else if let Some(rest) = strip_prefix_ignore(&line, "MAIL FROM:") {
                 captured.mail_from = angle_addr(rest);
                 write_line(&mut reader, "250 ok\r\n").await?;
-            } else if strip_prefix_ignore(&line, "RCPT TO:").is_some() {
+            } else if let Some(rest) = strip_prefix_ignore(&line, "RCPT TO:") {
+                captured.rcpt.push(angle_addr(rest));
                 write_line(&mut reader, "250 ok\r\n").await?;
             } else if starts_with_cmd(&line, "DATA") {
                 write_line(&mut reader, "354 go\r\n").await?;

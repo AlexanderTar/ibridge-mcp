@@ -7,6 +7,7 @@ pub mod dav_mock;
 pub mod fixtures;
 pub mod http;
 pub mod imap_fake;
+pub mod tls_fake;
 
 #[cfg(test)]
 mod tests {

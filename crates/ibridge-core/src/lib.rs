@@ -23,7 +23,8 @@ pub use error::{CoreError, IdError, ParseError};
 pub use ids::{ETag, ResourcePath, decode, decode_resource, encode, encode_resource};
 pub use mail::{
     Attachment, AttachmentInfo, Draft, FlagChange, MailPage, MailProvider, MailSearch, Mailbox,
-    MailboxPath, MailboxRole, Message, MessageId, MessageSummary, Uid, UidValidity,
+    MailboxPath, MailboxRole, Message, MessageId, MessageSummary, OneClickFailure, Uid,
+    UidValidity, Unsubscribe, UnsubscribeMail, UnsubscribeMethod,
 };
 
 #[cfg(test)]

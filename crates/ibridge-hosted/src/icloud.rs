@@ -14,6 +14,7 @@ use ibridge_calendar::CalDavProvider;
 use ibridge_contacts::CardDavProvider;
 use ibridge_core::{
     AppleId, Attachment, CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId,
+    UnsubscribeMethod,
 };
 use ibridge_dav::{DavClient, DavHttp};
 use ibridge_mail::{
@@ -237,8 +238,12 @@ impl<C: Connect + 'static> MailApi for SessionMail<C> {
         Ok(SentMail { id: sent.id })
     }
 
-    async fn unsubscribe(&self, id: &MessageId) -> Result<Unsubscribed, CoreError> {
-        Ok(match self.0.unsubscribe(id).await? {
+    async fn unsubscribe(
+        &self,
+        id: &MessageId,
+        method: Option<UnsubscribeMethod>,
+    ) -> Result<Unsubscribed, CoreError> {
+        Ok(match self.0.unsubscribe(id, method).await? {
             UnsubscribeOutcome::Emailed(sent) => Unsubscribed::Emailed(SentMail { id: sent.id }),
             UnsubscribeOutcome::OneClicked => Unsubscribed::OneClicked,
             UnsubscribeOutcome::OneClickFailed {
@@ -249,6 +254,7 @@ impl<C: Connect + 'static> MailApi for SessionMail<C> {
                 mailto_offered,
             },
             UnsubscribeOutcome::Links(links) => Unsubscribed::Links(links),
+            UnsubscribeOutcome::MethodNotOffered(method) => Unsubscribed::MethodNotOffered(method),
             _ => Unsubscribed::NotOffered,
         })
     }

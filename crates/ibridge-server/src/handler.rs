@@ -24,8 +24,8 @@ use crate::dto::{
     AccountStatusOut, AttachmentInfoOut, AttachmentOut, FlagParams, FlagsOut, GetAttachmentParams,
     GetMessageParams, IdOut, MailboxListOut, MailboxOut, MessageOut, MoveOut, MoveParams,
     SaveAttachmentParams, SavedAttachmentOut, SearchHitOut, SearchOut, SearchParams, SendOut,
-    SendParams, ServiceOut, ServiceState, UnsubscribeMethodOut, UnsubscribeOut, UnsubscribeParams,
-    UnsubscribeStatus, UnsubscribedOut,
+    SendParams, ServiceOut, ServiceState, UnsubscribeMethodOut, UnsubscribeMethodParam,
+    UnsubscribeOut, UnsubscribeParams, UnsubscribeStatus, UnsubscribedOut,
 };
 use crate::error_map::{MappedError, map_core_error};
 use crate::mail_api::{MailApi, MailDest, Unsubscribed};
@@ -37,8 +37,7 @@ const DEFAULT_LIMIT: u32 = 25;
 const MAX_LIMIT: u32 = 100;
 const SENT_COPY_WARNING: &str = "sent, but the copy was not saved to Sent Messages";
 const LINK_ONLY_NOTE: &str = "The sender offers only a web link and does not support one-click unsubscribe, so nothing was sent. The link is as the sender wrote it; open it in a browser to unsubscribe.";
-const MAILTO_NOT_SENT: &str =
-    "The sender also offers an unsubscribe email; it was not sent automatically.";
+const MAILTO_NOT_SENT: &str = "The sender also offers an unsubscribe email; it was not sent automatically. To send it, call mail_unsubscribe again with `\"method\": \"mailto\"`.";
 const NO_OTHER_ROUTE: &str =
     "The message offers no other unsubscribe route that can be used automatically.";
 const ONE_CLICK_NOTE: &str = "The sender's server accepted the one-click unsubscribe request. The sender decides when it takes effect.";
@@ -582,8 +581,8 @@ where
 
     /// Unsubscribes from the sender of a message, like an unsubscribe button in a mail app.
     ///
-    /// The tool takes the message id and nothing else: the address comes from the
-    /// message's own `List-Unsubscribe` header, which the sender wrote.
+    /// The tool takes the message id and, optionally, which route to use. The address comes
+    /// from the message's own `List-Unsubscribe` header, which the sender wrote.
     ///
     /// # Errors
     ///
@@ -591,7 +590,7 @@ where
     /// when the message cannot be read or SMTP refuses the email. A failed one-click POST is a tool error.
     #[tool(
         title = "Unsubscribe",
-        description = "Unsubscribes from the sender of a message, like an unsubscribe button. Takes only the message id: the sender's own unsubscribe route, if the message offers one, is used. If the sender supports one-click unsubscribe (RFC 8058), the server POSTs the request to the sender's https link with no account credentials; a failure is reported and nothing else is sent. Otherwise an unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
+        description = "Unsubscribes from the sender of a message, like an unsubscribe button. Takes the message id and an optional method (`one_click` or `mailto`); the address or link is never given by the caller, it is the sender's own from the message. By default, if the sender supports one-click unsubscribe (RFC 8058), the server POSTs the request to the sender's https link with no account credentials; a failure is reported and nothing else is sent, and `method: \"mailto\"` then sends the sender's unsubscribe email instead. Otherwise an unsubscribe email is sent from the account and a copy is saved in Sent Messages. If the sender offers only a web link, nothing is sent and the link is returned as the sender wrote it.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -607,7 +606,11 @@ where
         self.reject_write()?;
         let id = require_id(&params.id)?;
         let _permit = self.permit().await?;
-        match try_mail!(self.mail.unsubscribe(&id).await) {
+        let method = params.method.map(|method| match method {
+            UnsubscribeMethodParam::OneClick => UnsubscribeMethod::OneClick,
+            UnsubscribeMethodParam::Mailto => UnsubscribeMethod::Mailto,
+        });
+        match try_mail!(self.mail.unsubscribe(&id, method).await) {
             Unsubscribed::Emailed(sent) => {
                 let (id, warning, summary) = match sent.id {
                     Some(id) => (Some(encode(&id)), None, "unsubscribe email sent".to_owned()),
@@ -661,6 +664,11 @@ where
                 },
                 "only a web link is on offer".to_owned(),
             ),
+            Unsubscribed::MethodNotOffered(method) => {
+                Ok(CallToolResult::error(vec![ContentBlock::text(
+                    method_not_offered(method),
+                )]))
+            }
             _ => Ok(CallToolResult::error(vec![ContentBlock::text(
                 "this message does not offer unsubscribe: it has no usable List-Unsubscribe header",
             )])),
@@ -916,6 +924,18 @@ fn message_out(message: &Message, next_offset: Option<usize>) -> MessageOut {
         unsubscribe: unsubscribe_out(message.unsubscribe.as_ref()),
         next_offset: widen(next_offset),
     }
+}
+
+/// The error for a `method` the message does not offer. Nothing was sent.
+fn method_not_offered(method: UnsubscribeMethod) -> String {
+    let name = match method {
+        UnsubscribeMethod::OneClick => "one-click unsubscribe",
+        UnsubscribeMethod::Mailto => "an unsubscribe email",
+        _ => "that unsubscribe method",
+    };
+    format!(
+        "this message does not offer {name}, so nothing was sent. Omit `method` to use what the message does offer."
+    )
 }
 
 /// What a failed one-click POST says: the failure class, that nothing else was sent, and

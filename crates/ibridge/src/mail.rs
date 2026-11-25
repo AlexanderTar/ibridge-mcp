@@ -9,7 +9,9 @@ use ibridge_auth::ServiceCheck;
 use ibridge_auth::{AuthError, Credentials, ValidationReport, Validator};
 #[cfg(feature = "mail")]
 use ibridge_core::Attachment;
-use ibridge_core::{CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId};
+use ibridge_core::{
+    CoreError, Draft, FlagChange, MailSearch, Mailbox, MessageId, UnsubscribeMethod,
+};
 use ibridge_server::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
 
 /// Mail backend for a build with mail off. Every call says so.
@@ -161,9 +163,13 @@ impl<C: ibridge_mail::Connect + 'static> MailApi for SessionMail<C> {
         Ok(SentMail { id: sent.id })
     }
 
-    async fn unsubscribe(&self, id: &MessageId) -> Result<ibridge_server::Unsubscribed, CoreError> {
+    async fn unsubscribe(
+        &self,
+        id: &MessageId,
+        method: Option<UnsubscribeMethod>,
+    ) -> Result<ibridge_server::Unsubscribed, CoreError> {
         use ibridge_mail::UnsubscribeOutcome;
-        Ok(match self.0.unsubscribe(id).await? {
+        Ok(match self.0.unsubscribe(id, method).await? {
             UnsubscribeOutcome::Emailed(sent) => {
                 ibridge_server::Unsubscribed::Emailed(SentMail { id: sent.id })
             }
@@ -176,6 +182,9 @@ impl<C: ibridge_mail::Connect + 'static> MailApi for SessionMail<C> {
                 mailto_offered,
             },
             UnsubscribeOutcome::Links(links) => ibridge_server::Unsubscribed::Links(links),
+            UnsubscribeOutcome::MethodNotOffered(method) => {
+                ibridge_server::Unsubscribed::MethodNotOffered(method)
+            }
             _ => ibridge_server::Unsubscribed::NotOffered,
         })
     }

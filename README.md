@@ -28,7 +28,7 @@ iBridge is distributed as source. There are no prebuilt binaries: you build it w
 
 Tools that change anything are marked as such. Mail, event and contact text reaches the client as plain JSON fields, with hidden characters and hidden HTML removed, and each read tool says where its text comes from.
 
-One-click unsubscribe sends one credential-less POST to the sender's own `https` host, only when a message offers it (RFC 8058). The server refuses private and local addresses and never follows redirects. See [docs/security-model.md](docs/security-model.md).
+One-click unsubscribe sends one credential-less POST to the sender's own `https` host, only when a message offers it (RFC 8058). The server refuses private and local addresses and never follows redirects. If a one-click fails, `method: "mailto"` sends the sender's own unsubscribe email instead. See [docs/security-model.md](docs/security-model.md).
 
 ## Start read-only
 

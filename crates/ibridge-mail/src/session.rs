@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use ibridge_core::{
     CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId, OneClickFailure,
-    Unsubscribe, UnsubscribeMail,
+    Unsubscribe, UnsubscribeMail, UnsubscribeMethod,
 };
 
 use crate::imap::{Connect, ImapPool};
@@ -36,25 +36,38 @@ enum Route {
     },
     Mailto(UnsubscribeMail),
     Links(Vec<String>),
+    /// The caller asked for a method the message does not offer.
+    MethodNotOffered(UnsubscribeMethod),
     None,
 }
 
 /// Picks the route for `options`. The only place that decides; a new method goes here.
-fn choose_route(options: Option<Unsubscribe>) -> Route {
+///
+/// `method` is what the caller asked for. It only selects among the routes the header
+/// itself offers; the address and link always come from `options`. `None` takes the best
+/// route: one-click, then mailto, then links.
+fn choose_route(options: Option<Unsubscribe>, method: Option<UnsubscribeMethod>) -> Route {
     let Some(options) = options else {
         return Route::None;
     };
-    if let Some(link) = options.one_click_link() {
-        Route::OneClick {
-            link: link.to_owned(),
-            mailto_offered: options.mailto.is_some(),
+    let one_click = options.one_click_link().map(|link| Route::OneClick {
+        link: link.to_owned(),
+        mailto_offered: options.mailto.is_some(),
+    });
+    let mailto = options.mailto.map(Route::Mailto);
+    let links = (!options.links.is_empty()).then_some(Route::Links(options.links));
+    match method {
+        None => one_click.or(mailto).or(links).unwrap_or(Route::None),
+        Some(UnsubscribeMethod::OneClick) => {
+            one_click.unwrap_or(Route::MethodNotOffered(UnsubscribeMethod::OneClick))
         }
-    } else if let Some(mailto) = options.mailto {
-        Route::Mailto(mailto)
-    } else if options.links.is_empty() {
-        Route::None
-    } else {
-        Route::Links(options.links)
+        Some(UnsubscribeMethod::Mailto) => {
+            mailto.unwrap_or(Route::MethodNotOffered(UnsubscribeMethod::Mailto))
+        }
+        Some(UnsubscribeMethod::Link) => {
+            links.unwrap_or(Route::MethodNotOffered(UnsubscribeMethod::Link))
+        }
+        Some(other) => Route::MethodNotOffered(other),
     }
 }
 
@@ -75,6 +88,8 @@ pub enum UnsubscribeOutcome {
     },
     /// The sender offers only web links, which this session does not follow.
     Links(Vec<String>),
+    /// The caller asked for a method that the message does not offer.
+    MethodNotOffered(UnsubscribeMethod),
     /// The message has no usable `List-Unsubscribe` header.
     NotOffered,
 }
@@ -157,9 +172,12 @@ impl<C: Connect> MailSession<C> {
         }
     }
 
-    /// Unsubscribes from the sender of `id`, by the best route its headers offer.
+    /// Unsubscribes from the sender of `id`, by the best route its headers offer, or by
+    /// `method` when the caller picks one.
     ///
-    /// The address, subject and body come from the message's own `List-Unsubscribe` header
+    /// A `method` the message does not offer sends nothing and returns
+    /// [`UnsubscribeOutcome::MethodNotOffered`]. It never carries an address or link: the
+    /// address, subject and body come from the message's own `List-Unsubscribe` header
     /// and from nowhere else. A mailto is sent like any message: it counts against the send
     /// caps, goes out from the account's address, and a copy is saved to Sent Messages (a
     /// failed copy is logged, as for [`MailSession::send`]). When the message offers
@@ -172,8 +190,12 @@ impl<C: Connect> MailSession<C> {
     /// Returns [`CoreError::NotFound`] when the message cannot be read,
     /// [`CoreError::RateLimited`] when this account has already sent its hourly cap, and
     /// [`CoreError`] when SMTP fails.
-    pub async fn unsubscribe(&self, id: &MessageId) -> Result<UnsubscribeOutcome, CoreError> {
-        match choose_route(self.imap.unsubscribe_options(id).await?) {
+    pub async fn unsubscribe(
+        &self,
+        id: &MessageId,
+        method: Option<UnsubscribeMethod>,
+    ) -> Result<UnsubscribeOutcome, CoreError> {
+        match choose_route(self.imap.unsubscribe_options(id).await?, method) {
             Route::OneClick {
                 link,
                 mailto_offered,
@@ -200,6 +222,7 @@ impl<C: Connect> MailSession<C> {
                 self.send(&draft).await.map(UnsubscribeOutcome::Emailed)
             }
             Route::Links(links) => Ok(UnsubscribeOutcome::Links(links)),
+            Route::MethodNotOffered(method) => Ok(UnsubscribeOutcome::MethodNotOffered(method)),
             Route::None => Ok(UnsubscribeOutcome::NotOffered),
         }
     }
@@ -292,7 +315,7 @@ mod tests {
     };
     use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
 
-    use ibridge_core::OneClickFailure;
+    use ibridge_core::{OneClickFailure, UnsubscribeMethod};
     use ibridge_testkit::tls_fake::{TlsFake, TlsReply};
 
     use super::{MailSession, UnsubscribeOutcome};
@@ -362,7 +385,7 @@ mod tests {
     async fn unsubscribe_emails_the_mailto_and_saves_a_sent_copy() {
         let (fake, capture, session) = newsletter_session().await;
         let outcome = session
-            .unsubscribe(&message(78))
+            .unsubscribe(&message(78), None)
             .await
             .expect("unsubscribe");
         assert!(
@@ -392,7 +415,7 @@ mod tests {
     async fn unsubscribe_ignores_cc_bcc_and_to_fields_and_defaults_the_subject() {
         let (_fake, capture, session) = newsletter_session().await;
         session
-            .unsubscribe(&message(72))
+            .unsubscribe(&message(72), None)
             .await
             .expect("unsubscribe");
         assert_eq!(
@@ -408,7 +431,7 @@ mod tests {
         assert!(sent.contains("Subject: hi"), "subject kept, got {sent}");
 
         session
-            .unsubscribe(&message(74))
+            .unsubscribe(&message(74), None)
             .await
             .expect("bare mailto");
         assert_eq!(capture.rcpts(), vec!["bare@example.com".to_owned()]);
@@ -423,7 +446,7 @@ mod tests {
     async fn unsubscribe_with_links_only_sends_nothing() {
         let (fake, capture, session) = newsletter_session().await;
         let outcome = session
-            .unsubscribe(&message(71))
+            .unsubscribe(&message(71), None)
             .await
             .expect("unsubscribe");
         assert_eq!(
@@ -439,7 +462,7 @@ mod tests {
         let (fake, capture, session) = newsletter_session().await;
         for uid in [4, 73] {
             let outcome = session
-                .unsubscribe(&message(uid))
+                .unsubscribe(&message(uid), None)
                 .await
                 .expect("unsubscribe");
             assert_eq!(
@@ -470,9 +493,12 @@ mod tests {
                 max_per_hour: 1,
             },
         );
-        session.unsubscribe(&message(78)).await.expect("first");
+        session
+            .unsubscribe(&message(78), None)
+            .await
+            .expect("first");
         let err = session
-            .unsubscribe(&message(78))
+            .unsubscribe(&message(78), None)
             .await
             .expect_err("the cap applies to unsubscribe emails");
         assert!(matches!(err, CoreError::RateLimited { .. }), "got {err:?}");
@@ -496,7 +522,7 @@ mod tests {
     async fn unsubscribe_prefers_one_click_over_mailto() {
         let (tls, capture, fake, session) = one_click_session(ok_reply()).await;
         let outcome = session
-            .unsubscribe(&message(70))
+            .unsubscribe(&message(70), None)
             .await
             .expect("unsubscribe");
         assert_eq!(outcome, UnsubscribeOutcome::OneClicked);
@@ -513,10 +539,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn method_mailto_sends_the_header_mailto_even_when_one_click_is_offered() {
+        let (tls, capture, fake, session) = one_click_session(ok_reply()).await;
+        let outcome = session
+            .unsubscribe(&message(70), Some(UnsubscribeMethod::Mailto))
+            .await
+            .expect("unsubscribe");
+        assert!(
+            matches!(&outcome, UnsubscribeOutcome::Emailed(sent) if sent.id.is_some()),
+            "the mailto is emailed and the Sent copy is saved, got {outcome:?}"
+        );
+        assert_eq!(
+            capture.rcpts(),
+            vec!["unsub@example.com".to_owned()],
+            "the recipient is the address in the message's own header"
+        );
+        assert_eq!(tls.connections(), 0, "no POST was made");
+        assert_eq!(fake.appended().len(), 1, "one Sent copy");
+    }
+
+    #[tokio::test]
+    async fn method_one_click_posts_when_offered() {
+        let (tls, capture, _fake, session) = one_click_session(ok_reply()).await;
+        let outcome = session
+            .unsubscribe(&message(70), Some(UnsubscribeMethod::OneClick))
+            .await
+            .expect("unsubscribe");
+        assert_eq!(outcome, UnsubscribeOutcome::OneClicked);
+        assert_eq!(tls.requests().len(), 1, "one POST");
+        assert!(capture.message().is_empty(), "no email was sent");
+    }
+
+    #[tokio::test]
+    async fn a_method_the_message_does_not_offer_sends_nothing() {
+        let (tls, capture, fake, session) = one_click_session(ok_reply()).await;
+        // 77 offers one-click and no mailto; 78 offers a mailto and no one-click.
+        for (uid, method) in [
+            (77, UnsubscribeMethod::Mailto),
+            (78, UnsubscribeMethod::OneClick),
+        ] {
+            let outcome = session
+                .unsubscribe(&message(uid), Some(method))
+                .await
+                .expect("unsubscribe");
+            assert_eq!(
+                outcome,
+                UnsubscribeOutcome::MethodNotOffered(method),
+                "uid {uid} does not offer {method:?}"
+            );
+        }
+        assert_eq!(tls.connections(), 0, "no POST was made");
+        assert!(capture.message().is_empty(), "no email was sent");
+        assert!(fake.appended().is_empty(), "nothing is saved to Sent");
+    }
+
+    #[tokio::test]
     async fn an_https_link_without_the_post_header_is_never_posted() {
         let (tls, capture, _fake, session) = one_click_session(ok_reply()).await;
         let outcome = session
-            .unsubscribe(&message(75))
+            .unsubscribe(&message(75), None)
             .await
             .expect("unsubscribe");
         assert_eq!(
@@ -525,7 +606,7 @@ mod tests {
             "the link is returned for the user to open"
         );
         let outcome = session
-            .unsubscribe(&message(76))
+            .unsubscribe(&message(76), None)
             .await
             .expect("unsubscribe");
         assert!(
@@ -543,7 +624,7 @@ mod tests {
         ))
         .await;
         let outcome = session
-            .unsubscribe(&message(70))
+            .unsubscribe(&message(70), None)
             .await
             .expect("unsubscribe");
         assert_eq!(
@@ -565,7 +646,7 @@ mod tests {
         ))
         .await;
         let outcome = session
-            .unsubscribe(&message(77))
+            .unsubscribe(&message(77), None)
             .await
             .expect("unsubscribe");
         assert_eq!(
@@ -588,7 +669,7 @@ mod tests {
             }));
         for _ in 0..2 {
             let outcome = session
-                .unsubscribe(&message(70))
+                .unsubscribe(&message(70), None)
                 .await
                 .expect("unsubscribe");
             assert_eq!(outcome, UnsubscribeOutcome::OneClicked);

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use ibridge_core::{
     AppleId, Attachment, AttachmentInfo, CoreError, Draft, FlagChange, MailSearch, Mailbox,
     Message, MessageId, MessageSummary, OneClickFailure, Uid, UidValidity, Unsubscribe,
-    UnsubscribeMail, encode,
+    UnsubscribeMail, UnsubscribeMethod, encode,
 };
 use ibridge_server::{
     AccountSnapshot, IbridgeServer, MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail,
@@ -52,6 +52,7 @@ fn message_id() -> MessageId {
 struct Scripted {
     sent: Mutex<Vec<Draft>>,
     unsubscribed: Mutex<Vec<MessageId>>,
+    unsubscribe_methods: Mutex<Vec<Option<UnsubscribeMethod>>>,
 }
 
 #[expect(
@@ -142,7 +143,15 @@ impl MailApi for Scripted {
         Ok(SentMail { id: None })
     }
 
-    async fn unsubscribe(&self, id: &MessageId) -> Result<Unsubscribed, CoreError> {
+    async fn unsubscribe(
+        &self,
+        id: &MessageId,
+        method: Option<UnsubscribeMethod>,
+    ) -> Result<Unsubscribed, CoreError> {
+        self.unsubscribe_methods
+            .lock()
+            .expect("methods lock")
+            .push(method);
         self.unsubscribed
             .lock()
             .expect("unsubscribed lock")
@@ -165,6 +174,7 @@ impl MailApi for Scripted {
                 failure: OneClickFailure::Blocked,
                 mailto_offered: false,
             }),
+            49 => Ok(Unsubscribed::MethodNotOffered(UnsubscribeMethod::Mailto)),
             _ => Err(CoreError::NotFound),
         }
     }
@@ -467,6 +477,93 @@ async fn e2e_a_failed_one_click_is_a_tool_error_that_names_the_class_and_the_mai
     assert!(
         text.contains("private or local network") && !text.contains("unsubscribe email"),
         "names the class and offers no mailto when there is none, got {text:?}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_unsubscribe_passes_the_chosen_method_to_the_backend() {
+    let mail = Arc::new(Scripted::default());
+    let client = connect(IbridgeServer::read_write(account(), Arc::clone(&mail))).await;
+    for params in [
+        serde_json::json!({ "id": id_with_uid(42) }),
+        serde_json::json!({ "id": id_with_uid(42), "method": "mailto" }),
+        serde_json::json!({ "id": id_with_uid(42), "method": "one_click" }),
+    ] {
+        let result = call(&client, "mail_unsubscribe", params).await;
+        assert_eq!(result.is_error, Some(false), "works: {result:?}");
+    }
+    assert_eq!(
+        *mail.unsubscribe_methods.lock().expect("lock"),
+        vec![
+            None,
+            Some(UnsubscribeMethod::Mailto),
+            Some(UnsubscribeMethod::OneClick)
+        ],
+        "an omitted method stays omitted, so the backend keeps its own preference"
+    );
+}
+
+#[tokio::test]
+async fn e2e_unsubscribe_refuses_a_method_it_does_not_know() {
+    let mail = Arc::new(Scripted::default());
+    let client = connect(IbridgeServer::read_write(account(), Arc::clone(&mail))).await;
+    for method in ["link", "https://evil.example/u", "attacker@example.net"] {
+        let result = call(
+            &client,
+            "mail_unsubscribe",
+            serde_json::json!({ "id": id_with_uid(42), "method": method }),
+        )
+        .await;
+        assert_eq!(
+            result.is_error,
+            Some(true),
+            "{method:?} is refused, got {result:?}"
+        );
+    }
+    assert!(
+        mail.unsubscribed.lock().expect("lock").is_empty(),
+        "the backend is never asked"
+    );
+}
+
+#[tokio::test]
+async fn e2e_unsubscribe_says_when_the_message_lacks_the_chosen_method() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let result = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(49), "method": "mailto" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true), "a tool error, got {result:?}");
+    let text = text_blocks(&result).join(" ");
+    assert!(
+        text.contains("does not offer an unsubscribe email") && text.contains("nothing was sent"),
+        "the error names the method and says nothing was sent, got {text:?}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_a_failed_one_click_tells_the_model_how_to_use_the_mailto() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let refused = call(
+        &client,
+        "mail_unsubscribe",
+        serde_json::json!({ "id": id_with_uid(47) }),
+    )
+    .await;
+    let text = text_blocks(&refused).join(" ");
+    assert!(
+        text.contains("\"method\": \"mailto\""),
+        "the error names the argument that sends the mailto, got {text:?}"
     );
 }
 

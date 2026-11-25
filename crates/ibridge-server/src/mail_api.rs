@@ -4,7 +4,7 @@
 
 use ibridge_core::{
     Attachment, CoreError, Draft, FlagChange, MailSearch, Mailbox, MailboxPath, MailboxRole,
-    Message, MessageId, MessageSummary, OneClickFailure,
+    Message, MessageId, MessageSummary, OneClickFailure, UnsubscribeMethod,
 };
 
 /// One page of search hits, plus how many messages were skipped.
@@ -62,6 +62,8 @@ pub enum Unsubscribed {
     },
     /// The sender offers only these web links, and nothing was sent.
     Links(Vec<String>),
+    /// The caller asked for a method the message does not offer. Nothing was sent.
+    MethodNotOffered(UnsubscribeMethod),
     /// The message has no usable `List-Unsubscribe` header.
     NotOffered,
 }
@@ -148,7 +150,11 @@ pub trait MailApi {
     /// # Errors
     ///
     /// Returns [`CoreError`] when the message cannot be read or the email cannot be sent.
-    async fn unsubscribe(&self, _id: &MessageId) -> Result<Unsubscribed, CoreError> {
+    async fn unsubscribe(
+        &self,
+        _id: &MessageId,
+        _method: Option<UnsubscribeMethod>,
+    ) -> Result<Unsubscribed, CoreError> {
         async { Err(CoreError::Unsupported("unsubscribing")) }
     }
 

@@ -69,12 +69,26 @@ pub struct SendParams {
 
 /// Arguments for `mail_unsubscribe`.
 ///
-/// Only the message. The address or link to use comes from the message's own
-/// `List-Unsubscribe` header, never from the caller.
+/// The message, and optionally which of its routes to use. The address or link comes from
+/// the message's own `List-Unsubscribe` header, never from the caller.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct UnsubscribeParams {
     /// Opaque message id from `mail_search` or `mail_get_message`.
     pub id: String,
+    /// Which of the message's own routes to use: `one_click` or `mailto`. Omit to let the
+    /// server choose, which prefers one-click. A route the message does not offer is an error.
+    #[serde(default)]
+    pub method: Option<UnsubscribeMethodParam>,
+}
+
+/// A route a caller may pick. A web link is never followed, so it is not a choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UnsubscribeMethodParam {
+    /// POST to the sender's https link (RFC 8058).
+    OneClick,
+    /// Email the address in the sender's own mailto.
+    Mailto,
 }
 
 /// Arguments for `mail_get_message`.

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use ibridge_core::{
     AppleId, Attachment, AttachmentInfo, CoreError, Draft, FlagChange, MailSearch, Mailbox,
-    Message, MessageId, MessageSummary, Uid, UidValidity, encode,
+    Message, MessageId, MessageSummary, Uid, UidValidity, Unsubscribe, UnsubscribeMail, encode,
 };
 use ibridge_server::{
     AccountSnapshot, IbridgeServer, MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail,
@@ -16,6 +16,27 @@ use ibridge_server::{
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
+
+/// The one message with an unsubscribe header: one-click, mailto and a link.
+fn unsubscribe_for(id: &MessageId) -> Option<Unsubscribe> {
+    (id.uid.get() == 42).then(|| Unsubscribe {
+        mailto: Some(UnsubscribeMail {
+            to: "unsub@example.com".to_owned(),
+            subject: Some("unsubscribe".to_owned()),
+            body: None,
+        }),
+        links: vec!["https://example.com/u".to_owned()],
+        one_click: true,
+    })
+}
+
+/// A second message with no unsubscribe header.
+fn other_message_id() -> MessageId {
+    MessageId {
+        uid: Uid::try_from(43).expect("uid"),
+        ..message_id()
+    }
+}
 
 fn message_id() -> MessageId {
     MessageId {
@@ -56,7 +77,7 @@ impl MailApi for Scripted {
     }
 
     async fn get_message(&self, id: &MessageId, _offset: usize) -> Result<MailBody, CoreError> {
-        if *id != message_id() {
+        if *id != message_id() && *id != other_message_id() {
             return Err(CoreError::NotFound);
         }
         Ok(MailBody {
@@ -68,6 +89,7 @@ impl MailApi for Scripted {
                 date: "2026-11-01".to_owned(),
                 body: "Bring\u{200B} napkins.\u{E0049}\u{E0067}\u{2066}".to_owned(),
                 attachments: Vec::new(),
+                unsubscribe: unsubscribe_for(id),
             },
             next_offset: None,
         })
@@ -208,6 +230,43 @@ async fn e2e_search_then_get() {
     assert!(
         !message.to_string().contains("untrusted"),
         "no untrusted marker, got {message}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_get_message_reports_how_to_unsubscribe() {
+    let client = connect(IbridgeServer::read_write(
+        account(),
+        Arc::new(Scripted::default()),
+    ))
+    .await;
+    let offered = call(
+        &client,
+        "mail_get_message",
+        serde_json::json!({ "id": encode(&message_id()) }),
+    )
+    .await;
+    let message = offered.structured_content.expect("structured content");
+    assert_eq!(
+        message["unsubscribe"],
+        serde_json::json!({ "available": true, "methods": ["one_click", "mailto", "link"] }),
+        "a message with the header lists its methods best first, got {message}"
+    );
+    assert!(
+        !message.to_string().contains("unsub@example.com"),
+        "the sender's address is not shown, got {message}"
+    );
+    let plain = call(
+        &client,
+        "mail_get_message",
+        serde_json::json!({ "id": encode(&other_message_id()) }),
+    )
+    .await;
+    let message = plain.structured_content.expect("structured content");
+    assert_eq!(
+        message["unsubscribe"],
+        serde_json::json!({ "available": false, "methods": [] }),
+        "a message without the header says so, got {message}"
     );
 }
 

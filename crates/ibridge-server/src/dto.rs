@@ -171,7 +171,26 @@ pub(crate) struct MessageOut {
     pub(crate) date: String,
     pub(crate) body: String,
     pub(crate) attachments: Vec<AttachmentInfoOut>,
+    pub(crate) unsubscribe: UnsubscribeOut,
     pub(crate) next_offset: Option<u64>,
+}
+
+/// Whether the sender offers a way to unsubscribe, and which.
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct UnsubscribeOut {
+    /// True when the sender's headers offer at least one way to unsubscribe.
+    pub(crate) available: bool,
+    /// What the sender offers, best first: `one_click` (a link that accepts a POST),
+    /// `mailto` (an email address) or `link` (a page for a browser).
+    pub(crate) methods: Vec<UnsubscribeMethodOut>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UnsubscribeMethodOut {
+    OneClick,
+    Mailto,
+    Link,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

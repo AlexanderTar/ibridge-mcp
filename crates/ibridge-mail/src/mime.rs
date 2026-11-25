@@ -28,6 +28,7 @@ pub(crate) struct ReadMessage {
     pub(crate) body: String,
     pub(crate) next_offset: Option<usize>,
     pub(crate) attachments: Vec<AttachmentInfo>,
+    pub(crate) unsubscribe: Option<Unsubscribe>,
 }
 
 /// `In-Reply-To` and `References` taken from a parent message.
@@ -78,7 +79,10 @@ fn angle(id: &str) -> String {
 /// written by the sender, so a mailto with more than one recipient, a CR or LF, or a value
 /// over its cap is dropped whole, and only its `subject` and `body` are read.
 pub(crate) fn unsubscribe(bytes: &[u8]) -> Option<Unsubscribe> {
-    let message = MessageParser::new().parse(bytes)?;
+    unsubscribe_of(&MessageParser::new().parse(bytes)?)
+}
+
+fn unsubscribe_of(message: &Message<'_>) -> Option<Unsubscribe> {
     let mut options = Unsubscribe::default();
     for mailbox in message.list_unsubscribe()?.mailboxes() {
         let Some(uri) = mailbox.address().filter(|uri| uri.len() <= MAX_URI) else {
@@ -93,7 +97,7 @@ pub(crate) fn unsubscribe(bytes: &[u8]) -> Option<Unsubscribe> {
             options.links.push(uri.to_owned());
         }
     }
-    options.one_click = wants_one_click(&message)
+    options.one_click = wants_one_click(message)
         && options
             .links
             .iter()
@@ -211,6 +215,7 @@ pub(crate) fn read_message(bytes: &[u8], offset: usize) -> Option<ReadMessage> {
         body,
         next_offset,
         attachments: message.attachments().map(attachment_info).collect(),
+        unsubscribe: unsubscribe_of(&message),
     })
 }
 

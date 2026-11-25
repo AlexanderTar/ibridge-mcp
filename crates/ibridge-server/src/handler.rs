@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use ibridge_core::{
     CalendarProvider, ContactsProvider, CoreError, Draft, FlagChange, MailSearch, Mailbox,
-    MailboxPath, MailboxRole, Message, MessageId, MessageSummary, RemindersProvider, decode,
-    encode,
+    MailboxPath, MailboxRole, Message, MessageId, MessageSummary, RemindersProvider, Unsubscribe,
+    UnsubscribeMethod, decode, encode,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -24,7 +24,7 @@ use crate::dto::{
     AccountStatusOut, AttachmentInfoOut, AttachmentOut, FlagParams, FlagsOut, GetAttachmentParams,
     GetMessageParams, IdOut, MailboxListOut, MailboxOut, MessageOut, MoveOut, MoveParams,
     SaveAttachmentParams, SavedAttachmentOut, SearchHitOut, SearchOut, SearchParams, SendOut,
-    SendParams, ServiceOut, ServiceState,
+    SendParams, ServiceOut, ServiceState, UnsubscribeMethodOut, UnsubscribeOut,
 };
 use crate::error_map::{MappedError, map_core_error};
 use crate::mail_api::{MailApi, MailDest};
@@ -817,7 +817,26 @@ fn message_out(message: &Message, next_offset: Option<usize>) -> MessageOut {
                 name: strip_hidden(&info.name),
             })
             .collect(),
+        unsubscribe: unsubscribe_out(message.unsubscribe.as_ref()),
         next_offset: widen(next_offset),
+    }
+}
+
+fn unsubscribe_out(options: Option<&Unsubscribe>) -> UnsubscribeOut {
+    let methods: Vec<UnsubscribeMethodOut> = options
+        .map(Unsubscribe::methods)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|method| match method {
+            UnsubscribeMethod::OneClick => Some(UnsubscribeMethodOut::OneClick),
+            UnsubscribeMethod::Mailto => Some(UnsubscribeMethodOut::Mailto),
+            UnsubscribeMethod::Link => Some(UnsubscribeMethodOut::Link),
+            _ => None,
+        })
+        .collect();
+    UnsubscribeOut {
+        available: !methods.is_empty(),
+        methods,
     }
 }
 

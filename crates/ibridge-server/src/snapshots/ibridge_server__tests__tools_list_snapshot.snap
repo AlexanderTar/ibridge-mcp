@@ -265,6 +265,35 @@ expression: tools
             "name"
           ],
           "type": "object"
+        },
+        "UnsubscribeMethodOut": {
+          "enum": [
+            "one_click",
+            "mailto",
+            "link"
+          ],
+          "type": "string"
+        },
+        "UnsubscribeOut": {
+          "description": "Whether the sender offers a way to unsubscribe, and which.",
+          "properties": {
+            "available": {
+              "description": "True when the sender's headers offer at least one way to unsubscribe.",
+              "type": "boolean"
+            },
+            "methods": {
+              "description": "What the sender offers, best first: `one_click` (a link that accepts a POST),\n`mailto` (an email address) or `link` (a page for a browser).",
+              "items": {
+                "$ref": "#/$defs/UnsubscribeMethodOut"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "available",
+            "methods"
+          ],
+          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -303,6 +332,9 @@ expression: tools
             "type": "string"
           },
           "type": "array"
+        },
+        "unsubscribe": {
+          "$ref": "#/$defs/UnsubscribeOut"
         }
       },
       "required": [
@@ -313,6 +345,7 @@ expression: tools
         "date",
         "body",
         "attachments",
+        "unsubscribe",
         "next_offset"
       ],
       "type": "object"

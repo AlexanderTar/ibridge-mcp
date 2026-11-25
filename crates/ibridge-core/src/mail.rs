@@ -226,6 +226,8 @@ pub struct Message {
     pub body: String,
     /// Attachments, without their bytes.
     pub attachments: Vec<AttachmentInfo>,
+    /// How the sender lets a reader unsubscribe, from `List-Unsubscribe`.
+    pub unsubscribe: Option<Unsubscribe>,
 }
 
 /// A mailto unsubscribe target from `List-Unsubscribe`, already checked.

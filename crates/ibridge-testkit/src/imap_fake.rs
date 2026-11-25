@@ -66,6 +66,9 @@ pub struct FakeScript {
     /// Inbox UID 62 is a marker left over from another run: `[ibridge-fixture] stale seed old`.
     /// It needs `marker_messages`.
     pub stale_marker: bool,
+    /// Inbox UID 70 offers mailto, an `https` link and one-click. UID 71 offers an `http`
+    /// link only. They are not search hits.
+    pub unsubscribe_messages: bool,
 }
 
 #[derive(Debug)]
@@ -684,12 +687,37 @@ fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
             messages.push(marker_message(62, "stale", "old"));
         }
     }
+    if script.unsubscribe_messages {
+        messages.extend([
+            list_message(
+                70,
+                "<mailto:unsub@example.com?subject=unsubscribe&body=remove%20me>, <https://example.com/u?id=1>\r\n\
+                 List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n",
+            ),
+            list_message(71, "<http://example.com/u?id=2>\r\n"),
+        ]);
+    }
     for (seq, (uid, head, body)) in messages.into_iter().enumerate() {
         let seq = u32::try_from(seq.saturating_add(1)).unwrap_or(1);
         push_fetch(&mut bytes, seq, uid, &head, &body);
     }
     bytes.extend(tagged_ok(tag));
     bytes
+}
+
+fn list_message(uid: u32, list_unsubscribe: &str) -> (u32, String, Vec<u8>) {
+    let head = r#"INTERNALDATE "05-Nov-2026 00:00:00 +0000" FLAGS () ENVELOPE (NIL "newsletter" (("News" NIL "news" "example.com")) NIL NIL NIL NIL NIL NIL NIL)"#;
+    let raw = format!(
+        "Message-ID: <list-{uid}@example.com>\r\n\
+         From: News <news@example.com>\r\n\
+         To: ada@icloud.com\r\n\
+         Subject: newsletter\r\n\
+         List-Unsubscribe: {list_unsubscribe}\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         \r\n\
+         This week's news"
+    );
+    (uid, head.to_owned(), raw.into_bytes())
 }
 
 fn marker_message(uid: u32, nonce: &str, word: &str) -> (u32, String, Vec<u8>) {

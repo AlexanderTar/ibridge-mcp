@@ -824,8 +824,7 @@ fn message_out(message: &Message, next_offset: Option<usize>) -> MessageOut {
 
 fn unsubscribe_out(options: Option<&Unsubscribe>) -> UnsubscribeOut {
     let methods: Vec<UnsubscribeMethodOut> = options
-        .map(Unsubscribe::methods)
-        .unwrap_or_default()
+        .map_or_default(Unsubscribe::methods)
         .into_iter()
         .filter_map(|method| match method {
             UnsubscribeMethod::OneClick => Some(UnsubscribeMethodOut::OneClick),

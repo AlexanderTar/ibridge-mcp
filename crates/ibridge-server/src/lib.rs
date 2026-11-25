@@ -34,4 +34,4 @@ pub use dto::{
 };
 pub use error_map::{MappedError, map_core_error};
 pub use handler::IbridgeServer;
-pub use mail_api::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail};
+pub use mail_api::{MailApi, MailBody, MailDest, MailHitPage, MailPart, SentMail, Unsubscribed};

@@ -11,5 +11,5 @@ mod smtp;
 
 pub use imap::{Connect, IcloudConnect, ImapPool};
 pub use limits::{SendLimits, SendWindow};
-pub use session::{MailSession, SendOutcome};
+pub use session::{MailSession, SendOutcome, UnsubscribeOutcome};
 pub use smtp::{OutgoingMail, SmtpClient};

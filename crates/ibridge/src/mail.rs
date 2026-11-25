@@ -161,6 +161,17 @@ impl<C: ibridge_mail::Connect + 'static> MailApi for SessionMail<C> {
         Ok(SentMail { id: sent.id })
     }
 
+    async fn unsubscribe(&self, id: &MessageId) -> Result<ibridge_server::Unsubscribed, CoreError> {
+        use ibridge_mail::UnsubscribeOutcome;
+        Ok(match self.0.unsubscribe(id).await? {
+            UnsubscribeOutcome::Emailed(sent) => {
+                ibridge_server::Unsubscribed::Emailed(SentMail { id: sent.id })
+            }
+            UnsubscribeOutcome::Links(links) => ibridge_server::Unsubscribed::Links(links),
+            _ => ibridge_server::Unsubscribed::NotOffered,
+        })
+    }
+
     async fn move_message(&self, id: &MessageId, destination: &MailDest) -> Result<(), CoreError> {
         match destination {
             MailDest::Path(path) => self.0.move_to(id, path).await,

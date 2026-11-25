@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use ibridge_core::{CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId};
+use ibridge_core::{
+    CoreError, Draft, FlagChange, MailboxPath, MailboxRole, MessageId, Unsubscribe, UnsubscribeMail,
+};
 
 use crate::imap::{Connect, ImapPool};
 use crate::limits::{SendLimits, SendWindow};
@@ -17,6 +19,42 @@ pub struct SendOutcome {
     ///
     /// `None` when the message was delivered and the Sent append failed.
     pub id: Option<MessageId>,
+}
+
+/// Subject of an unsubscribe email whose mailto names none.
+const UNSUBSCRIBE_SUBJECT: &str = "Unsubscribe";
+
+/// How [`MailSession::unsubscribe`] will act on a message.
+enum Route {
+    Mailto(UnsubscribeMail),
+    Links(Vec<String>),
+    None,
+}
+
+/// Picks the route for `options`. The only place that decides; a new method goes here.
+fn choose_route(options: Option<Unsubscribe>) -> Route {
+    let Some(options) = options else {
+        return Route::None;
+    };
+    if let Some(mailto) = options.mailto {
+        Route::Mailto(mailto)
+    } else if options.links.is_empty() {
+        Route::None
+    } else {
+        Route::Links(options.links)
+    }
+}
+
+/// What [`MailSession::unsubscribe`] did.
+#[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnsubscribeOutcome {
+    /// The sender's unsubscribe address was emailed and SMTP accepted it.
+    Emailed(SendOutcome),
+    /// The sender offers only web links, which this session does not follow.
+    Links(Vec<String>),
+    /// The message has no usable `List-Unsubscribe` header.
+    NotOffered,
 }
 
 /// IMAP and SMTP for one account.
@@ -85,6 +123,38 @@ impl<C: Connect> MailSession<C> {
                 tracing::warn!(%error, "sent message was not copied to Sent Messages");
                 Ok(SendOutcome { id: None })
             }
+        }
+    }
+
+    /// Unsubscribes from the sender of `id`, by the best route its headers offer.
+    ///
+    /// The address, subject and body come from the message's own `List-Unsubscribe` header
+    /// and from nowhere else. A mailto is sent like any message: it counts against the send
+    /// caps, goes out from the account's address, and a copy is saved to Sent Messages (a
+    /// failed copy is logged, as for [`MailSession::send`]). A message that offers only web
+    /// links returns them and sends nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when the message cannot be read,
+    /// [`CoreError::RateLimited`] when this account has already sent its hourly cap, and
+    /// [`CoreError`] when SMTP fails.
+    pub async fn unsubscribe(&self, id: &MessageId) -> Result<UnsubscribeOutcome, CoreError> {
+        match choose_route(self.imap.unsubscribe_options(id).await?) {
+            Route::Mailto(mailto) => {
+                let draft = Draft {
+                    to: vec![mailto.to],
+                    subject: mailto
+                        .subject
+                        .unwrap_or_else(|| UNSUBSCRIBE_SUBJECT.to_owned()),
+                    body: mailto.body.unwrap_or_default(),
+                    from: None,
+                    reply_to: None,
+                };
+                self.send(&draft).await.map(UnsubscribeOutcome::Emailed)
+            }
+            Route::Links(links) => Ok(UnsubscribeOutcome::Links(links)),
+            Route::None => Ok(UnsubscribeOutcome::NotOffered),
         }
     }
 
@@ -165,7 +235,7 @@ mod tests {
     };
     use ibridge_testkit::imap_fake::{FakeImap, FakeScript};
 
-    use super::MailSession;
+    use super::{MailSession, UnsubscribeOutcome};
     use crate::imap::ImapPool;
     use crate::smtp::SmtpClient;
     use crate::smtp::tests::SmtpCapture;
@@ -214,6 +284,138 @@ mod tests {
             sent.contains("Bring napkins."),
             "the copy contains the draft body"
         );
+    }
+
+    async fn newsletter_session() -> (FakeImap, SmtpCapture, MailSession<FakeImap>) {
+        let capture = SmtpCapture::start().await;
+        let fake = FakeImap::spawn(FakeScript {
+            unsubscribe_messages: true,
+            ..FakeScript::default()
+        });
+        let imap = ImapPool::new(credentials(), fake.clone());
+        let smtp = SmtpClient::plain(credentials(), capture.host(), capture.port())
+            .expect("loopback host is allowed");
+        (fake, capture, MailSession::new(imap, smtp))
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_emails_the_mailto_and_saves_a_sent_copy() {
+        let (fake, capture, session) = newsletter_session().await;
+        let outcome = session
+            .unsubscribe(&message(70))
+            .await
+            .expect("unsubscribe");
+        assert!(
+            matches!(&outcome, UnsubscribeOutcome::Emailed(sent) if sent.id.is_some()),
+            "a mailto is emailed and the Sent copy is saved, got {outcome:?}"
+        );
+        assert_eq!(capture.rcpts(), vec!["unsub@example.com".to_owned()]);
+        assert_eq!(capture.mail_from(), "ada@icloud.com");
+        let sent = capture.message();
+        assert!(
+            sent.contains("To: <unsub@example.com>")
+                && sent.contains("Subject: unsubscribe")
+                && sent.contains("remove me"),
+            "recipient, subject and body come from the mailto, got {sent}"
+        );
+        let copies = fake.appended();
+        assert_eq!(copies.len(), 1, "one Sent copy");
+        assert_eq!(copies[0].mailbox, "Sent Messages");
+        assert_eq!(
+            String::from_utf8_lossy(&copies[0].bytes),
+            sent,
+            "the Sent copy is what SMTP sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_ignores_cc_bcc_and_to_fields_and_defaults_the_subject() {
+        let (_fake, capture, session) = newsletter_session().await;
+        session
+            .unsubscribe(&message(72))
+            .await
+            .expect("unsubscribe");
+        assert_eq!(
+            capture.rcpts(),
+            vec!["a@example.com".to_owned()],
+            "only the address in the mailto path is a recipient"
+        );
+        let sent = capture.message();
+        assert!(
+            !sent.contains("evil"),
+            "cc, bcc and to fields never reach the message, got {sent}"
+        );
+        assert!(sent.contains("Subject: hi"), "subject kept, got {sent}");
+
+        session
+            .unsubscribe(&message(74))
+            .await
+            .expect("bare mailto");
+        assert_eq!(capture.rcpts(), vec!["bare@example.com".to_owned()]);
+        assert!(
+            capture.message().contains("Subject: Unsubscribe"),
+            "a mailto with no subject gets one, got {}",
+            capture.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_with_links_only_sends_nothing() {
+        let (fake, capture, session) = newsletter_session().await;
+        let outcome = session
+            .unsubscribe(&message(71))
+            .await
+            .expect("unsubscribe");
+        assert_eq!(
+            outcome,
+            UnsubscribeOutcome::Links(vec!["http://example.com/u?id=2".to_owned()])
+        );
+        assert!(capture.message().is_empty(), "nothing is transmitted");
+        assert!(fake.appended().is_empty(), "nothing is saved to Sent");
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_without_a_usable_header_sends_nothing() {
+        let (fake, capture, session) = newsletter_session().await;
+        for uid in [4, 73] {
+            let outcome = session
+                .unsubscribe(&message(uid))
+                .await
+                .expect("unsubscribe");
+            assert_eq!(
+                outcome,
+                UnsubscribeOutcome::NotOffered,
+                "uid {uid} has no usable List-Unsubscribe"
+            );
+        }
+        assert!(capture.message().is_empty(), "nothing is transmitted");
+        assert!(fake.appended().is_empty(), "nothing is saved to Sent");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unsubscribe_counts_against_the_hourly_send_cap() {
+        let capture = SmtpCapture::start().await;
+        let fake = FakeImap::spawn(FakeScript {
+            unsubscribe_messages: true,
+            ..FakeScript::default()
+        });
+        let imap = ImapPool::new(credentials(), fake);
+        let smtp = SmtpClient::plain(credentials(), capture.host(), capture.port())
+            .expect("loopback host is allowed");
+        let session = MailSession::with_limits(
+            imap,
+            smtp,
+            crate::limits::SendLimits {
+                max_recipients: 50,
+                max_per_hour: 1,
+            },
+        );
+        session.unsubscribe(&message(70)).await.expect("first");
+        let err = session
+            .unsubscribe(&message(70))
+            .await
+            .expect_err("the cap applies to unsubscribe emails");
+        assert!(matches!(err, CoreError::RateLimited { .. }), "got {err:?}");
     }
 
     #[tokio::test]

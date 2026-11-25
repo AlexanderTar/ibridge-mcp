@@ -67,7 +67,8 @@ pub struct FakeScript {
     /// It needs `marker_messages`.
     pub stale_marker: bool,
     /// Inbox UID 70 offers mailto, an `https` link and one-click. UID 71 offers an `http`
-    /// link only. They are not search hits.
+    /// link only. UID 72 has a mailto with `cc`, `bcc` and `to` fields. UID 73 has a mailto
+    /// with two recipients and nothing else. UID 74 has a bare mailto. They are not search hits.
     pub unsubscribe_messages: bool,
 }
 
@@ -695,6 +696,12 @@ fn fetch_inbox(tag: &Tag<'_>, script: &FakeScript) -> Vec<u8> {
                  List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n",
             ),
             list_message(71, "<http://example.com/u?id=2>\r\n"),
+            list_message(
+                72,
+                "<mailto:a@example.com?cc=evil1@example.net&bcc=evil2@example.net&to=evil3@example.net&subject=hi>\r\n",
+            ),
+            list_message(73, "<mailto:a@example.com,b@example.com>\r\n"),
+            list_message(74, "<mailto:bare@example.com>\r\n"),
         ]);
     }
     for (seq, (uid, head, body)) in messages.into_iter().enumerate() {

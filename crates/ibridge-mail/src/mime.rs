@@ -413,12 +413,12 @@ mod tests {
         format!("From: news@example.com\r\nSubject: Weekly\r\n{lines}\r\n\r\nbody").into_bytes()
     }
 
-    fn mailto(to: &str, subject: Option<&str>, body: Option<&str>) -> Option<UnsubscribeMail> {
-        Some(UnsubscribeMail {
+    fn mailto(to: &str, subject: Option<&str>, body: Option<&str>) -> UnsubscribeMail {
+        UnsubscribeMail {
             to: to.to_owned(),
             subject: subject.map(str::to_owned),
             body: body.map(str::to_owned),
-        })
+        }
     }
 
     #[test]
@@ -429,7 +429,7 @@ mod tests {
         assert_eq!(
             unsubscribe(&raw),
             Some(Unsubscribe {
-                mailto: mailto("unsub@example.com", Some("unsubscribe"), None),
+                mailto: Some(mailto("unsub@example.com", Some("unsubscribe"), None)),
                 links: vec!["https://example.com/u?id=1".to_owned()],
                 one_click: false,
             })
@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(
             unsubscribe(&raw),
             Some(Unsubscribe {
-                mailto: mailto("u@example.com", None, None),
+                mailto: Some(mailto("u@example.com", None, None)),
                 links: vec![
                     "https://a.example.com/x".to_owned(),
                     "http://b.example.com/y".to_owned()
@@ -484,7 +484,11 @@ mod tests {
         let options = unsubscribe(&raw).expect("options");
         assert_eq!(
             options.mailto,
-            mailto("u@example.com", Some("Remove café"), Some("Please stop"))
+            Some(mailto(
+                "u@example.com",
+                Some("Remove café"),
+                Some("Please stop")
+            ))
         );
     }
 
@@ -565,7 +569,7 @@ mod tests {
         assert_eq!(options.links, vec!["https://example.com/u".to_owned()]);
         assert_eq!(
             options.mailto,
-            mailto("u@example.com", Some("Abmelden"), None)
+            Some(mailto("u@example.com", Some("Abmelden"), None))
         );
     }
 }

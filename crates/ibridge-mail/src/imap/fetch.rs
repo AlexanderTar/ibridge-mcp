@@ -3,7 +3,7 @@
 //! Message and attachment fetch.
 
 use async_imap::imap_proto::{AttributeValue, Response};
-use ibridge_core::{Attachment, CoreError, Message, MessageId};
+use ibridge_core::{Attachment, CoreError, Message, MessageId, Unsubscribe};
 
 use super::pool::{Connect, ImapPool, Lease, map_command, run_checked};
 use crate::mime;
@@ -102,6 +102,24 @@ impl<C: Connect> ImapPool<C> {
     ) -> Result<crate::mime::ThreadHeaders, CoreError> {
         let body = load_body(self, id).await?;
         crate::mime::thread_headers(&body)
+    }
+}
+
+impl<C: Connect> ImapPool<C> {
+    /// The unsubscribe options in the headers of `id`, or `None` when it offers none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::NotFound`] when the message is missing or unreadable.
+    pub(crate) async fn unsubscribe_options(
+        &self,
+        id: &MessageId,
+    ) -> Result<Option<Unsubscribe>, CoreError> {
+        let body = load_body(self, id).await?;
+        if !mime::parses(&body) {
+            return Err(CoreError::NotFound);
+        }
+        Ok(mime::unsubscribe(&body))
     }
 }
 

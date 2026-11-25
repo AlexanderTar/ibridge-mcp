@@ -45,6 +45,18 @@ pub struct SentMail {
     pub id: Option<MessageId>,
 }
 
+/// What unsubscribing from a message did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Unsubscribed {
+    /// An unsubscribe email to the sender was accepted by SMTP.
+    Emailed(SentMail),
+    /// The sender offers only these web links, and nothing was sent.
+    Links(Vec<String>),
+    /// The message has no usable `List-Unsubscribe` header.
+    NotOffered,
+}
+
 /// Where a move puts a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -119,6 +131,17 @@ pub trait MailApi {
     ///
     /// Returns [`CoreError`] when the message cannot be sent.
     async fn send(&self, draft: &Draft) -> Result<SentMail, CoreError>;
+
+    /// Unsubscribes from the sender of a message, using only what its own headers offer.
+    ///
+    /// A backend that cannot do this keeps the default, which refuses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError`] when the message cannot be read or the email cannot be sent.
+    async fn unsubscribe(&self, _id: &MessageId) -> Result<Unsubscribed, CoreError> {
+        async { Err(CoreError::Unsupported("unsubscribing")) }
+    }
 
     /// Moves a message.
     ///

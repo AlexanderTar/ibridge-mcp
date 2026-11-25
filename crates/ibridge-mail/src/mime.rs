@@ -4,12 +4,16 @@
 
 use std::borrow::Cow;
 
-use ibridge_core::{Attachment, AttachmentInfo, CoreError};
+use ibridge_core::{Attachment, AttachmentInfo, CoreError, Unsubscribe, UnsubscribeMail};
 use mail_parser::decoders::html::html_to_text;
 use mail_parser::{AddressList, Message, MessageParser, MessagePart, PartKind};
 
 const BODY_WINDOW: usize = 40_000;
 const BINARY_LIMIT: usize = 65_536;
+const MAX_ADDRESS: usize = 254;
+const MAX_SUBJECT: usize = 200;
+const MAX_BODY: usize = 1_000;
+const MAX_URI: usize = 2_048;
 
 /// Whether `bytes` is a message the parser can read.
 pub(crate) fn parses(bytes: &[u8]) -> bool {
@@ -65,6 +69,130 @@ fn angle(id: &str) -> String {
         id.to_owned()
     } else {
         format!("<{id}>")
+    }
+}
+
+/// The unsubscribe options in a message's `List-Unsubscribe` headers.
+///
+/// `None` when there is no header or nothing in it passes the checks. The header is
+/// written by the sender, so a mailto with more than one recipient, a CR or LF, or a value
+/// over its cap is dropped whole, and only its `subject` and `body` are read.
+pub(crate) fn unsubscribe(bytes: &[u8]) -> Option<Unsubscribe> {
+    let message = MessageParser::new().parse(bytes)?;
+    let mut options = Unsubscribe::default();
+    for mailbox in message.list_unsubscribe()?.mailboxes() {
+        let Some(uri) = mailbox.address().filter(|uri| uri.len() <= MAX_URI) else {
+            continue;
+        };
+        if let Some(rest) = strip_scheme(uri, "mailto") {
+            // The first usable mailto wins; a later one is another sender's idea.
+            if options.mailto.is_none() {
+                options.mailto = parse_mailto(rest);
+            }
+        } else if strip_scheme(uri, "https").is_some() || strip_scheme(uri, "http").is_some() {
+            options.links.push(uri.to_owned());
+        }
+    }
+    options.one_click = wants_one_click(&message)
+        && options
+            .links
+            .iter()
+            .any(|link| strip_scheme(link, "https").is_some());
+    (options.mailto.is_some() || !options.links.is_empty()).then_some(options)
+}
+
+/// RFC 8058: `List-Unsubscribe-Post` is exactly `List-Unsubscribe=One-Click`.
+fn wants_one_click(message: &Message<'_>) -> bool {
+    message
+        .headers()
+        .get("List-Unsubscribe-Post")
+        .is_some_and(|header| {
+            let raw = String::from_utf8_lossy(header.raw_value());
+            let value: String = raw.split_whitespace().collect();
+            value.eq_ignore_ascii_case("List-Unsubscribe=One-Click")
+        })
+}
+
+fn strip_scheme<'u>(uri: &'u str, scheme: &str) -> Option<&'u str> {
+    let (head, rest) = uri.split_once(':')?;
+    let rest = if scheme == "mailto" {
+        rest
+    } else {
+        rest.strip_prefix("//").filter(|host| !host.is_empty())?
+    };
+    head.eq_ignore_ascii_case(scheme).then_some(rest)
+}
+
+/// A mailto with one recipient and, from its header fields, only `subject` and `body`.
+///
+/// `None` when the recipient is not one plain address, a value has a control character
+/// (CR and LF included) or is over its cap, or a percent escape is not valid UTF-8.
+/// Dropping the whole mailto beats sending part of what the sender asked for.
+fn parse_mailto(rest: &str) -> Option<UnsubscribeMail> {
+    let (path, fields) = rest.split_once('?').unwrap_or((rest, ""));
+    let to = percent_decode(path)?;
+    if !is_single_address(&to) {
+        return None;
+    }
+    let mut subject = None;
+    let mut body = None;
+    for field in fields.split('&') {
+        let Some((name, value)) = field.split_once('=') else {
+            continue;
+        };
+        let (slot, cap) = if name.eq_ignore_ascii_case("subject") {
+            (&mut subject, MAX_SUBJECT)
+        } else if name.eq_ignore_ascii_case("body") {
+            (&mut body, MAX_BODY)
+        } else {
+            continue;
+        };
+        if slot.is_none() {
+            let text = percent_decode(value)?;
+            if text.chars().count() > cap || text.chars().any(char::is_control) {
+                return None;
+            }
+            *slot = Some(text);
+        }
+    }
+    Some(UnsubscribeMail { to, subject, body })
+}
+
+fn is_single_address(address: &str) -> bool {
+    let Some((local, domain)) = address.split_once('@') else {
+        return false;
+    };
+    address.len() <= MAX_ADDRESS
+        && !local.is_empty()
+        && !domain.is_empty()
+        && !domain.contains('@')
+        && !address
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || "<>,;:\"()[]\\".contains(c))
+}
+
+/// Percent-decodes `text` as UTF-8. `+` stays a plus (RFC 6068).
+fn percent_decode(text: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(text.len());
+    let mut bytes = text.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte == b'%' {
+            let high = hex(bytes.next()?)?;
+            let low = hex(bytes.next()?)?;
+            out.push(high << 4 | low);
+        } else {
+            out.push(byte);
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+const fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -270,5 +398,169 @@ mod tests {
                 "{hidden:?} must not reach the text, got {body:?}"
             );
         }
+    }
+
+    use ibridge_core::{Unsubscribe, UnsubscribeMail};
+
+    use super::unsubscribe;
+
+    fn headers(lines: &str) -> Vec<u8> {
+        format!("From: news@example.com\r\nSubject: Weekly\r\n{lines}\r\n\r\nbody").into_bytes()
+    }
+
+    fn mailto(to: &str, subject: Option<&str>, body: Option<&str>) -> Option<UnsubscribeMail> {
+        Some(UnsubscribeMail {
+            to: to.to_owned(),
+            subject: subject.map(str::to_owned),
+            body: body.map(str::to_owned),
+        })
+    }
+
+    #[test]
+    fn unsubscribe_reads_mailto_and_https_in_angle_brackets() {
+        let raw = headers(
+            "List-Unsubscribe: <mailto:unsub@example.com?subject=unsubscribe>, <https://example.com/u?id=1>",
+        );
+        assert_eq!(
+            unsubscribe(&raw),
+            Some(Unsubscribe {
+                mailto: mailto("unsub@example.com", Some("unsubscribe"), None),
+                links: vec!["https://example.com/u?id=1".to_owned()],
+                one_click: false,
+            })
+        );
+    }
+
+    #[test]
+    fn unsubscribe_reads_a_folded_header_with_a_comment() {
+        let raw = headers(
+            "List-Unsubscribe: (Remove me)\r\n <https://a.example.com/x>,\r\n\t<http://b.example.com/y>,\r\n <mailto:u@example.com>",
+        );
+        assert_eq!(
+            unsubscribe(&raw),
+            Some(Unsubscribe {
+                mailto: mailto("u@example.com", None, None),
+                links: vec![
+                    "https://a.example.com/x".to_owned(),
+                    "http://b.example.com/y".to_owned()
+                ],
+                one_click: false,
+            })
+        );
+    }
+
+    #[test]
+    fn unsubscribe_one_click_needs_the_post_header_and_an_https_link() {
+        let post = "List-Unsubscribe-Post: List-Unsubscribe=One-Click";
+        let with_https = headers(&format!(
+            "List-Unsubscribe: <https://example.com/u>\r\n{post}"
+        ));
+        assert!(unsubscribe(&with_https).expect("options").one_click);
+        let http_only = headers(&format!(
+            "List-Unsubscribe: <http://example.com/u>\r\n{post}"
+        ));
+        assert!(
+            !unsubscribe(&http_only).expect("options").one_click,
+            "RFC 8058 one-click is https only"
+        );
+        let no_post = headers("List-Unsubscribe: <https://example.com/u>");
+        assert!(!unsubscribe(&no_post).expect("options").one_click);
+        let other_post = headers(
+            "List-Unsubscribe: <https://example.com/u>\r\nList-Unsubscribe-Post: List-Unsubscribe=Maybe",
+        );
+        assert!(!unsubscribe(&other_post).expect("options").one_click);
+    }
+
+    #[test]
+    fn unsubscribe_mailto_keeps_only_subject_and_body_and_decodes_them() {
+        let raw = headers(
+            "List-Unsubscribe: <mailto:u%40example.com?cc=evil@example.net&BCC=x@example.net&to=y@example.net&from=z@example.net&subject=Remove%20caf%C3%A9&body=Please%20stop&in-reply-to=%3Cabc%3E>",
+        );
+        let options = unsubscribe(&raw).expect("options");
+        assert_eq!(
+            options.mailto,
+            mailto("u@example.com", Some("Remove café"), Some("Please stop"))
+        );
+    }
+
+    #[test]
+    fn unsubscribe_drops_a_mailto_that_is_not_safe() {
+        let unsafe_values = [
+            "<mailto:a@example.com,b@example.com>",
+            "<mailto:a@example.com;b@example.com>",
+            "<mailto:a@example.com%2Cb@example.com>",
+            "<mailto:?subject=hi>",
+            "<mailto:not-an-address>",
+            "<mailto:Eve <e@example.com>>",
+            "<mailto:a@example.com?subject=hi%0D%0ABcc:%20e@example.net>",
+            "<mailto:a@example.com?subject=hi%0Abcc:e@example.net>",
+            "<mailto:a@example.com?body=line%0D%0Atwo>",
+            "<mailto:a%0D%0A@example.com>",
+            "<mailto:a@example.com?subject=%FF>",
+        ];
+        for value in unsafe_values {
+            let raw = headers(&format!(
+                "List-Unsubscribe: {value}, <https://example.com/u>"
+            ));
+            let options = unsubscribe(&raw).expect("the https link still counts");
+            assert_eq!(options.mailto, None, "{value} must not become a mailto");
+            assert_eq!(options.links, vec!["https://example.com/u".to_owned()]);
+        }
+    }
+
+    #[test]
+    fn unsubscribe_drops_a_mailto_over_its_caps() {
+        let long_subject = "s".repeat(201);
+        let long_body = "b".repeat(1001);
+        let long_address = format!("{}@example.com", "a".repeat(250));
+        for value in [
+            format!("<mailto:a@example.com?subject={long_subject}>"),
+            format!("<mailto:a@example.com?body={long_body}>"),
+            format!("<mailto:{long_address}>"),
+        ] {
+            let raw = headers(&format!("List-Unsubscribe: {value}"));
+            assert_eq!(unsubscribe(&raw), None, "an oversized mailto is dropped");
+        }
+        let max_subject = "s".repeat(200);
+        let raw = headers(&format!(
+            "List-Unsubscribe: <mailto:a@example.com?subject={max_subject}>"
+        ));
+        assert_eq!(
+            unsubscribe(&raw).and_then(|found| found.mailto.and_then(|mail| mail.subject)),
+            Some(max_subject),
+            "a subject at the cap is kept"
+        );
+    }
+
+    #[test]
+    fn unsubscribe_ignores_other_schemes_and_a_missing_header() {
+        let raw = headers(
+            "List-Unsubscribe: <ftp://example.com/u>, <javascript:alert(1)>, <tel:+15551234>, <https://example.com/u>",
+        );
+        assert_eq!(
+            unsubscribe(&raw).expect("options").links,
+            vec!["https://example.com/u".to_owned()]
+        );
+        assert_eq!(unsubscribe(&headers("X-Other: 1")), None);
+        assert_eq!(
+            unsubscribe(&headers("List-Unsubscribe: <ftp://example.com/u>")),
+            None,
+            "a header with nothing usable offers nothing"
+        );
+        assert_eq!(unsubscribe(b"not a message"), None);
+    }
+
+    #[test]
+    fn unsubscribe_reads_a_header_with_an_encoded_word_comment() {
+        // RFC 2047 allows encoded words in comments, which senders put beside the URIs.
+        let raw = headers(
+            "List-Unsubscribe: (=?UTF-8?Q?Abmelden_=E2=9C=89?=) <https://example.com/u>, <mailto:u@example.com?subject=Abmelden>",
+        );
+        let options = unsubscribe(&raw).expect("options");
+        assert_eq!(options.links, vec!["https://example.com/u".to_owned()]);
+        assert_eq!(
+            options.mailto,
+            mailto("u@example.com", Some("Abmelden"), None)
+        );
     }
 }

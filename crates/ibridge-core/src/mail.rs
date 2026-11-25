@@ -228,6 +228,64 @@ pub struct Message {
     pub attachments: Vec<AttachmentInfo>,
 }
 
+/// A mailto unsubscribe target from `List-Unsubscribe`, already checked.
+///
+/// Only `to`, `subject` and `body` survive. Every value is free of CR and LF and under
+/// its cap, so it is safe to put in a message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnsubscribeMail {
+    /// The one recipient.
+    pub to: String,
+    /// Subject the sender asked for.
+    pub subject: Option<String>,
+    /// Body the sender asked for.
+    pub body: Option<String>,
+}
+
+/// How a sender lets a reader unsubscribe (RFC 2369, RFC 8058).
+///
+/// The header is written by the sender, so nothing here is trusted: tools take a message
+/// id and read this themselves, never a URL or an address from a caller.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Unsubscribe {
+    /// The mailto route, when the header has one that passed every check.
+    pub mailto: Option<UnsubscribeMail>,
+    /// `http` and `https` links, in header order.
+    pub links: Vec<String>,
+    /// `List-Unsubscribe-Post` asks for `List-Unsubscribe=One-Click` and an `https` link exists.
+    pub one_click: bool,
+}
+
+/// One way to unsubscribe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnsubscribeMethod {
+    /// Send an email to the sender's address.
+    Mailto,
+    /// Post to the sender's `https` link without opening it.
+    OneClick,
+    /// Open a link in a browser.
+    Link,
+}
+
+impl Unsubscribe {
+    /// The methods on offer, best first: one-click, then mailto, then a link.
+    #[must_use]
+    pub fn methods(&self) -> Vec<UnsubscribeMethod> {
+        let mut methods = Vec::new();
+        if self.one_click {
+            methods.push(UnsubscribeMethod::OneClick);
+        }
+        if self.mailto.is_some() {
+            methods.push(UnsubscribeMethod::Mailto);
+        }
+        if !self.links.is_empty() {
+            methods.push(UnsubscribeMethod::Link);
+        }
+        methods
+    }
+}
+
 /// A fetched attachment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attachment {

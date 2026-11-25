@@ -12,9 +12,9 @@ pub(crate) type AddressPolicy = Arc<dyn Fn(IpAddr) -> bool + Send + Sync>;
 /// Whether `address` is a public unicast address.
 ///
 /// Refuses loopback, private (RFC 1918, ULA), link-local, carrier-grade NAT, unspecified,
-/// multicast, broadcast, reserved and documentation ranges. An IPv6 address that embeds an
-/// IPv4 one (mapped, compatible, NAT64, 6to4) is judged by the IPv4 address inside it.
-/// IPv6 must be global unicast (`2000::/3`).
+/// multicast, broadcast, reserved and documentation ranges. IPv4-mapped and IPv4-compatible
+/// IPv6 forms are refused outright. NAT64 and 6to4 addresses are judged by the IPv4 address
+/// inside them. IPv6 must be global unicast (`2000::/3`).
 pub(crate) fn is_public(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(v4) => is_public_v4(v4),

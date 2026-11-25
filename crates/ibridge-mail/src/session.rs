@@ -188,8 +188,8 @@ impl<C: Connect> MailSession<C> {
     /// # Errors
     ///
     /// Returns [`CoreError::NotFound`] when the message cannot be read,
-    /// [`CoreError::RateLimited`] when this account has already sent its hourly cap, and
-    /// [`CoreError`] when SMTP fails.
+    /// [`CoreError::RateLimited`] when this account has already sent its hourly cap or made
+    /// its hourly cap of one-click POSTs, and [`CoreError`] when SMTP fails.
     pub async fn unsubscribe(
         &self,
         id: &MessageId,
@@ -200,6 +200,7 @@ impl<C: Connect> MailSession<C> {
                 link,
                 mailto_offered,
             } => {
+                self.sends.admit_one_click()?;
                 // Never falls back to the mailto: a failed POST is the user's call.
                 Ok(match self.post_one_click(&link).await {
                     Ok(()) => UnsubscribeOutcome::OneClicked,
@@ -491,6 +492,7 @@ mod tests {
             crate::limits::SendLimits {
                 max_recipients: 50,
                 max_per_hour: 1,
+                max_one_click_per_hour: 20,
             },
         );
         session
@@ -660,12 +662,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn one_click_does_not_use_up_the_send_cap() {
-        let (_tls, _capture, _fake, mut session) = one_click_session(ok_reply()).await;
+    async fn one_click_is_capped_per_account_and_the_call_past_the_cap_posts_nothing() {
+        let (tls, capture, _fake, mut session) = one_click_session(ok_reply()).await;
         session.sends =
             std::sync::Arc::new(crate::limits::SendWindow::new(crate::limits::SendLimits {
                 max_recipients: 50,
                 max_per_hour: 1,
+                max_one_click_per_hour: 2,
             }));
         for _ in 0..2 {
             let outcome = session
@@ -674,6 +677,26 @@ mod tests {
                 .expect("unsubscribe");
             assert_eq!(outcome, UnsubscribeOutcome::OneClicked);
         }
+        let err = session
+            .unsubscribe(&message(70), None)
+            .await
+            .expect_err("the third POST is over the cap");
+        assert!(matches!(err, CoreError::RateLimited { .. }), "got {err:?}");
+        assert_eq!(
+            tls.requests().len(),
+            2,
+            "no POST reached the fake past the cap"
+        );
+
+        let emailed = session
+            .unsubscribe(&message(70), Some(UnsubscribeMethod::Mailto))
+            .await
+            .expect("the mailto has its own cap");
+        assert!(
+            matches!(emailed, UnsubscribeOutcome::Emailed(_)),
+            "got {emailed:?}"
+        );
+        assert_eq!(capture.rcpts(), vec!["unsub@example.com".to_owned()]);
     }
 
     #[tokio::test]
@@ -976,6 +999,7 @@ mod tests {
             crate::limits::SendLimits {
                 max_recipients: 50,
                 max_per_hour: 1,
+                max_one_click_per_hour: 20,
             },
         );
         let err = session
